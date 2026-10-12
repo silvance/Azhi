@@ -20,6 +20,7 @@ losing the job.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -39,6 +40,42 @@ DEFAULT_MODE = MODE_AUTO
 # CUDA card is good at. Neither changes what the model is, only how it computes.
 CPU_COMPUTE_TYPE = "int8"
 CUDA_COMPUTE_TYPE = "float16"
+
+
+def build_supports_cuda() -> bool:
+    """Whether this build can use a GPU at all, whatever machine it is on.
+
+    A PyInstaller bundle built from ``packaging/whispr.spec`` cannot. That spec
+    strips the CUDA and cuDNN libraries out of the ctranslate2 and onnxruntime
+    wheels, because they are the bulk of the bundle size and the deployed
+    machines run on the CPU. So in a bundle a GPU is not merely absent or
+    unlikely - it is impossible - and offering the setting means offering a
+    control that silently does nothing, which is how an operator comes to
+    believe a run was accelerated when it was not.
+
+    This is a fact about the packaging, so tests/test_acceleration.py checks
+    that the spec still strips those libraries. If a CUDA-capable bundle is
+    ever built, that test fails and says to come back here, rather than this
+    answer being quietly wrong.
+    """
+    return not getattr(sys, "frozen", False)
+
+
+def offered_modes() -> List[Tuple[str, str]]:
+    """The device choices worth putting in front of someone, for this build.
+
+    In a build without GPU support there is exactly one, and not two: Auto and
+    CPU would resolve identically, and Auto's label offers a graphics card this
+    build cannot use either way.
+    """
+    if build_supports_cuda():
+        return list(MODE_LABELS)
+    return [(MODE_CPU, "CPU")]
+
+
+def default_mode() -> str:
+    """The mode to start on. Auto, unless this build has no GPU support."""
+    return DEFAULT_MODE if build_supports_cuda() else MODE_CPU
 
 
 @dataclass(frozen=True)
@@ -87,6 +124,10 @@ def cuda_available() -> bool:
 
 def describe_hardware() -> str:
     """One line for the self-test and status log."""
+    if not build_supports_cuda():
+        # Not "no CUDA device detected": that invites someone to go and fit a
+        # card, which would change nothing in this build.
+        return "CPU only (this build does not include GPU support)"
     count = cuda_device_count()
     if count <= 0:
         return "CPU only (no CUDA device detected)"
@@ -98,12 +139,23 @@ def resolve(mode: str = DEFAULT_MODE) -> Device:
     """Turn a selection mode into the device that will actually be used.
 
     ``auto`` prefers a GPU when one is present and silently uses the CPU when
-    not. An explicit ``cuda`` request on a machine without one does *not*
-    silently downgrade - the returned device is the CPU with a note saying why,
-    so the caller can tell the operator instead of quietly ignoring the setting.
+    not. An explicit ``cuda`` request does *not* silently downgrade - the
+    returned device is the CPU with a note saying why, so the caller can tell
+    the operator instead of quietly ignoring the setting. The reason given
+    separates a machine with no card from a build with no GPU support, because
+    only one of those is worth going and doing something about.
     """
     mode = (mode or DEFAULT_MODE).strip().lower()
     if mode == MODE_CPU:
+        return cpu_device()
+    if not build_supports_cuda():
+        # A setting can outlive the build that offered it: a profile or saved
+        # setting written where a GPU was on offer, then opened in a bundle.
+        if mode == MODE_CUDA:
+            return cpu_device(
+                "This build does not include GPU support, so this run uses "
+                "the CPU. Results are unaffected; it will simply take longer."
+            )
         return cpu_device()
     available = cuda_device_count()
     if mode == MODE_CUDA:
