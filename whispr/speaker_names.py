@@ -50,9 +50,14 @@ def cluster_index(speaker_id: str) -> "Optional[int]":
 #
 # It is applied to the display name rather than at each place that renders one,
 # because there are five such places and a sixth will be added one day.
-LEAD_SUFFIX = "? (voice lead)"
+#
+# The wording was reviewed: "Viktor Marchenko? (voice lead)" read, out of
+# context, as doubt about the spelling and as "the main speaker". A line pasted
+# into another document carries no legend, so the marker has to say what it
+# means on its own.
+LEAD_SUFFIX = " (unconfirmed voice lead)"
 LEAD_LEGEND = (
-    'A name marked "? (voice lead)" was suggested by voice similarity to a '
+    'A name marked "(unconfirmed voice lead)" was suggested by voice similarity to a '
     "voice this profile has learned. It is an investigative lead, not an "
     "identification. Confirm or correct it before relying on it."
 )

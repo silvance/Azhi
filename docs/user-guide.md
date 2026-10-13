@@ -320,10 +320,21 @@ you have corrected, per operation rather than globally. Pick the profile you
 are working under and the tool remembers what that work looks like — model,
 options, and the voices it has learned from your corrections.
 
-With **Recognise and learn speaker voices for this profile** on, a voice it
-already knows from that operation is named in new transcripts automatically,
-and voices you correct are learned for next time. Those learned samples still
-wait for your approval before they count as a reference — see
+With **Recognise and learn speaker voices for this profile** on, a speaker who
+sounds like a voice the profile has learned is **suggested**, not named. The
+suggestion reads like this, on screen and in every saved file:
+
+> [Viktor Marchenko (unconfirmed voice lead)] I'll be there at nine.
+
+That is a lead from voice similarity — not an identification, and not a
+finding. To confirm it, click the speaker tag and choose **Confirm**, having
+listened to a line; to correct it, type the right name. Until you do, the
+marker stays, every saved file explains what it means, nothing is learned from
+that speaker, and it cannot be saved to a subject. A turn shorter than three
+seconds is never given a suggestion at all.
+
+Names you confirm or correct are learned for next time. Samples learned this
+way still wait for your approval before they count as a reference — see
 [section 7](#7-reference-voices-speaker-profiles).
 
 Leave it alone if you only work one case at a time. It earns its place when

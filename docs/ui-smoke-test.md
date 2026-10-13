@@ -242,6 +242,34 @@ properly and expect to find something.
 - [ ] The answer is remembered across a relaunch and travels with an operation
       profile. An operator upgrading from a build that never asked is asked once.
 
+### Names suggested by voice similarity
+
+Needs an operation profile that has learned at least one voice, and a
+recording containing that person speaking for more than three seconds.
+
+- [ ] A recognised speaker reads **[Name (unconfirmed voice lead)]** on every
+      line — never a bare name. A one-line amber explanation sits above the
+      transcript while any such lead is on screen, and disappears once none is.
+- [ ] A turn shorter than three seconds is never given a suggested name.
+- [ ] **Copy transcript**, **.txt**, **Word** and the **analysis report** all
+      open with the explanation; each line keeps its marker. **.srt** keeps the
+      marker on each subtitle.
+- [ ] Click the suggested speaker's tag: the menu offers **Confirm or
+      correct…**, not "Rename". It opens a dialog with **nothing typed in**,
+      focus on **Leave as a suggestion**, a **Play a line** button, and a
+      sentence saying that confirming teaches the profile and proposes samples
+      for review.
+- [ ] Press **Enter** straight away: the dialog closes and the name is **still
+      a suggestion**. No single keystroke confirms it.
+- [ ] **Confirm – I have listened**: the marker goes, on every line. Type a
+      different name instead and use it: the speaker takes that name.
+- [ ] Before confirming, move a line onto the suggested speaker: it says the
+      voice was not learned because the name is still a suggestion.
+- [ ] **Save speaker to profile…** does not offer a speaker that is still a
+      suggestion.
+- [ ] Open a project saved by an earlier version that had a recognised name:
+      it reopens with the marker, unless the name had been typed over.
+
 ### Redoing the speaker split
 
 - [ ] **Redo speaker separation…** sits under the export row. Before any run it

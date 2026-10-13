@@ -73,3 +73,62 @@ def test_round_trip_preserves_non_diarized(tmp_path):
     assert not loaded.has_speakers
     assert loaded.segments[0].text == "one two"
     assert names == {}
+
+
+# -- A recognised name reopens as what it is --------------------------------
+#
+# Before schema 3 a name put on a speaker by voice similarity was stored bare,
+# so an older project reopened with "[Viktor Marchenko]" - an unqualified
+# identity - and nothing saying it had only ever been a suggestion.
+
+import json  # noqa: E402
+
+from whispr.project import load_project_record  # noqa: E402
+from whispr.speaker_names import as_lead, is_lead  # noqa: E402
+
+
+def _older_project(tmp_path, names, version=2):
+    path = tmp_path / f"old{PROJECT_SUFFIX}"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": version,
+                "result": {"text": "", "segments": []},
+                "speaker_names": names,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_an_older_project_reopens_a_recognised_name_as_a_lead(tmp_path):
+    path = _older_project(tmp_path, {"voice::Viktor Marchenko": "Viktor Marchenko"})
+    names = load_project_record(path).speaker_names
+    assert names["voice::Viktor Marchenko"] == as_lead("Viktor Marchenko")
+
+
+def test_a_name_the_operator_typed_over_is_left_alone(tmp_path):
+    """Differing from what the recogniser produced, it was their decision."""
+    path = _older_project(
+        tmp_path, {"voice::Viktor Marchenko": "V. Marchenko", "SPEAKER_01": "Anna"}
+    )
+    names = load_project_record(path).speaker_names
+    assert names == {"voice::Viktor Marchenko": "V. Marchenko", "SPEAKER_01": "Anna"}
+
+
+def test_a_current_project_keeps_confirmation(tmp_path):
+    """From schema 3 a bare name on a voice:: speaker is a confirmed one."""
+    path = tmp_path / f"new{PROJECT_SUFFIX}"
+    result = TranscriptionResult(
+        text="", language="en", language_probability=1.0, duration=0.0, segments=[]
+    )
+    save_project(
+        path,
+        result,
+        {"voice::Viktor": "Viktor", "voice::Anna": as_lead("Anna")},
+        "call.wav",
+    )
+    names = load_project_record(path).speaker_names
+    assert names["voice::Viktor"] == "Viktor", "a confirmed name stays confirmed"
+    assert is_lead(names["voice::Anna"]), "an unconfirmed lead stays a lead"

@@ -25,6 +25,7 @@ from ..transcription import (
     is_low_confidence_segment,
     is_low_confidence_word,
 )
+from .confirm_lead import ask_confirm_lead
 from .dialogs import active_window
 from .theme import palette
 
@@ -316,7 +317,11 @@ class TranscriptView:
             menu.add_separator()
             cur_name = self._speaker_names.get(current, current)
             menu.add_command(
-                label=f"Rename '{cur_name}' everywhere…",
+                label=(
+                    f"Confirm or correct \u2018{bare_name(cur_name)}\u2019…"
+                    if is_lead(cur_name)
+                    else f"Rename \u2018{cur_name}\u2019 everywhere…"
+                ),
                 command=lambda: self._rename_speaker(current),
             )
             try:
@@ -354,6 +359,28 @@ class TranscriptView:
         name = self._speaker_names.get(speaker_id)
         if name:
             self._on_enroll(name, spans)
+
+    def _confirm_lead(self, speaker_id: str, name: str) -> Optional[str]:
+        """Ask about a lead; the name to apply, or None to leave it."""
+        result = self._result
+        turns = [
+            seg
+            for seg in (result.segments if result is not None else [])
+            if (seg.speaker or "UNKNOWN") == speaker_id
+        ]
+        seconds = sum(max(0.0, seg.end - seg.start) for seg in turns)
+        play = None
+        if self._on_play is not None and turns:
+            longest = max(turns, key=lambda seg: seg.end - seg.start)
+            on_play = self._on_play
+
+            def play() -> None:
+                on_play(longest.start, longest.end)
+
+        outcome = ask_confirm_lead(
+            self.root, name=name, lines=len(turns), seconds=seconds, on_play=play
+        )
+        return outcome[1] if outcome is not None else None
 
     # -- Playback ----------------------------------------------------------
 
@@ -651,19 +678,18 @@ class TranscriptView:
 
     def _rename_speaker(self, speaker_id: str) -> None:
         current = self._speaker_names.get(speaker_id, speaker_id)
-        # A voice lead is offered without its marker, so pressing OK confirms
-        # it as a plain name rather than writing "? (voice lead)" into one.
-        new_name = simpledialog.askstring(
-            "Rename speaker",
-            (
-                f"{current} was suggested by voice similarity. Type the name to "
-                "confirm it, or a different one to correct it:"
-                if is_lead(current)
-                else f"New name for {current}:"
-            ),
-            initialvalue=bare_name(current),
-            parent=active_window(self.root),
-        )
+        if is_lead(current):
+            # A voice-similarity suggestion is confirmed in its own dialog, not
+            # this rename box: confirming trains the profile, so it has to be
+            # a deliberate act - see whispr.gui.confirm_lead.
+            new_name = self._confirm_lead(speaker_id, bare_name(current))
+        else:
+            new_name = simpledialog.askstring(
+                "Rename speaker",
+                f"New name for {current}:",
+                initialvalue=current,
+                parent=active_window(self.root),
+            )
         if not new_name or not new_name.strip():
             return
         self._speaker_names[speaker_id] = new_name.strip()

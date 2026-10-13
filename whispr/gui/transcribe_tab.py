@@ -67,7 +67,7 @@ from ..run_summary import (
 )
 from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
 from ..speaker_count import UNSET as SPEAKERS_UNSET
-from ..speaker_names import is_lead, preset_names
+from ..speaker_names import LEAD_LEGEND, any_leads, is_lead, preset_names
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
     ProfileError,
@@ -870,7 +870,7 @@ class TranscribeTab:
             text=(
                 "With speaker identification on, each speaker is compared with "
                 "the voices this profile has learned, and a similar one is shown "
-                "as a suggestion marked \u201c?\u00a0(voice\u00a0lead)\u201d for you to "
+                "as a suggestion marked \u201c(unconfirmed\u00a0voice\u00a0lead)\u201d for you to "
                 "confirm. Confirming or correcting a name teaches it that voice "
                 "for next time; it does not change the words themselves."
             ),
@@ -948,6 +948,17 @@ class TranscribeTab:
         self._result_caveat = ttk.Label(
             results.body,
             textvariable=self.result_caveat_var,
+            style=Style.WARNING,
+            wraplength=760,
+            justify="left",
+        )
+
+        # What "(unconfirmed voice lead)" means, shown whenever one is on
+        # screen. The marker is clear on its own; this says what to do about it.
+        self.lead_legend_var = tk.StringVar(value="")
+        self._lead_legend = ttk.Label(
+            results.body,
+            textvariable=self.lead_legend_var,
             style=Style.WARNING,
             wraplength=760,
             justify="left",
@@ -1465,7 +1476,11 @@ class TranscribeTab:
         self._output_names = {}
         self._set_result_caveat("")
         try:
-            self.transcript_view.set_result(None, {})
+            # The names belonged to the transcript being cleared; left in
+            # place, the voice-lead legend would stand over an empty pane.
+            self._speaker_names = {}
+            self.transcript_view.set_result(None, self._speaker_names)
+            self._refresh_lead_legend()
             # The summary names a recording. Left standing, it names the
             # previous one while the next is being transcribed.
             self.root.after(0, lambda: self.result_summary_var.set(""))
@@ -1845,6 +1860,7 @@ class TranscribeTab:
                 self._speaker_choice_used = self.speaker_count_var.get()
                 self._speaker_edits = 0
                 self.transcript_view.set_result(result, names)
+                self._refresh_lead_legend()
                 self._update_redo_state()
 
             self._note_if_much_was_skipped(result, src)
@@ -1918,13 +1934,9 @@ class TranscribeTab:
             # Recognise enrolled voices (relabel turns to known speakers).
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
-                refusal = _derived_voice_refusal(source)
-                if refusal is not None:
-                    append_line(self.status, f"Voice recognition skipped. {refusal}")
-                else:
-                    speaker_segments = self._recognize_speakers(
-                        speaker_segments, diar_wav
-                    )
+                speaker_segments = self._recognize_speakers(
+                    speaker_segments, diar_wav, source
+                )
             # Keep a 16 kHz copy of the audio for the rest of the session, so a
             # post-run correction can teach a voice - and so the speaker split
             # can be redone without transcribing the recording a second time.
@@ -1997,6 +2009,8 @@ class TranscribeTab:
 
     def _save_outputs_if_possible(self) -> None:
         """Re-save after a transcript edit, when an output folder is in use."""
+        # A rename may have confirmed the last lead, or a move created one.
+        self._refresh_lead_legend()
         # Every call is a speaker tag changed by hand (the transcript view only
         # signals for reassignments and renames), which is what a redo costs.
         self._speaker_edits += 1
@@ -2104,7 +2118,9 @@ class TranscribeTab:
             found = len({seg.speaker for seg in speaker_segments})
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
-                speaker_segments = self._recognize_speakers(speaker_segments, wav)
+                speaker_segments = self._recognize_speakers(
+                    speaker_segments, wav, self._result_source
+                )
             # From the words as transcribed, never from the last split's output.
             result.segments = assign_speakers(copy.deepcopy(base), speaker_segments)
             self._diarized_count = found
@@ -2119,6 +2135,7 @@ class TranscribeTab:
             names = self._preset_names_for(result, typed_names=False)
             self._speaker_names = names
             self.transcript_view.set_result(result, names)
+            self._refresh_lead_legend()
             self._record_redo_provenance(requested)
             if self._result_source and self._result_outdir:
                 self._save_outputs(result, self._result_source, self._result_outdir)
@@ -2169,12 +2186,36 @@ class TranscribeTab:
         count = self.transcript_view.find(query, backwards=backwards)
         self.find_status_var.set(f"{count} match(es)" if count else "No matches")
 
+    def _refresh_lead_legend(self) -> None:
+        """Show the voice-lead legend while any lead is on screen.
+
+        Called from runs and redos, which are on worker threads; widgets are
+        only touched on the UI thread, so from anywhere else it reschedules
+        itself there.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            self.root.after(0, self._refresh_lead_legend)
+            return
+        if any_leads(self._speaker_names.values()):
+            self.lead_legend_var.set(LEAD_LEGEND)
+            if not self._lead_legend.winfo_manager():
+                self._lead_legend.pack(
+                    anchor="w", pady=(SPACE_XS, 0), before=self._output_tabs
+                )
+        else:
+            self.lead_legend_var.set("")
+            self._lead_legend.pack_forget()
+
     def _copy_transcript(self) -> None:
         """Copy the rendered transcript text to the clipboard."""
         text = self.transcript_view.get_text()
         if not text.strip():
             self.progress_label_var.set("Nothing to copy yet.")
             return
+        if any_leads(self._speaker_names.values()):
+            # Pasted into a report, the lines lose the screen around them; the
+            # legend goes with them, as it does in every saved format.
+            text = f"{LEAD_LEGEND}\n\n{text}"
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.progress_label_var.set("Transcript copied to clipboard.")
@@ -2324,6 +2365,7 @@ class TranscribeTab:
         # That caveat was about the run this transcript did not come from.
         self._set_result_caveat("")
         self.transcript_view.set_result(result, self._speaker_names)
+        self._refresh_lead_legend()
         self.progress_label_var.set(f"Opened {Path(path).name}")
 
     def _on_drop_media(self, paths: List[Path]) -> None:
@@ -2478,8 +2520,21 @@ class TranscribeTab:
                 )
         return self._embedder if isinstance(self._embedder, SpeakerEmbedder) else None
 
-    def _recognize_speakers(self, speaker_segments, diar_wav: Path):
-        """Relabel diarizer turns to enrolled voices; fills ``_recognized_names``."""
+    def _recognize_speakers(
+        self, speaker_segments, diar_wav: Path, source: "Optional[Path]"
+    ):
+        """Relabel diarizer turns to enrolled voices; fills ``_recognized_names``.
+
+        ``source`` is the recording the transcript was made from. The refusal
+        for processed audio lives here, the one place every route to
+        recognition passes through. It was checked at the first run's call
+        only, so Redo speaker separation recognised voices on a transcript of a
+        cleaned copy that the first run had correctly refused.
+        """
+        refusal = _derived_voice_refusal(source)
+        if refusal is not None:
+            append_line(self.status, f"Voice recognition skipped. {refusal}")
+            return speaker_segments
         profile = self._profile
         if profile is None or not profile.voiceprints:
             return speaker_segments
@@ -2508,7 +2563,10 @@ class TranscribeTab:
         self._recognized_names = name_map
         if name_map:
             recognised = ", ".join(sorted(set(name_map.values())))
-            append_line(self.status, f"Recognised voice(s): {recognised}.")
+            append_line(
+                self.status,
+                f"Suggested by voice similarity (unconfirmed leads): {recognised}.",
+            )
         return relabeled
 
     def _set_session_wav(self, diar_wav: Path) -> None:
@@ -2644,6 +2702,20 @@ class TranscribeTab:
             self._announce("warning", refusal)
             return
         spans = self._speaker_spans()
+        # Unconfirmed suggestions are not offered. Saving one would add the
+        # recogniser's own pick to that subject's review queue - audio that is,
+        # by construction, similar to the reference, so the outlier check would
+        # not flag it.
+        leads = sorted(name for name in spans if is_lead(name))
+        spans = {name: value for name, value in spans.items() if not is_lead(name)}
+        if leads and not spans:
+            self._announce(
+                "warning",
+                "Every speaker here is still an unconfirmed voice lead. Click a "
+                "speaker tag and confirm or correct the name before saving it to "
+                "a subject.",
+            )
+            return
         if not spans:
             self._announce(
                 "warning",

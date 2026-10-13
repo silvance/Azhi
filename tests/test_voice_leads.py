@@ -67,7 +67,7 @@ def _names():
 def test_a_text_export_marks_the_lead_and_explains_it(blank_lines):
     text = _result().to_txt(_names(), blank_lines=blank_lines)
     assert "[Viktor Marchenko]" not in text, "never an unqualified identity"
-    assert "[Viktor Marchenko? (voice lead)] I'll be there at nine." in text
+    assert "[Viktor Marchenko (unconfirmed voice lead)] I'll be there at nine." in text
     assert text.startswith(sn.LEAD_LEGEND)
     assert "not an identification" in text
 
@@ -75,13 +75,13 @@ def test_a_text_export_marks_the_lead_and_explains_it(blank_lines):
 def test_subtitles_mark_the_lead_on_the_line():
     srt = _result().to_srt(_names())
     assert "[Viktor Marchenko]" not in srt
-    assert "Viktor Marchenko? (voice lead)" in srt
+    assert "Viktor Marchenko (unconfirmed voice lead)" in srt
 
 
 def test_the_analysis_report_marks_and_explains_the_lead():
     lines = _transcript_lines(_result(), _names())
     assert lines[0] == sn.LEAD_LEGEND
-    assert any("Viktor Marchenko? (voice lead)" in line for line in lines)
+    assert any("Viktor Marchenko (unconfirmed voice lead)" in line for line in lines)
     assert not any("[Viktor Marchenko]" in line for line in lines)
 
 
@@ -99,5 +99,5 @@ def test_a_word_export_marks_and_explains_the_lead(tmp_path):
     out = transcript_to_docx(_result(), tmp_path / "t.docx", _names())
     paragraphs = [p.text for p in docx.Document(str(out)).paragraphs]
     assert paragraphs[0] == sn.LEAD_LEGEND
-    assert any("Viktor Marchenko? (voice lead)" in p for p in paragraphs)
+    assert any("Viktor Marchenko (unconfirmed voice lead)" in p for p in paragraphs)
     assert not any("[Viktor Marchenko]" in p for p in paragraphs)

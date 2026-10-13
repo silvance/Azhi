@@ -157,7 +157,7 @@ class DiarizationProvenance:
     # pyannote's pipeline, as repo@commit; empty for sherpa, which has none.
     pipeline: str = ""
     # Names put on speakers by voice similarity to learned voices. Each was
-    # shown as a "? (voice lead)" suggestion; listed here so the record says
+    # shown as an "(unconfirmed voice lead)"; listed here so the record says
     # which names came from the recogniser rather than from the operator.
     voice_leads: List[str] = field(default_factory=list)
 
