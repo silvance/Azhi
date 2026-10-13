@@ -101,7 +101,10 @@ def ask_save_speaker(
     # -- Which subject ----------------------------------------------------
     ttk.Label(frame, text="Save to", style=Style.FIELD_LABEL).pack(anchor="w")
     target_var = tk.StringVar(value="existing" if by_label else "new")
-    existing_var = tk.StringVar(value=next(iter(by_label), ""))
+    # Nobody is chosen for the operator: the most recently updated subject used
+    # to be, with Add samples focused, so Enter filed this speaker's audio
+    # under whoever was worked on last.
+    existing_var = tk.StringVar(value="")
     new_var = tk.StringVar(value="")
 
     existing_row = ttk.Frame(frame, style=Style.CARD_INNER)
@@ -202,6 +205,6 @@ def ask_save_speaker(
 
     win.bind("<Return>", lambda _e: _confirm())
     present(win, root, modal=True)
-    add.focus_set()
+    (existing_combo if by_label else new_entry).focus_set()
     win.wait_window()
     return chosen["value"]

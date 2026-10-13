@@ -555,8 +555,8 @@ class SpeakerProfilesTab:
         lines += [
             "",
             "Dropped samples held vectors that could not be compared. Demoted "
-            "samples are kept as pending and can be approved under "
-            "'Selected subject' after review.",
+            "samples are kept as pending: select the sample in the subject's "
+            "Reference samples list and use Approve sample once reviewed.",
         ]
         messagebox.showwarning(
             "Imported with changes", "\n".join(lines), parent=active_window(self.root)
@@ -581,6 +581,24 @@ class SpeakerProfilesTab:
         profile = self._current(self._selected)
         if profile is None:
             return
+        sample = next((x for x in profile.samples if x.sample_id == sample_id), None)
+        if (
+            sample is not None
+            and "Outlier" in (sample.notes or "")
+            and not messagebox.askyesno(
+                "Approve a sample unlike the reference?",
+                "This sample sounds unlike the rest of "
+                f"{profile.display_name}'s reference. It may be someone else, "
+                "or the same person on a very different channel. Approving it "
+                "makes it part of the reference every later comparison is "
+                "measured against. Approve it only if you have listened and "
+                "are sure it is them.",
+                icon="warning",
+                default="no",
+                parent=active_window(self.root),
+            )
+        ):
+            return
         if profile.approve_sample(sample_id) and self._save(profile):
             self._selected = profile
             self._render_detail()
@@ -593,6 +611,15 @@ class SpeakerProfilesTab:
             return
         profile = self._current(self._selected)
         if profile is None:
+            return
+        if not messagebox.askyesno(
+            "Remove sample",
+            f"Remove this sample from {profile.display_name}'s profile? This "
+            "cannot be undone; the recording itself is not affected.",
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        ):
             return
         if profile.remove_sample(sample_id) and self._save(profile):
             self._selected = profile
