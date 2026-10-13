@@ -34,6 +34,22 @@ def choices() -> "List[str]":
     return [UNSET, UNKNOWN] + [_count_label(n) for n in range(1, MAX_SPEAKERS + 1)]
 
 
+def separation_choices() -> "List[str]":
+    """The count offered where a recording is separated to pick one speaker.
+
+    "Not sure" first, as the default: there the operator listens to each
+    speaker before choosing, so a wrong guess costs a longer list rather than
+    a re-run. One person is left out - separating a recording into one
+    speaker has nothing to pick from.
+    """
+    return [UNKNOWN] + [_count_label(n) for n in range(2, MAX_SPEAKERS + 1)]
+
+
+def from_label(label: str) -> "Optional[int]":
+    """The count a dropdown label asks for, or None for "Not sure" / unset."""
+    return parse(to_setting(label))
+
+
 def _count_label(count: int) -> str:
     return "1 person" if count == 1 else f"{count} people"
 

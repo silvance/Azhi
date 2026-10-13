@@ -67,3 +67,17 @@ def test_label_and_setting_round_trip():
 def test_a_chosen_count_reaches_the_engine():
     """The number the operator picked is the number diarization is given."""
     assert speaker_count.parse(speaker_count.to_setting("3 people")) == 3
+
+
+def test_separation_choices_start_at_not_sure_and_two_people():
+    choices = speaker_count.separation_choices()
+    assert choices[0] == speaker_count.UNKNOWN
+    assert choices[1] == "2 people"
+    assert "1 person" not in choices
+    assert speaker_count.UNSET not in choices
+
+
+def test_from_label_gives_the_count_asked_for():
+    assert speaker_count.from_label("3 people") == 3
+    assert speaker_count.from_label(speaker_count.UNKNOWN) is None
+    assert speaker_count.from_label(speaker_count.UNSET) is None

@@ -22,6 +22,7 @@ from .theme import (
     SPACE_LG,
     SPACE_MD,
     SPACE_SM,
+    SPACE_XL,
     SPACE_XS,
     Style,
     palette,
@@ -54,6 +55,35 @@ def wrap_to(container: tk.Misc, label: ttk.Label, *, slack: int = 0) -> None:
             label.configure(wraplength=width)
 
     container.bind("<Configure>", _fit, add="+")
+
+
+def speaker_count_row(parent: tk.Misc, variable: tk.StringVar) -> ttk.Combobox:
+    """An indented "How many people?" choice under a "separate speakers" option.
+
+    Separation left to work the number out can split one voice in two on a
+    long or poor recording - the same failure the Transcribe page asks about
+    before a run. Returns the drop-down so the caller can switch it off when
+    separation is not the chosen option.
+    """
+    from .. import speaker_count
+
+    row = ttk.Frame(parent, style=Style.CARD_INNER)
+    row.pack(anchor="w", padx=(SPACE_XL, 0), pady=(SPACE_XS, SPACE_XS))
+    ttk.Label(row, text="How many people?", style=Style.MUTED).pack(side="left")
+    combo = ttk.Combobox(
+        row,
+        textvariable=variable,
+        values=speaker_count.separation_choices(),
+        state="readonly",
+        width=22,
+    )
+    combo.pack(side="left", padx=(SPACE_SM, 0))
+    ttk.Label(
+        row,
+        text="Knowing it keeps one voice from being split in two.",
+        style=Style.META,
+    ).pack(side="left", padx=(SPACE_SM, 0))
+    return combo
 
 
 def scroll_into_view(canvas: tk.Canvas, widget: tk.Misc) -> None:

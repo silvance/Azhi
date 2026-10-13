@@ -393,9 +393,14 @@ class WhisprApp:
         transcribing = self.transcribe.busy_description()
         if transcribing:
             losses.append(transcribing)
-        translate = getattr(self, "translate", None)
-        if translate is not None and translate.is_busy():
-            losses.append("A translation is still running and will be lost.")
+        for name, loss in (
+            ("translate", "A translation is still running and will be lost."),
+            ("speaker_compare", "A speaker comparison is still running."),
+            ("speaker_profiles", "A recording is still being added to a profile."),
+        ):
+            page = getattr(self, name, None)
+            if page is not None and page.is_busy():
+                losses.append(loss)
         if losses and not messagebox.askyesno(
             "Close Whispers?",
             "\n\n".join(losses) + "\n\nClose anyway?",
