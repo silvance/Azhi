@@ -114,8 +114,6 @@ class SpeakerCompareTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
         *,
         get_analysis: Optional[Callable[[], Any]] = None,
     ) -> None:
@@ -1069,9 +1067,6 @@ class SpeakerCompareTab:
         self.root.after(0, lambda: self.status_var.set(message))
 
     # -- Shared hooks -------------------------------------------------------
-
-    def notify_cancelling(self) -> None:
-        return None
 
     def get_settings(self) -> dict:
         return {}

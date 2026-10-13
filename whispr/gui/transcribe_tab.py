@@ -225,15 +225,15 @@ class TranscribeTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
         *,
         dnd_ok: bool,
     ) -> None:
         self.parent = parent
         self.root = root
-        self._cancel_event = cancel_event
-        self._on_cancel = on_cancel
+        # This page's own: one signal shared by every page meant Cancel here
+        # stopped a Live session, and starting a translation cleared a
+        # transcription's pending cancel.
+        self._cancel_event = threading.Event()
         self._dnd_ok = dnd_ok
         # True from the moment a run or redo is asked for until it has ended,
         # set and cleared on the UI thread. The buttons are switched off from
@@ -900,7 +900,7 @@ class TranscribeTab:
             actions, "Transcribe recording", self.run_in_thread
         )
         self.run_button.pack(side="left")
-        self.cancel_button = secondary_button(actions, "Cancel", self._on_cancel)
+        self.cancel_button = secondary_button(actions, "Cancel", self._cancel)
         self.cancel_button.configure(state="disabled")
         self.cancel_button.pack(side="left", padx=(SPACE_SM, 0))
         self.toggle_settings_button = subtle_button(
@@ -1096,6 +1096,13 @@ class TranscribeTab:
         )
 
     # -- Cancellation ------------------------------------------------------
+
+    def _cancel(self) -> None:
+        """Ask this page's run to stop at its next checkpoint."""
+        if not self._busy:
+            return
+        self._cancel_event.set()
+        self.notify_cancelling()
 
     def notify_cancelling(self) -> None:
         self.cancel_button.configure(state="disabled")

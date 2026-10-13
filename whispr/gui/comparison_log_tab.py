@@ -13,11 +13,10 @@ that instead of showing a number that looks like one.
 
 from __future__ import annotations
 
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..comparison_log import (
     KIND_GALLERY,
@@ -56,12 +55,9 @@ class ComparisonLogTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
     ) -> None:
         self.parent = parent
         self.root = root
-        self._cancel_event = cancel_event
         self._records: List[ComparisonRecord] = []
         self._shown: List[ComparisonRecord] = []
         self._selected: Optional[ComparisonRecord] = None
@@ -550,9 +546,6 @@ class ComparisonLogTab:
         self.root.after(0, lambda: self.status_var.set(message))
 
     # -- App plumbing ------------------------------------------------------
-
-    def notify_cancelling(self) -> None:
-        """Nothing here runs in the background; there is nothing to cancel."""
 
     def close(self) -> None:
         """No resources to release."""

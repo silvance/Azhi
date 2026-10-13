@@ -525,7 +525,8 @@ keep up on CPU — a big model will fall behind.
 - **Test connection** — a quick few-second probe that confirms the stream is
   reachable (and audio is flowing) before you start a session; handy while
   setting up.
-- **Start** / **Stop** control capture; the shared **Cancel** also stops it.
+- **Start** / **Stop** control capture. Cancel on another page does not stop
+  it: each page's Cancel stops only that page's work.
 
 Accuracy on a live feed is bounded by the audio: room noise, distance from the
 mic and overlapping speech all hurt more than on a clean recording. For a room,

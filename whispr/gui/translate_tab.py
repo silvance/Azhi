@@ -52,8 +52,6 @@ class TranslateTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
         *,
         ocr_available: bool,
         detect_available: bool,
@@ -61,8 +59,14 @@ class TranslateTab:
     ) -> None:
         self.parent = parent
         self.root = root
-        self._cancel_event = cancel_event
-        self._on_cancel = on_cancel
+        # This page's own cancel signal. It was shared with every page, so
+        # starting a translation cleared a transcription's pending cancel.
+        self._cancel_event = threading.Event()
+        # One job at a time, claimed on the UI thread before its worker starts.
+        # Nothing stopped a second Translate click starting a second job, which
+        # then cleared the first one's cancel.
+        self._busy = False
+        self._start_buttons: List[ttk.Button] = []
         self._ocr_available = ocr_available
         self._detect_available = detect_available
         self._dnd_ok = dnd_ok
@@ -122,15 +126,19 @@ class TranslateTab:
         self.translate_input.pack(fill="both", expand=True, pady=(SPACE_XS, SPACE_SM))
         paste_buttons = ttk.Frame(paste_frame, style=Style.CARD_INNER)
         paste_buttons.pack(fill="x")
-        primary_button(
+        translate_button = primary_button(
             paste_buttons, "Translate", self._translate_paste_in_thread
-        ).pack(side="left")
+        )
+        translate_button.pack(side="left")
+        self._start_buttons.append(translate_button)
         if self._ocr_available:
             # OCR a single image/PDF into the box so its text can be reviewed and
             # corrected before translating (OCR is rarely perfect).
-            secondary_button(
+            extract_button = secondary_button(
                 paste_buttons, "Extract from image/PDF…", self._extract_to_paste
-            ).pack(side="left", padx=(SPACE_SM, 0))
+            )
+            extract_button.pack(side="left", padx=(SPACE_SM, 0))
+            self._start_buttons.append(extract_button)
         result_header = ttk.Frame(paste_frame, style=Style.CARD_INNER)
         result_header.pack(fill="x", pady=(SPACE_MD, 0))
         ttk.Label(result_header, text="Result", style=Style.FIELD_LABEL).pack(
@@ -160,9 +168,11 @@ class TranslateTab:
         self.translate_files_var = tk.StringVar(value="No files selected.")
         row = ttk.Frame(batch_frame, style=Style.CARD_INNER)
         row.pack(fill="x")
-        primary_button(row, "Translate files", self._translate_files_in_thread).pack(
-            side="left"
+        files_button = primary_button(
+            row, "Translate files", self._translate_files_in_thread
         )
+        files_button.pack(side="left")
+        self._start_buttons.append(files_button)
         secondary_button(row, "Add files…", self._add_translate_files).pack(
             side="left", padx=(SPACE_SM, 0)
         )
@@ -195,7 +205,7 @@ class TranslateTab:
         run_frame.pack(fill="x", pady=(SPACE_LG, 0))
         run_frame.columnconfigure(1, weight=1)
         self.translate_cancel_button = secondary_button(
-            run_frame, "Cancel", self._on_cancel
+            run_frame, "Cancel", self._cancel
         )
         self.translate_cancel_button.configure(state="disabled")
         self.translate_cancel_button.grid(row=0, column=0, sticky="w")
@@ -213,9 +223,36 @@ class TranslateTab:
 
     # -- Cancellation ------------------------------------------------------
 
-    def notify_cancelling(self) -> None:
+    def _cancel(self) -> None:
+        """Ask this page's job to stop at its next checkpoint."""
+        if not self._busy:
+            return
+        self._cancel_event.set()
         self.translate_cancel_button.configure(state="disabled")
         self.translate_status_var.set("Cancelling…")
+
+    def _start(self, target: Callable[..., None], *args: object) -> None:
+        """Run ``target`` on a worker, unless a job is already running."""
+        if self._busy:
+            self.translate_status_var.set(
+                "Wait for the current job to finish, or cancel it."
+            )
+            return
+        self._busy = True
+        for button in self._start_buttons:
+            button.configure(state="disabled")
+        self._cancel_event.clear()
+
+        def run() -> None:
+            try:
+                target(*args)
+            except Exception as exc:  # noqa: BLE001 - e.g. a failed import
+                # Each worker frees the page in its own finally; this covers
+                # one that fails before reaching it, which would otherwise
+                # leave every start button off for good.
+                self._set_translate_busy(False, friendly_error(exc))
+
+        threading.Thread(target=run, daemon=True).start()
 
     # -- Languages ---------------------------------------------------------
 
@@ -346,6 +383,9 @@ class TranslateTab:
             )
             if not busy:
                 self.translate_progress["value"] = 0
+                self._busy = False
+                for button in self._start_buttons:
+                    button.configure(state="normal")
             self.translate_status_var.set(message or ("Working…" if busy else "Idle"))
 
         self.root.after(0, _do)
@@ -383,10 +423,7 @@ class TranslateTab:
         if not text.strip():
             self.translate_status_var.set("Nothing to translate.")
             return
-        self._cancel_event.clear()
-        threading.Thread(
-            target=self._translate_paste, args=(text,), daemon=True
-        ).start()
+        self._start(self._translate_paste, text)
 
     def _translate_paste(self, text: str) -> None:
         from ..translation import translate_text
@@ -434,11 +471,7 @@ class TranslateTab:
         if not self._translate_files:
             self.translate_status_var.set("Add files first.")
             return
-        self._cancel_event.clear()
-        files = list(self._translate_files)
-        threading.Thread(
-            target=self._translate_files_worker, args=(files,), daemon=True
-        ).start()
+        self._start(self._translate_files_worker, list(self._translate_files))
 
     def _translate_files_worker(self, files: List[Path]) -> None:
         from ..translation import translate_text
@@ -530,10 +563,7 @@ class TranslateTab:
         )
         if not path:
             return
-        self._cancel_event.clear()
-        threading.Thread(
-            target=self._extract_to_paste_worker, args=(Path(path), lang), daemon=True
-        ).start()
+        self._start(self._extract_to_paste_worker, Path(path), lang)
 
     def _extract_to_paste_worker(self, path: Path, lang: str) -> None:
         self._set_translate_busy(True, f"Reading {path.name} (OCR)…")
@@ -594,10 +624,7 @@ class TranslateTab:
         path = paths[0]
         if is_ocr_file(path):
             lang = self._ocr_lang_code()
-            self._cancel_event.clear()
-            threading.Thread(
-                target=self._extract_to_paste_worker, args=(path, lang), daemon=True
-            ).start()
+            self._start(self._extract_to_paste_worker, path, lang)
         else:
             try:
                 self._set_translate_input(

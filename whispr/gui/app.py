@@ -1,7 +1,6 @@
 """The Whispers application shell: window, header, tabs, and entry point.
 
-Holds the shared cancel signal and assembles the tabs this build can actually
-support: Transcribe always, then Speaker profiles and Speaker Compare when a
+Assembles the tabs this build can actually support: Transcribe always, then Speaker profiles and Speaker Compare when a
 speaker-embedding model is bundled, Live when ffmpeg is present, and Translate
 when the translation packs are. ``WHISPR_MODE=transcribe`` forces the lean
 single-purpose window. ``whispr.app`` re-exports :func:`main` so the console
@@ -13,7 +12,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import threading
 import tkinter as tk
 from functools import partial
 from tkinter import messagebox, ttk
@@ -74,9 +72,6 @@ class WhisprApp:
         # Whether tkdnd was loaded (see _enable_drag_and_drop) so tabs can register
         # file-drop targets.
         self._dnd_ok = drag_and_drop
-        # One shared cancel signal; either tab's Cancel button stops the running
-        # job (only one runs at a time).
-        self.cancel_event = threading.Event()
         self._tabs: list = []
         # Remembered preferences from the last session (best-effort).
         self._settings = load_settings()
@@ -123,8 +118,6 @@ class WhisprApp:
         self.transcribe = TranscribeTab(
             transcribe_root,
             self.root,
-            self.cancel_event,
-            self.cancel,
             dnd_ok=self._dnd_ok,
         )
         self.transcribe.apply_settings(self._settings.get("transcribe", {}))
@@ -135,17 +128,13 @@ class WhisprApp:
         # only when this build actually bundles one.
         if show_speakers:
             profiles_root = self._add_page("speakers", "Speaker Profiles")
-            self.speaker_profiles = SpeakerProfilesTab(
-                profiles_root, self.root, self.cancel_event, self.cancel
-            )
+            self.speaker_profiles = SpeakerProfilesTab(profiles_root, self.root)
             self._tabs.append(self.speaker_profiles)
 
             compare_root = self._add_page("compare", "Compare Speakers")
             self.speaker_compare = SpeakerCompareTab(
                 compare_root,
                 self.root,
-                self.cancel_event,
-                self.cancel,
                 # Lets a comparison report carry the current transcript and the
                 # provenance of the run that produced it.
                 get_analysis=self.transcribe.current_analysis,
@@ -155,9 +144,7 @@ class WhisprApp:
             # The record of what was actually run. It sits after the pages that
             # produce it, and refreshes when one of them writes an entry.
             history_root = self._add_page("history", "Comparison History")
-            self.comparison_log = ComparisonLogTab(
-                history_root, self.root, self.cancel_event, self.cancel
-            )
+            self.comparison_log = ComparisonLogTab(history_root, self.root)
             self._tabs.append(self.comparison_log)
             self.speaker_compare.on_history_changed = self.comparison_log.refresh
             # Any page that changes a subject tells all of them. Only
@@ -170,7 +157,7 @@ class WhisprApp:
 
         if show_live:
             live_root = self._add_page("live", "Live")
-            self.live = LiveTab(live_root, self.root, self.cancel_event, self.cancel)
+            self.live = LiveTab(live_root, self.root)
             self._tabs.append(self.live)
 
         if show_translate:
@@ -178,8 +165,6 @@ class WhisprApp:
             self.translate = TranslateTab(
                 translate_root,
                 self.root,
-                self.cancel_event,
-                self.cancel,
                 ocr_available=ocr_available(),
                 detect_available=importlib.util.find_spec("langdetect") is not None,
                 dnd_ok=self._dnd_ok,
@@ -272,13 +257,6 @@ class WhisprApp:
         self._current_page = key
         for name, button in self._nav_buttons.items():
             button.configure(style=Style.NAV_ACTIVE if name == key else Style.NAV)
-
-    def cancel(self) -> None:
-        """Request the running job (transcribe or translate) stop at its next
-        cancellation checkpoint, and reflect that in each tab."""
-        self.cancel_event.set()
-        for tab in self._tabs:
-            tab.notify_cancelling()
 
     def _show_help(self) -> None:
         """Open a short, plain-language guide for first-time / non-technical users."""

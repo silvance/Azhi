@@ -71,6 +71,13 @@ which can be a different file on each run.
       words. The settings put themselves away.
 - [ ] **Complete:** a green banner says so, the transcript has the page, and
       the line above it names the recording, language, duration and speakers.
+- [ ] **While running:** Redo speaker separation, Open project and Save
+      speaker to profile refuse with a banner, and the transcript's speaker
+      menus offer playback only ("Speaker corrections wait until the run
+      finishes"). A double-click on Transcribe starts one run.
+- [ ] **Cancel stays on its page:** Cancel here does not stop a Live session or
+      put "Cancelling…" on Translate; starting a translation does not undo a
+      Cancel pressed here. Translate's own buttons are off while it runs.
 - [ ] **Cancelled** and **failed** runs both say so where the eye already is,
       and a failure names the friendly reason and points at the Status tab. No
       traceback appears outside the Status tab.

@@ -71,12 +71,9 @@ class SpeakerProfilesTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
     ) -> None:
         self.parent = parent
         self.root = root
-        self._cancel_event = cancel_event
         self._profiles: List[SpeakerProfile] = []
         self._selected: Optional[SpeakerProfile] = None
         self._embedder: Optional[SpeakerEmbedder] = None
@@ -809,9 +806,6 @@ class SpeakerProfilesTab:
 
     def _status(self, message: str) -> None:
         self.root.after(0, lambda: self.status_var.set(message))
-
-    def notify_cancelling(self) -> None:
-        return None
 
     def get_settings(self) -> dict:
         return {}
