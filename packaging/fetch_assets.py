@@ -469,12 +469,32 @@ def fetch_argos(codes: List[str]) -> None:
         raise SystemExit("no Argos packs were installed (check the language codes)")
 
     # Warm the MiniSBD cache (and prove the pack works) with a sample translation.
+    # A failure is fatal. It used to print WARNING and carry on, which shipped
+    # a bundle whose sentence splitter would fetch its model from GitHub the
+    # first time an operator translated that language.
+    sample_text = "Test sentence. Another one."
     for code in installed_codes:
         try:
-            sample = translate.translate("Test sentence. Another one.", code, "en")
-            print(f"warmup {code} -> en ok: {sample!r}")
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            print(f"WARNING: warmup {code} -> en failed: {exc}")
+            sample = translate.translate(sample_text, code, "en")
+        except Exception as exc:  # noqa: BLE001 - reported and fatal
+            raise SystemExit(f"Argos warmup {code} -> en failed: {exc}") from exc
+        print(f"warmup {code} -> en ok: {sample!r}")
+
+    # Then prove it works with the network refused, exactly as a shipped copy
+    # runs. Whatever a language needs - its own splitter, a mapped one, or the
+    # English fallback for one MiniSBD does not know - has to be in the cache
+    # now, or this is where the build finds out rather than an operator.
+    from whispr.resources import NetworkRefused, refuse_network_downloads
+
+    refuse_network_downloads()
+    for code in installed_codes:
+        try:
+            translate.translate(sample_text, code, "en")
+        except NetworkRefused as exc:
+            raise SystemExit(
+                f"Argos {code} -> en still needs a download offline: {exc}"
+            ) from exc
+        print(f"offline {code} -> en ok")
 
     print(f"argos data -> {argos_home / 'argos-translate'}")
 

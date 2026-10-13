@@ -6,6 +6,8 @@ pane for troubleshooting.
 
 from __future__ import annotations
 
+import errno
+
 
 def friendly_error(exc: Exception) -> str:
     """Return a plain-English one-liner describing ``exc``."""
@@ -14,6 +16,10 @@ def friendly_error(exc: Exception) -> str:
     low = msg.lower()
     if isinstance(exc, FileNotFoundError) or "no such file" in low:
         return f"A required file was missing: {msg}"
+    if isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError):
+        plain = _plain_os_error(exc)
+        if plain:
+            return plain
     if "ffmpeg" in low:
         return (
             "Couldn't run ffmpeg, which is needed to read this file. The "
@@ -22,12 +28,12 @@ def friendly_error(exc: Exception) -> str:
         )
     if "faster-whisper is not installed" in low or "faster_whisper" in low:
         return (
-            "The transcription engine isn't installed "
-            "(pip install 'silvance-whisper[gui]')."
+            "The transcription engine is not in this copy, so it has to be "
+            "rebuilt. System status (top right) shows what this copy includes."
         )
     # A model chosen in the GUI that this offline build doesn't contain. The
     # message is already written for the operator, so surface it as-is.
-    if "isn't in this build" in low:
+    if name in ("ModelUnavailable", "NetworkRefused") or "isn't in this build" in low:
         return msg.splitlines()[0]
     # These name the control the operator has to change, which now lives under
     # Advanced options > Speaker separation > Method.
@@ -66,8 +72,27 @@ def friendly_error(exc: Exception) -> str:
     ):
         detail = msg.splitlines()[0] if msg else name
         return (
-            "OCR couldn't run in this build (it must be built with OCR bundled — "
-            f"'ocr_langs' set). Details: {detail}"
+            "Reading text from images and PDFs is not available in this copy; "
+            f"it has to be rebuilt with OCR included. ({detail})"
         )
     short = msg.splitlines()[0] if msg else name
     return f"Something went wrong ({name}): {short}"
+
+
+def _plain_os_error(exc: OSError) -> str:
+    """The everyday file failures, said the way an operator would say them.
+
+    A refused save to a case share read "Something went wrong (PermissionError):
+    [Errno 13] Access is denied: '\\\\fileserver\\...'".
+    """
+    where = f" {exc.filename}" if exc.filename else " that location"
+    if isinstance(exc, PermissionError) or exc.errno in (errno.EACCES, errno.EPERM):
+        return (
+            f"This computer would not allow writing to or reading from{where}. "
+            "Choose another folder, or ask for access to this one."
+        )
+    if exc.errno == errno.ENOSPC:
+        return f"The disk is full, so{where} could not be written. Free some space or choose another drive."
+    if exc.errno == errno.EROFS:
+        return f"{where.strip().capitalize() or 'That location'} is read-only. Choose another folder."
+    return ""

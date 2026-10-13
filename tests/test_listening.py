@@ -508,3 +508,13 @@ def test_an_unusual_sample_rate_is_handled(tmp_path):
     out, rate = read_wav(report.output)
     assert rate == 44100, "the listening copy keeps the recording's sample rate"
     assert len(out) == len(speech)
+
+
+def test_derived_copies_are_recognised_whatever_the_case():
+    """On Windows "X.CLEANED.WAV" and "x.cleaned.wav" are the same file."""
+    from whispr import enhance
+
+    assert listening.looks_polished("CALL.WAV.LISTENING.WAV")
+    assert enhance.looks_cleaned("Call.Wav.Cleaned.Wav")
+    assert listening.derived_kind("A.WAV.LISTENING.WAV") == "listening copy"
+    assert listening.derived_kind("A.WAV.CLEANED.WAV") == "cleaned copy"

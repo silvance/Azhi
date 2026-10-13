@@ -289,7 +289,8 @@ def looks_polished(path: PathLike) -> bool:
     the file can still get it into a comparison, which is why the wording where
     this is used explains the reason rather than just refusing.
     """
-    return Path(path).name.endswith(SUFFIX)
+    # Case-insensitive: on Windows "X.LISTENING.WAV" is the same file name.
+    return Path(path).name.lower().endswith(SUFFIX)
 
 
 def derived_kind(path: PathLike) -> "Optional[str]":

@@ -115,6 +115,8 @@ Everything most people need is in the **Options** card:
 - **Identify who is speaking** — tick this to label who said what. See the
   next section.
 - **Save a copy to a folder** — where to write the `.txt` (and `.srt`) output.
+  Ticked with no folder chosen, the copy is saved beside the recording; the
+  message at the end of the run says exactly where. Untick it to save nothing.
 
 Then press **Transcribe recording**.
 
@@ -320,10 +322,21 @@ you have corrected, per operation rather than globally. Pick the profile you
 are working under and the tool remembers what that work looks like — model,
 options, and the voices it has learned from your corrections.
 
-With **Recognise and learn speaker voices for this profile** on, a voice it
-already knows from that operation is named in new transcripts automatically,
-and voices you correct are learned for next time. Those learned samples still
-wait for your approval before they count as a reference — see
+With **Recognise and learn speaker voices for this profile** on, a speaker who
+sounds like a voice the profile has learned is **suggested**, not named. The
+suggestion reads like this, on screen and in every saved file:
+
+> [Viktor Marchenko (unconfirmed voice lead)] I'll be there at nine.
+
+That is a lead from voice similarity — not an identification, and not a
+finding. To confirm it, click the speaker tag and choose **Confirm**, having
+listened to a line; to correct it, type the right name. Until you do, the
+marker stays, every saved file explains what it means, nothing is learned from
+that speaker, and it cannot be saved to a subject. A turn shorter than three
+seconds is never given a suggestion at all.
+
+Names you confirm or correct are learned for next time. Samples learned this
+way still wait for your approval before they count as a reference — see
 [section 7](#7-reference-voices-speaker-profiles).
 
 Leave it alone if you only work one case at a time. It earns its place when
@@ -395,6 +408,10 @@ hour again. If one of those is genuinely a separate recording, add it with
 written to the output folder, or beside the source if you have not set one,
 and each transcript appears as it finishes.
 
+While recordings are queued, a file you choose or drop **joins the queue**, and
+the queue is what runs. A file you had already chosen before adding a folder
+joins it too. **Clear** empties the queue and returns to single files.
+
 **Two recordings with the same name do not overwrite each other.** A case
 folder often holds `2026-09-01/interview.wav` and `2026-09-02/interview.wav`;
 their transcripts are written as `2026-09-01 - interview.wav.txt` and
@@ -427,8 +444,10 @@ comparison is worth.
 3. Answer **Which speech is the subject?**
    - *The whole recording is this subject* — for a recording of them alone.
    - *Several people — separate speakers and let me pick* — for a conversation.
-     You then pick which speaker is them from a list showing how long each
-     talked.
+     You then pick which speaker is them. Each speaker has **▶ Play sample**
+     (their longest turn); listen before choosing, because the speaker numbers
+     only reflect the order they were found. Nothing is chosen for you, and
+     Cancel adds nothing.
    - *I'll give the time ranges* — type the spans yourself, e.g.
      `0:10-0:45, 1:20-2:00`.
 4. Repeat with more recordings. More speech, from more occasions, in more
@@ -504,8 +523,15 @@ starting points, not figures calibrated against your recordings, and they are
 recorded in every exported report so a result can always be read against the
 settings that produced it.
 
-**Export report…** writes the result with everything needed to check it later:
-the recordings, the models, the thresholds, and the caveats.
+**Export this result…** writes the result on screen — a comparison or a search
+of all profiles — with everything needed to check it later: the recording and
+its SHA-256, the models, the thresholds, and the caveats. The open transcript
+is attached only when it is of that same recording.
+
+**Export session report…** writes every comparison and search made on this
+page since Whispers opened, in order. **Start a new session report** begins
+that list again; it does not touch Comparison History, which keeps every
+record.
 
 ---
 

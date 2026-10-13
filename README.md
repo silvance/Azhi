@@ -180,7 +180,7 @@ run takes, never the transcript. Asking for *NVIDIA GPU (CUDA)* on a machine
 without one falls back to the CPU **and says so** rather than failing the run,
 and a GPU that fails mid-load (VRAM, driver, a busy card) is retried on the CPU.
 The detection is a local query to the bundled inference library — no driver
-install, no download, no network. **Self-test…** reports what this machine has.
+install, no download, no network. **System status** reports what this machine has.
 
 Install the optional GUI extras and launch it:
 
@@ -439,13 +439,23 @@ never the duration of a selection that was only partly usable.
 
 **Sharing and comparing speakers.** A profile can be moved between machines with
 **Export…** / **Import…** (the whole profile — settings and learned voices — as one
-`*.whispr-profile.json`; import warns before overwriting a same-named profile). For
-1:1 checks, **Export speaker…** writes a single person's voiceprint
-(`*.whispr-voiceprint.json`), and **Compare voices…** loads two voiceprints (from
-those files, or from a whole profile) and reports a **similarity score out of 1.00**
-with a qualitative band — **High similarity / Intermediate similarity / Low
-similarity / Insufficient data** — alongside the operational threshold, the speech
-duration on each side and the quality of each.
+`*.whispr-profile.json`; import warns before overwriting a same-named profile).
+
+Comparing one voice with another is done on the **Compare Speakers** page, against
+a subject built on **Speaker Profiles**, and nowhere else. It reports a
+**similarity score out of 1.00** with a qualitative band — **High similarity /
+Intermediate similarity / Low similarity / Insufficient data** — alongside the
+operational threshold, the speech duration on each side and the quality of each,
+and it refuses a comparison across different voice models.
+
+An earlier **Compare voices…** button on the operation-profile card compared two
+exported voiceprint files directly. It was removed: a voiceprint file records
+neither how much speech built it nor which model measured it, so that dialog could
+apply neither the minimum-speech rule nor the model check, scored prints of
+different models as "Low similarity" instead of refusing, and called two
+single-sample prints "High similarity". Its results were also never logged to
+Comparison History. **Export speaker…**, which only produced those files, went
+with it.
 
 The score is **not** a percentage and **not** a probability: a cosine similarity of
 0.78 does not mean "78% the same person". Whispers deliberately never reports a
@@ -515,7 +525,8 @@ keep up on CPU — a big model will fall behind.
 - **Test connection** — a quick few-second probe that confirms the stream is
   reachable (and audio is flowing) before you start a session; handy while
   setting up.
-- **Start** / **Stop** control capture; the shared **Cancel** also stops it.
+- **Start** / **Stop** control capture. Cancel on another page does not stop
+  it: each page's Cancel stops only that page's work.
 
 Accuracy on a live feed is bounded by the audio: room noise, distance from the
 mic and overlapping speech all hurt more than on a clean recording. For a room,
@@ -601,7 +612,7 @@ between the reference and questioned recordings. None of these models is
 validated for a particular operational setting — measure yours with the
 validation harness (below) before relying on a threshold.
 
-**Self-test…** shows which embedding model a build carries, what it was trained
+**System status** shows which embedding model a build carries, what it was trained
 on and its SHA-256; speaker profiles and comparisons are only valid between
 builds that share that exact model.
 
@@ -645,7 +656,7 @@ single-purpose transcriber. (Even on a full bundle, set the `WHISPR_MODE=transcr
 environment variable to force the transcriber-only view — e.g. on a locked-down
 shortcut.)
 
-**Verify a bundle before handing it out.** The **Self-test…** button (top-right of
+**Verify a bundle before handing it out.** The **System status** button (top-right of
 the window) leads with **READY** or **NOT READY** (naming anything missing), then
 reports the build identity, the offline posture, exactly which engines, models and
 assets the build contains — transcription, both diarizers, translation packs, OCR

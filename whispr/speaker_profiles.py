@@ -27,14 +27,14 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import tempfile
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+from .atomicio import write_json_atomic
 from .settings import settings_path
 from .thresholds import LEARNED_OUTLIER_THRESHOLD
 from .voiceprints import centroid, cosine_similarity
@@ -667,34 +667,6 @@ def profile_path(profile: SpeakerProfile) -> Path:
     return speakers_dir() / f"{stem}{SPEAKER_PROFILE_SUFFIX}"
 
 
-def write_json_atomic(path: PathLike, payload: Mapping[str, object]) -> Path:
-    """Write ``payload`` to ``path`` atomically (temp file + replace).
-
-    A crash mid-write leaves the previous file intact rather than a truncated
-    one. Errors propagate: losing an operational profile silently is worse than
-    a visible failure.
-    """
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(
-        dir=str(out.parent), prefix=out.name, suffix=".tmp"
-    )
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, ensure_ascii=False, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(tmp, out)
-    except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
-    return out
-
-
 def save_speaker_profile(
     profile: SpeakerProfile, path: Optional[PathLike] = None
 ) -> Path:
@@ -798,9 +770,114 @@ def find_speaker_profile_by_name(display_name: str) -> Optional[SpeakerProfile]:
     return matches[0] if len(matches) == 1 else None
 
 
+def new_subject_id() -> str:
+    """A fresh subject id, for a copy that must not be mistaken for its original."""
+    return _new_id("subj")
+
+
+def find_speaker_profile_by_id(subject_id: str) -> Optional[SpeakerProfile]:
+    """The stored subject with this id, wherever its file is.
+
+    By id, not by file name: the file name includes the display name, so a
+    subject renamed since it was exported lives in a differently named file
+    with the same id.
+    """
+    for profile in list_speaker_profiles():
+        if profile.subject_id == subject_id:
+            return profile
+    return None
+
+
+# One read-change-write of a subject at a time. Enrolment holds a copy for
+# minutes (conversion, speaker separation, the operator's pick, embedding);
+# saving that copy wrote back a sample removed or approved in the meantime -
+# a removed wrong-person sample returned as *trusted* reference material.
+_UPDATE_LOCK = threading.Lock()
+
+
+def _overlaps(sample: EnrollmentSample, other: EnrollmentSample) -> bool:
+    if not sample.source_sha256 or sample.source_sha256 != other.source_sha256:
+        return False
+    start, end = sample.source_start, sample.source_end
+    other_start, other_end = other.source_start, other.source_end
+    if start is None or end is None or other_start is None or other_end is None:
+        return False
+    return start < other_end and other_start < end
+
+
+def add_samples(
+    subject: SpeakerProfile,
+    samples: Sequence[EnrollmentSample],
+    *,
+    new_subject: bool = False,
+) -> Tuple[SpeakerProfile, List[EnrollmentSample]]:
+    """Add ``samples`` to ``subject`` as stored now, and save it.
+
+    ``subject`` is the copy the samples were measured against; only the new
+    samples are taken from it. Audio the stored copy already holds from the
+    same recording is not added twice. Returns the saved profile and the
+    samples actually added. Raises :class:`ProfileError` when the subject has
+    been deleted since (unless ``new_subject``) or cannot be saved.
+    """
+    with _UPDATE_LOCK:
+        stored = find_speaker_profile_by_id(subject.subject_id)
+        if stored is None:
+            if not new_subject:
+                raise ProfileError(
+                    f"{subject.display_name} is no longer stored (it was "
+                    "deleted), so nothing was added."
+                )
+            save_speaker_profile(subject)
+            return subject, list(samples)
+        if (
+            stored.embedding_model is not None
+            and subject.embedding_model is not None
+            and stored.embedding_model != subject.embedding_model
+        ):
+            raise ProfileError(
+                f"{subject.display_name}'s profile now records a different voice "
+                "model, so these samples were not added."
+            )
+        if stored.embedding_model is None:
+            stored.embedding_model = subject.embedding_model
+        added = [
+            sample
+            for sample in samples
+            if not any(_overlaps(sample, kept) for kept in stored.samples)
+        ]
+        stored.samples.extend(added)
+        stored._trim_learned()
+        save_speaker_profile(stored)
+        return stored, added
+
+
+def update_speaker_profile(
+    subject_id: str, change: Callable[[SpeakerProfile], bool]
+) -> Optional[SpeakerProfile]:
+    """Apply ``change`` to the stored subject and save it if it says it changed.
+
+    Returns the stored profile (None when it no longer exists). Taken under
+    the same lock as :func:`add_samples`, so an approval or removal cannot be
+    overwritten by an enrolment finishing at the same moment.
+    """
+    with _UPDATE_LOCK:
+        stored = find_speaker_profile_by_id(subject_id)
+        if stored is not None and change(stored):
+            save_speaker_profile(stored)
+        return stored
+
+
 def delete_speaker_profile(profile: SpeakerProfile) -> None:
-    """Remove a stored subject profile (best-effort)."""
+    """Remove a stored subject profile. Raises if it is there and cannot go.
+
+    It used to swallow every error and the page said "Subject deleted."
+    regardless - and a subject still on disk is still compared against.
+    """
     try:
         profile_path(profile).unlink()
-    except OSError:
-        pass
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ProfileError(
+            f"Couldn't delete the speaker profile for {profile.display_name}: {exc}"
+        ) from exc

@@ -177,6 +177,19 @@ def gather() -> List[Check]:
             "bundled" if resources.bundled_argos_data_dir() else "not bundled",
         )
     )
+    if resources.bundled_argos_data_dir() is not None:
+        # The packs alone do not make translation work offline: each language
+        # also needs a sentence splitter, which Argos otherwise downloads.
+        splitters = resources.bundled_sentence_splitters()
+        checks.append(
+            Check(
+                "Translation: offline sentence splitters",
+                bool(splitters),
+                ", ".join(splitters)
+                if splitters
+                else "none - translation would need a download this copy refuses",
+            )
+        )
 
     # --- OCR ---
     tesseract = resources.find_tesseract()
@@ -368,7 +381,7 @@ def format_report(checks: "List[Check] | None" = None) -> str:
     ready, blockers = readiness(items)
     info = build_info()
 
-    lines = ["Whispers build self-test", "=" * 24, ""]
+    lines = ["Whispers system status", "=" * 23, ""]
     lines.append("READY" if ready else "NOT READY")
     if blockers:
         lines.append("Missing: " + ", ".join(blockers))
@@ -376,10 +389,22 @@ def format_report(checks: "List[Check] | None" = None) -> str:
 
     lines += ["Build", "-----"]
     lines += info.describe()
-    lines.append(
-        "Analysis runs entirely on this machine. No cloud service, no "
-        "telemetry, and no model or software downloads at runtime."
-    )
+    if resources.is_bundle():
+        lines.append(
+            "Analysis runs entirely on this machine. No cloud service, no "
+            "telemetry, and no model or software downloads at runtime: this "
+            "copy refuses any model it does not already hold."
+        )
+    else:
+        # Said plainly rather than claimed: from source, a model that is not
+        # bundled is still fetched on first use, and the line above would be
+        # false.
+        lines.append(
+            "Analysis runs entirely on this machine. No cloud service and no "
+            "telemetry. This is running from source, not a shipped copy, so a "
+            "model it does not hold is downloaded the first time it is used. A "
+            "shipped copy never does that."
+        )
     lines.append(
         "The only network path in the application is the Live page, which "
         "connects to a stream address an operator enters. It is idle unless "

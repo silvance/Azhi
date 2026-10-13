@@ -173,16 +173,6 @@ def best_match(
 # -- 1:1 speaker comparison (verification) ---------------------------------
 
 
-def compare_voiceprints(a: Voiceprint, b: Voiceprint) -> float:
-    """Similarity of two voiceprints: cosine of their centroids (~0..1).
-
-    Higher means the two sets of enrolled speech are more alike. This is an
-    investigative *indicator*, not a calibrated probability and not forensic
-    identification - see :func:`similarity_band`.
-    """
-    return cosine_similarity(a.centroid, b.centroid)
-
-
 def similarity_band(
     score: float,
     high: float = COMPARISON_HIGH_BAND,
@@ -362,9 +352,9 @@ class SpeakerEmbedder:
             # Plain language, and no attempt to fetch anything: on an air-gapped
             # machine a missing component is a fact to report, not to fix.
             raise RuntimeError(
-                "Speaker features need sherpa-onnx, which is not installed in "
-                "this build. Use a bundle that includes it (see the Self-test), "
-                "or install it with:  pip install 'silvance-whisper[gui]'"
+                "Speaker features need sherpa-onnx, which is not in this copy. "
+                "System status (top right) shows what this copy includes; a "
+                "copy without it has to be rebuilt with speaker features."
             ) from exc
 
         if model_path is None:
@@ -434,6 +424,7 @@ def recognize(
     threshold: float = RECOGNITION_ACCEPTANCE_THRESHOLD,
     margin: float = RECOGNITION_MARGIN_THRESHOLD,
     min_seconds: float = MIN_TURN_SECONDS,
+    min_assess_seconds: float = 0.0,
 ) -> "Tuple[List[SpeakerSegment], Dict[str, str]]":
     """Attribute diarizer turns to enrolled voices, conservatively and per turn.
 
@@ -446,6 +437,10 @@ def recognize(
     Sharing a cluster with a matched turn is evidence about clustering, not
     evidence that this audio is the known person - and when the label names a
     specific individual, guessing is the wrong trade.
+
+    ``min_seconds`` is the shortest turn worth embedding at all.
+    ``min_assess_seconds`` is the shortest turn that may be *named*: a turn
+    between the two is embedded and judged, and refused as too short.
 
     Returns the relabelled turns plus a ``{speaker_id: display_name}`` map for
     the ids that were recognised (recognised ids look like ``voice::Name``).
@@ -468,6 +463,7 @@ def recognize(
                     acceptance=threshold,
                     margin=margin,
                     speech_seconds=duration,
+                    min_speech_seconds=min_assess_seconds,
                 )
                 if decision.accepted and decision.best_name:
                     speaker_id = f"voice::{decision.best_name}"

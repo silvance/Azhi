@@ -19,8 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
+from .atomicio import write_json_atomic
 from .provenance import AnalysisProvenance
-from .speaker_profiles import write_json_atomic
+from .speaker_names import as_lead
 from .transcription import Segment, TranscriptionResult, Word
 
 PathLike = Union[str, Path]
@@ -28,9 +29,15 @@ PathLike = Union[str, Path]
 # Suffix for saved projects, and the on-disk format version (so a future change
 # can migrate older files instead of failing on them).
 PROJECT_SUFFIX = ".whispr.json"
+# How a speaker named by voice recognition is keyed (see voiceprints.recognize).
+VOICE_PREFIX = "voice::"
 # 1: transcript + speaker names + source path.
 # 2: adds the provenance block.
-SCHEMA_VERSION = 2
+# 3: a name put on a speaker by voice similarity is stored with its
+#    "(unconfirmed voice lead)" marker until the operator confirms it, so a
+#    bare name on a voice:: speaker is a confirmed one. Before 3 every
+#    recognised name was stored bare - see _mark_unconfirmed_leads.
+SCHEMA_VERSION = 3
 _VERSION = SCHEMA_VERSION
 
 
@@ -131,9 +138,12 @@ def load_project_record(path: PathLike) -> ProjectRecord:
     )
     raw_provenance = data.get("provenance")
     version = data.get("schema_version") or data.get("version") or 1
+    names = {str(k): str(v) for k, v in dict(data.get("speaker_names") or {}).items()}
+    if int(version) < 3:
+        names = _mark_unconfirmed_leads(names)
     return ProjectRecord(
         result=result,
-        speaker_names=dict(data.get("speaker_names") or {}),
+        speaker_names=names,
         source=data.get("source"),
         provenance=(
             AnalysisProvenance.from_dict(raw_provenance)
@@ -142,6 +152,24 @@ def load_project_record(path: PathLike) -> ProjectRecord:
         ),
         schema_version=int(version),
     )
+
+
+def _mark_unconfirmed_leads(names: Dict[str, str]) -> Dict[str, str]:
+    """Restore the lead marker to names an older project stored bare.
+
+    Before schema 3 there was no confirming a recognised name, so one that is
+    exactly what the recogniser produced was never confirmed and reopens as a
+    lead. A name the operator had typed over it differs from what the
+    recogniser produced, was their own decision, and is left as it is.
+    """
+    out: Dict[str, str] = {}
+    for speaker_id, name in names.items():
+        recognised = speaker_id[len(VOICE_PREFIX) :]
+        if speaker_id.startswith(VOICE_PREFIX) and name == recognised:
+            out[speaker_id] = as_lead(name)
+        else:
+            out[speaker_id] = name
+    return out
 
 
 def load_project(

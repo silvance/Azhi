@@ -22,7 +22,7 @@ import tkinter as tk
 from dataclasses import dataclass
 from tkinter import font as tkfont
 from tkinter import ttk
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 # -- Spacing ---------------------------------------------------------------
 # One scale, used everywhere. Mixed ad-hoc padding is what makes an interface
@@ -56,7 +56,9 @@ class Palette:
     border: str = "#343941"  # hairlines, used sparingly
     text: str = "#e9ebee"
     text_muted: str = "#9aa2ad"  # explanatory copy
-    text_faint: str = "#6e7681"  # metadata, timestamps, hashes
+    # Metadata, timestamps, hashes. 4.9:1 on surface: #6e7681 was 3.3:1, below
+    # the 4.5:1 floor for text this small. Caveats and disclaimers use MUTED.
+    text_faint: str = "#8b949e"
     accent: str = "#2f6feb"  # the primary action
     accent_active: str = "#4884f2"
     accent_text: str = "#ffffff"
@@ -199,11 +201,61 @@ def init_theme(root: tk.Misc, *, bootstrap: bool = False) -> Theme:
     _configure_text(style, built)
     _configure_buttons(style, built)
     _configure_inputs(style, built)
+    if bootstrap:
+        _keep_custom_styles()
     try:
         root.configure(background=colors.background)  # type: ignore[call-arg]
     except tk.TclError:  # pragma: no cover - some widgets reject it
         pass
     return built
+
+
+def plain_tk(**options: Any) -> Dict[str, Any]:
+    """Options for a plain ``tk`` widget whose colours are set here.
+
+    ttkbootstrap repaints every plain tk widget in its own theme colour after
+    construction, so the drop zone and the page canvas came out #222222 inside
+    #24272c cards. ``autostyle=False`` is its opt-out; stock Tk would reject the
+    option, so it is added only under ttkbootstrap.
+    """
+    if _theme is not None and _theme.bootstrap:
+        options["autostyle"] = False
+    return options
+
+
+def custom_style_names() -> List[str]:
+    """Every ttk style name this application defines."""
+    return [
+        value
+        for key, value in vars(Style).items()
+        if not key.startswith("_") and isinstance(value, str) and "." in value
+    ]
+
+
+def _keep_custom_styles() -> None:
+    """Stop ttkbootstrap replacing these style names on every widget.
+
+    ttkbootstrap wraps each ttk constructor: a ``style=`` it has not itself
+    registered is parsed as a "bootstyle" and swapped for its own - so
+    "Body.TLabel" became plain "TLabel" and "Subtle.TButton" became the filled
+    primary button. Built with the shipped theme, 170 labels and 144 frames
+    lost their styles: titles at body size, muted text not muted, every label
+    in a visible box, and low-emphasis buttons identical to the main action.
+    The styles are configured through stock ttk above, so ttkbootstrap is told
+    the names here. ``_register_ttkstyle`` is its own method for exactly this
+    (the version is pinned in packaging/lockfile.txt); where it is missing the
+    widgets fall back to ttkbootstrap's look, as before.
+    """
+    try:
+        import ttkbootstrap
+    except ImportError:  # pragma: no cover - bootstrap=True implies it is there
+        return
+    instance = ttkbootstrap.Style.get_instance()
+    register = getattr(instance, "_register_ttkstyle", None)
+    if register is None:
+        return
+    for name in custom_style_names():
+        register(name)
 
 
 def _configure_base(style: ttk.Style, t: Theme) -> None:

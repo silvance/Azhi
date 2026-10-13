@@ -25,6 +25,7 @@ from .theme import (
     SPACE_XS,
     Style,
     palette,
+    plain_tk,
 )
 
 # How often a scrollable page checks whether its content changed size. The
@@ -39,6 +40,45 @@ _SYNC_INTERVAL_MS = 150
 _WHEEL_REBINDERS: "Dict[str, Callable[[], None]]" = {}
 
 
+def wrap_to(container: tk.Misc, label: ttk.Label, *, slack: int = 0) -> None:
+    """Wrap ``label`` to ``container``'s width as it changes.
+
+    A fixed wraplength is wider than the card in a 940-pixel window, so text
+    ran off the right edge - the mandatory Compare disclaimer among it, cut
+    off mid-sentence.
+    """
+
+    def _fit(_event: object = None) -> None:
+        width = container.winfo_width() - slack
+        if width > 120 and int(str(label.cget("wraplength")) or 0) != width:
+            label.configure(wraplength=width)
+
+    container.bind("<Configure>", _fit, add="+")
+
+
+def scroll_into_view(canvas: tk.Canvas, widget: tk.Misc) -> None:
+    """Scroll a :func:`scrollable_body` canvas until ``widget`` is on screen.
+
+    A banner announcing a failed save was packed in the right place and still
+    unseen: with the settings open, the page was scrolled to show them.
+    """
+    try:
+        canvas.update_idletasks()
+        box = canvas.bbox("all")
+        if not box or not widget.winfo_ismapped():
+            return
+        content = box[3] - box[1]
+        top = widget.winfo_rooty() - canvas.winfo_rooty()
+        if content <= 0 or (
+            top >= 0 and top + widget.winfo_height() <= canvas.winfo_height()
+        ):
+            return
+        target = canvas.canvasy(0) + top - SPACE_MD
+        canvas.yview_moveto(max(0.0, target / content))
+    except tk.TclError:  # pragma: no cover - the window is closing
+        return
+
+
 def scrollable_body(parent: tk.Misc) -> "tuple[tk.Canvas, ttk.Frame]":
     """Wrap a scrollable region in ``parent`` and return ``(canvas, inner)``.
 
@@ -48,7 +88,9 @@ def scrollable_body(parent: tk.Misc) -> "tuple[tk.Canvas, ttk.Frame]":
     scrollable canvas: the scrollbar always works, and the mouse wheel is wired
     up by :func:`bind_wheel`.
     """
-    canvas = tk.Canvas(parent, highlightthickness=0, background=palette().background)
+    canvas = tk.Canvas(
+        parent, **plain_tk(highlightthickness=0, background=palette().background)
+    )
     vsb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=vsb.set)
     vsb.pack(side="right", fill="y")
@@ -345,6 +387,10 @@ class StatusBanner(ttk.Frame):
         self._text.pack(side="left", fill="x", expand=True)
         self._visible = False
 
+    def wrap_to(self, container: tk.Misc, *, slack: int = 48) -> None:
+        """Wrap the message to ``container``'s width (see :func:`wrap_to`)."""
+        wrap_to(container, self._text, slack=slack)
+
     def insert_before(self, widget: tk.Misc) -> None:
         """Appear immediately above ``widget`` when shown."""
         self._before = widget
@@ -489,13 +535,16 @@ class KeyValueRow(ttk.Frame):
         value_style: str = Style.BODY,
     ) -> None:
         super().__init__(parent, style=Style.CARD_INNER)
-        ttk.Label(self, text=label, style=Style.FIELD_LABEL, width=width).pack(
-            side="left", anchor="w"
-        )
+        self.label = ttk.Label(self, text=label, style=Style.FIELD_LABEL, width=width)
+        self.label.pack(side="left", anchor="w")
         self.value = ttk.Label(
             self, text=value, style=value_style, justify="left", wraplength=420
         )
         self.value.pack(side="left", anchor="w")
+
+    def set_label(self, text: str) -> None:
+        """Rename the row - for a record where the usual name would mislead."""
+        self.label.configure(text=text)
 
     def set(self, value: str, *, style_name: Optional[str] = None) -> None:
         self.value.configure(text=value)
@@ -588,18 +637,21 @@ class FileDropZone(ttk.Frame):
         colors = palette()
         self.empty = tk.Frame(
             self,
-            background=colors.surface,
-            highlightthickness=1,
-            highlightbackground=colors.border,
-            highlightcolor=colors.border,
-            padx=SPACE_MD,
-            pady=SPACE_MD,
+            **plain_tk(
+                background=colors.surface,
+                highlightthickness=1,
+                highlightbackground=colors.border,
+                highlightcolor=colors.border,
+                padx=SPACE_MD,
+                pady=SPACE_MD,
+            ),
         )
         inner = ttk.Frame(self.empty, style=Style.CARD_INNER)
         inner.pack()
         ttk.Label(inner, text=prompt, style=Style.BODY).pack()
         ttk.Label(inner, text="or", style=Style.META).pack(pady=(SPACE_XS, SPACE_XS))
-        secondary_button(inner, button_text, on_choose).pack()
+        self._choose_button = secondary_button(inner, button_text, on_choose)
+        self._choose_button.pack()
 
         self.chosen = ttk.Frame(self, style=Style.CARD_INNER)
         details = ttk.Frame(self.chosen, style=Style.CARD_INNER)
@@ -608,10 +660,17 @@ class FileDropZone(ttk.Frame):
         self._name.pack(anchor="w")
         self._meta = ttk.Label(details, text="", style=Style.META)
         self._meta.pack(anchor="w", pady=(SPACE_XS, 0))
-        secondary_button(self.chosen, change_text, on_choose).pack(side="right")
+        self._change_button = secondary_button(self.chosen, change_text, on_choose)
+        self._change_button.pack(side="right")
 
         variable.trace_add("write", lambda *_a: self.refresh())
         self.refresh()
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Allow or prevent choosing another file - not while it is being used."""
+        state = "normal" if enabled else "disabled"
+        self._choose_button.configure(state=state)
+        self._change_button.configure(state=state)
 
     def refresh(self) -> None:
         raw = self._variable.get().strip()

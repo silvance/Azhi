@@ -404,6 +404,43 @@ def speaker_totals(speaker_segments: Sequence[Any]) -> List[Tuple[str, float]]:
     )
 
 
+@dataclass
+class SpeakerOption:
+    """One diarized speaker as offered to the operator to choose from."""
+
+    speaker: str
+    seconds: float
+    turns: int
+    # The speaker's longest turn: the most to go on when listening once.
+    sample: Tuple[float, float]
+
+
+def speaker_options(speaker_segments: Sequence[Any]) -> List[SpeakerOption]:
+    """Each diarized speaker with a turn to listen to, most speech first.
+
+    The picker used to offer only "SPEAKER_01 - 45s of speech" and say "listen
+    first if you are unsure", with no way to listen.
+    """
+    by_speaker: Dict[str, List[Any]] = {}
+    for seg in speaker_segments:
+        speaker = getattr(seg, "speaker", None)
+        if speaker is None or seg.end <= seg.start:
+            continue
+        by_speaker.setdefault(speaker, []).append(seg)
+    options = []
+    for speaker, turns in by_speaker.items():
+        longest = max(turns, key=lambda seg: seg.end - seg.start)
+        options.append(
+            SpeakerOption(
+                speaker=speaker,
+                seconds=round(sum(seg.end - seg.start for seg in turns), 2),
+                turns=len(turns),
+                sample=(longest.start, longest.end),
+            )
+        )
+    return sorted(options, key=lambda option: option.seconds, reverse=True)
+
+
 def normalize_spans(
     spans: Sequence[Tuple[float, float]],
 ) -> List[Tuple[float, float]]:

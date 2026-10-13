@@ -55,6 +55,29 @@ BAND_INTERMEDIATE = "Intermediate similarity"
 BAND_LOW = "Low similarity"
 BAND_INSUFFICIENT = "Insufficient data"
 
+# What a gallery search concluded. A search ranks every profile, so the top
+# entry always has *some* band - but the conclusion is whether one profile was
+# similar enough and clearly enough ahead of the rest to be worth following up.
+# These name that conclusion, never the top entry's band.
+OUTCOME_LEAD = "Lead"
+OUTCOME_NO_LEAD = "No lead"
+# A ranked entry in a search whose audio was too poor to assess. Its score is
+# an ordering, not a finding, so it carries no similarity band: a name, a score
+# and "High similarity" side by side is a finding, whatever the line above says.
+BAND_NOT_ASSESSED = "Not assessed"
+# Where a gallery search with no lead is filed in History - by what is actually
+# known about it. Not "(all subjects)", which sat under the filter's own "All
+# subjects" and read as the same; and not one label for all three, which said
+# "no lead" of searches that assessed nothing, and of older searches whose
+# outcome was never recorded - one of which had in fact found a lead.
+NO_LEAD_LABEL = "No lead found"
+NOT_ASSESSED_LABEL = "Not assessed (too little speech)"
+OUTCOME_UNKNOWN_LABEL = "Outcome not recorded (older version)"
+NO_LEAD_EXPLAINED = (
+    "No lead \u2014 no profile was similar enough, and clearly enough ahead of "
+    "the rest, to be worth following up."
+)
+
 DISCLAIMER = (
     "Speaker similarity results produced by Whispers are investigative "
     "indicators intended to support lead development and analyst review. They "
@@ -187,10 +210,11 @@ def describe_active() -> List[str]:
     lines.append("")
     lines += _wrap(
         "These thresholds are conservative starting points, not values "
-        "calibrated against operational recordings. Change them only from a "
-        "validation run over a representative corpus (python -m whispr.validation), "
-        "and note that a change alters how every subsequent result should be "
-        "read. The values in force are recorded in exported reports."
+        "calibrated against operational recordings. Change them only on the "
+        "strength of a validation run over representative recordings - an "
+        "administrator's task, described in the README - and note that a "
+        "change alters how every subsequent result should be read. The values "
+        "in force are recorded in exported reports."
     )
     return lines
 

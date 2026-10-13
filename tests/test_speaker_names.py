@@ -7,7 +7,7 @@ their work when it had in fact guessed - and in this application the guess is
 a person's name on somebody else's words.
 """
 
-from whispr.speaker_names import cluster_index, preset_names
+from whispr.speaker_names import as_lead, cluster_index, preset_names
 
 
 def test_typed_names_are_matched_in_label_order_on_a_first_run():
@@ -35,7 +35,7 @@ def test_a_recognised_voice_does_cross_a_re_split():
     redone = preset_names(
         ["voice::Hostile 1", "SPEAKER_00"], recognized, ["Smith"], use_typed=False
     )
-    assert redone == {"voice::Hostile 1": "Hostile 1"}
+    assert redone == {"voice::Hostile 1": as_lead("Hostile 1")}
 
 
 def test_a_recognised_voice_outranks_a_typed_field():
@@ -45,7 +45,7 @@ def test_a_recognised_voice_outranks_a_typed_field():
         {"voice::Hostile 1": "Hostile 1"},
         ["Smith"],
     )
-    assert names["voice::Hostile 1"] == "Hostile 1"
+    assert names["voice::Hostile 1"] == as_lead("Hostile 1")
     assert names["SPEAKER_00"] == "Smith"
 
 
@@ -62,7 +62,7 @@ def test_a_recognised_first_speaker_does_not_shift_the_typed_names_up():
         {"SPEAKER_00": "Known Voice"},
         ["Alice", "Bob"],
     )
-    assert names["SPEAKER_00"] == "Known Voice"
+    assert names["SPEAKER_00"] == as_lead("Known Voice")
     assert names["SPEAKER_01"] == "Bob"
     assert "Alice" not in names.values()
 
@@ -75,7 +75,7 @@ def test_a_recognised_middle_speaker_leaves_the_others_where_they_were():
     )
     assert names == {
         "SPEAKER_00": "Alice",
-        "SPEAKER_01": "Known Voice",
+        "SPEAKER_01": as_lead("Known Voice"),
         "SPEAKER_02": "Carol",
     }
     assert "Bob" not in names.values()

@@ -13,11 +13,10 @@ that instead of showing a number that looks like one.
 
 from __future__ import annotations
 
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..comparison_log import (
     KIND_GALLERY,
@@ -28,10 +27,10 @@ from ..comparison_log import (
     subjects_in,
 )
 from ..speaker_profiles import ProfileError, list_speaker_profiles
-from ..thresholds import BAND_HIGH, BAND_INSUFFICIENT, DISCLAIMER
+from ..thresholds import BAND_HIGH, BAND_INSUFFICIENT, BAND_NOT_ASSESSED, DISCLAIMER
 from .dialogs import active_window
 from .errors import friendly_error
-from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette
+from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette, theme
 from .widgets import (
     Card,
     EmptyState,
@@ -43,6 +42,7 @@ from .widgets import (
     scrollable_body,
     secondary_button,
     subtle_button,
+    wrap_to,
 )
 
 ALL_SUBJECTS = "All subjects"
@@ -56,12 +56,9 @@ class ComparisonLogTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
     ) -> None:
         self.parent = parent
         self.root = root
-        self._cancel_event = cancel_event
         self._records: List[ComparisonRecord] = []
         self._shown: List[ComparisonRecord] = []
         self._selected: Optional[ComparisonRecord] = None
@@ -150,15 +147,20 @@ class ComparisonLogTab:
             # 1:1 and a gallery search answer different questions, so a row must
             # not be mistaken for the other kind.
             ("kind", "Type", 110, False),
-            ("subject", "Subject", 200, True),
+            ("subject", "Subject", 170, True),
             ("recording", "Recording", 180, True),
             ("score", "Score", 65, False),
-            ("band", "Assessment", 170, False),
+            ("band", "Assessment", 200, False),
         ]
         for column, heading, width, stretch in headings:
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=width, stretch=stretch, anchor="w")
         self.tree.column("score", anchor="e")
+        # The finding first: in a 940-pixel window the last columns run off the
+        # right edge, and that used to be the score and the assessment.
+        self.tree.configure(
+            displaycolumns=("when", "band", "score", "subject", "recording", "kind")
+        )
         self.tree.pack(side="left", fill="both", expand=True)
         self._table.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._on_select())
@@ -206,15 +208,19 @@ class ComparisonLogTab:
             wraplength=780,
             justify="left",
         )
+        # The outcome is the largest text in the record, whichever colour
+        # style it is given (those carry body-size type).
+        self.headline.configure(font=theme().section)
         self.headline.pack(anchor="w")
         self.summary_var = tk.StringVar(value="")
-        ttk.Label(
+        summary = ttk.Label(
             self.detail_body,
             textvariable=self.summary_var,
             style=Style.MUTED,
             wraplength=780,
             justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, SPACE_MD))
+        )
+        summary.pack(anchor="w", pady=(SPACE_XS, SPACE_MD))
 
         facts = ttk.Frame(self.detail_body, style=Style.CARD_INNER)
         facts.pack(fill="x")
@@ -277,11 +283,13 @@ class ComparisonLogTab:
         self._disclaimer = ttk.Label(
             self.detail_body,
             text=DISCLAIMER,
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=780,
             justify="left",
         )
         self._disclaimer.pack(anchor="w", pady=(SPACE_MD, 0))
+        for label in (self.headline, summary, self.caveats, self._disclaimer):
+            wrap_to(card.body, label)
 
     # -- Data --------------------------------------------------------------
 
@@ -390,11 +398,14 @@ class ComparisonLogTab:
         self.summary_var.set(_summary(record))
 
         self._rows["when"].set(_when(record.recorded_utc, full=True))
+        # A gallery search is filed somewhere, not "about" a subject: "Subject:
+        # No lead found" read as a subject called that.
+        self._rows["subject"].set_label(
+            "Filed under" if record.kind == KIND_GALLERY else "Subject"
+        )
         self._rows["subject"].set(self._subject_cell(record))
         self._rows["score"].set(_score(record))
-        self._rows["threshold"].set(
-            f"{record.operational_threshold:.2f} for high similarity"
-        )
+        self._rows["threshold"].set(_threshold_text(record))
         windows = (
             f" across {record.questioned_window_count} window(s)"
             if record.questioned_window_count
@@ -471,7 +482,7 @@ class ComparisonLogTab:
                 values=(
                     ranked.display_name,
                     f"{ranked.score:.2f}",
-                    ranked.band or "—",
+                    _ranked_band(record, ranked.band),
                 ),
             )
         self.ranking_label.pack(
@@ -547,9 +558,6 @@ class ComparisonLogTab:
         self.root.after(0, lambda: self.status_var.set(message))
 
     # -- App plumbing ------------------------------------------------------
-
-    def notify_cancelling(self) -> None:
-        """Nothing here runs in the background; there is nothing to cancel."""
 
     def close(self) -> None:
         """No resources to release."""
@@ -630,10 +638,51 @@ def _score(record: ComparisonRecord) -> str:
     return f"{record.score:.2f}"
 
 
+def _ranked_band(record: ComparisonRecord, stored: str) -> str:
+    """The band to show beside one ranked entry, decided now, not trusted as stored.
+
+    Records written before ranked entries were banded "Not assessed" on
+    inadequate audio still hold "High similarity" beside a name, under a
+    caveat saying there was too little speech. A record that concluded
+    Insufficient data shows "Not assessed" whatever it stored; one older than
+    schema 3, whose conclusion was never recorded, shows nothing.
+    """
+    if record.kind != KIND_GALLERY:
+        return stored or "\u2014"
+    if record.schema_version < 3:
+        return "\u2014"
+    if record.band == BAND_INSUFFICIENT:
+        return BAND_NOT_ASSESSED
+    return stored or "\u2014"
+
+
+def _threshold_text(record: ComparisonRecord) -> str:
+    """The test this record was held to, in the terms that test uses.
+
+    A gallery search is decided by acceptance and a margin over the next
+    profile, not by the high-similarity band edge a one-to-one is reported
+    against; labelling it "for high similarity" described a test it never ran.
+    """
+    if record.kind == KIND_GALLERY:
+        margin = record.thresholds.get("recognition_margin")
+        clear = f", {margin:.2f} clear of the next" if margin is not None else ""
+        return f"{record.operational_threshold:.2f} to accept{clear}"
+    return f"{record.operational_threshold:.2f} for high similarity"
+
+
 def _band(record: ComparisonRecord) -> str:
     if record.refused:
         return "Not compared"
-    return record.band or BAND_INSUFFICIENT
+    # The record's conclusion. For a gallery search that is the decision -
+    # Lead, No lead, Insufficient data - and never the top entry's band.
+    return record.outcome or BAND_INSUFFICIENT
+
+
+def _is_lead(record: ComparisonRecord) -> bool:
+    """A one-to-one at High similarity, or a gallery search that found a lead."""
+    if record.kind == KIND_GALLERY:
+        return bool(record.lead_name)
+    return record.band == BAND_HIGH
 
 
 def _tags(record: ComparisonRecord) -> "Tuple[str, ...]":
@@ -641,7 +690,7 @@ def _tags(record: ComparisonRecord) -> "Tuple[str, ...]":
         return ("refused",)
     if record.band == BAND_INSUFFICIENT:
         return ("insufficient",)
-    if record.band == BAND_HIGH:
+    if _is_lead(record):
         return ("high",)
     return ()
 
@@ -651,9 +700,9 @@ def _headline_style(record: ComparisonRecord) -> str:
         return Style.DANGER
     if record.band == BAND_INSUFFICIENT:
         return Style.WARNING
-    # High similarity is deliberately not green: green reads as "confirmed",
-    # and a similarity score is never a confirmation of identity.
-    if record.band == BAND_HIGH:
+    # A lead is deliberately not green: green reads as "confirmed", and a
+    # similarity score is never a confirmation of identity.
+    if _is_lead(record):
         return Style.ACCENT
     return Style.SECTION_TITLE
 

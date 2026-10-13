@@ -1,6 +1,6 @@
 import pytest
 
-from whispr.matching import ComparisonResult
+from whispr.matching import ComparisonResult, GalleryMatch, GalleryResult
 from whispr.provenance import (
     AnalysisProvenance,
     DiarizationProvenance,
@@ -10,12 +10,21 @@ from whispr.provenance import (
 from whispr.quality import GOOD
 from whispr.reports import (
     DISCLAIMER_HEADING,
+    GallerySearch,
     build_report_sections,
     render_text,
     write_analysis_report,
 )
-from whispr.thresholds import BAND_HIGH, BAND_INSUFFICIENT, DISCLAIMER
+from whispr.thresholds import (
+    BAND_HIGH,
+    BAND_INSUFFICIENT,
+    BAND_LOW,
+    BAND_NOT_ASSESSED,
+    DISCLAIMER,
+    NO_LEAD_EXPLAINED,
+)
 from whispr.transcription import Segment, TranscriptionResult
+from whispr.voiceprints import MatchDecision
 
 SOURCE_SHA = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
@@ -298,3 +307,74 @@ def test_a_comparison_with_no_recorded_source_makes_no_claim():
     text = render_text(build_report_sections(comparisons=[_comparison()]))
     assert "Questioned recording:" not in text
     assert "does not describe the questioned recording" not in text
+
+
+# -- Searches of every profile (QA-14) ----------------------------------------
+# Exporting from Compare with a search on screen wrote an earlier one-to-one
+# comparison instead, because a search could not be reported at all.
+
+
+def _search(**kw):
+    defaults = dict(
+        matches=[
+            GalleryMatch("s1", "Subject Alpha", 0.81, BAND_HIGH),
+            GalleryMatch("s2", "Subject Bravo", 0.32, BAND_LOW),
+        ],
+        decision=MatchDecision(
+            best_name="Subject Alpha", best_score=0.81, accepted=True
+        ),
+        searched=2,
+        questioned_source_filename="intercept-0914.wav",
+        questioned_source_sha256="d" * 64,
+    )
+    defaults.update(kw)
+    return GallerySearch(
+        GalleryResult(**defaults),
+        questioned_seconds=22.5,
+        questioned_quality="Fair",
+        questioned_window_count=4,
+    )
+
+
+def test_a_search_is_reported_with_its_ranking_and_recording():
+    text = _text(comparisons=[_search()])
+    assert "Search of all reference profiles 1" in text
+    assert "Questioned recording: intercept-0914.wav" in text
+    assert "d" * 64 in text
+    assert "Questioned speech: 22.5 sec (Fair), measured across 4 window(s)" in text
+    assert "1. Subject Alpha   0.81" in text
+    assert "Lead: the questioned speaker produced high similarity" in text
+    assert "No speaker comparisons were performed." not in text
+
+
+def test_a_search_without_a_lead_says_so():
+    search = _search(
+        decision=MatchDecision(
+            best_name="Subject Alpha", best_score=0.5, accepted=False
+        )
+    )
+    text = _text(comparisons=[search])
+    assert NO_LEAD_EXPLAINED in text
+    assert "Further review is warranted" not in text
+
+
+def test_a_search_on_too_little_speech_claims_nothing():
+    search = _search(
+        matches=[GalleryMatch("s1", "Subject Alpha", 0.81, BAND_NOT_ASSESSED)],
+        inadequate_reason="Only 1.8s of usable questioned speech.",
+    )
+    text = _text(comparisons=[search])
+    assert BAND_INSUFFICIENT in text
+    assert "supports no conclusion about any subject" in text
+    assert "Lead:" not in text
+
+
+def test_comparisons_and_searches_keep_their_order():
+    text = _text(comparisons=[_comparison(), _search()])
+    assert text.index("Comparison 1") < text.index("Search of all reference profiles 2")
+
+
+def test_a_searched_recording_other_than_the_transcript_is_flagged():
+    text = _text(result=_result(), provenance=_provenance(), comparisons=[_search()])
+    assert "is not the same as every recording compared below" in text
+    assert "intercept-0914.wav" in text

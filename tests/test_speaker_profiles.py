@@ -3,6 +3,7 @@ import json
 import pytest
 
 import whispr.speaker_profiles as sp
+from whispr import atomicio
 from whispr.speaker_profiles import (
     SAMPLE_LEARNED,
     SAMPLE_REFERENCE,
@@ -80,7 +81,8 @@ def test_save_is_atomic_no_partial_file_on_failure(tmp_path, monkeypatch):
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
-    monkeypatch.setattr(sp.os, "replace", _boom)
+    # The atomic writer lives in whispr.atomicio; fail its replace step.
+    monkeypatch.setattr(atomicio.os, "replace", _boom)
     with pytest.raises(ProfileError):
         save_speaker_profile(profile, path)
     assert path.read_text(encoding="utf-8") == original
@@ -435,3 +437,154 @@ def test_an_ambiguous_name_matches_nothing_rather_than_guessing(tmp_path, monkey
     # to the wrong person's reference material.
     _stored(tmp_path, monkeypatch, ["J. Smith", "J. Smith"])
     assert sp.find_speaker_profile_by_name("J. Smith") is None
+
+
+# -- Importing a subject that is already here -------------------------------
+#
+# QA imported an export holding one trusted sample over a profile that had
+# grown to three: same subject id, same file, two samples gone without a word.
+# A subject renamed since the export was worse - a second file with the same
+# id, so two stored subjects claimed one identity.
+
+
+def test_a_subject_is_found_by_id_even_after_it_was_renamed(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    profile = sp.SpeakerProfile(display_name="Viktor Marchenko")
+    sp.save_speaker_profile(profile)
+    renamed = sp.SpeakerProfile.from_dict(profile.to_dict())
+    renamed.display_name = "V. Marchenko"
+    assert sp.profile_path(renamed) != sp.profile_path(profile)
+    found = sp.find_speaker_profile_by_id(profile.subject_id)
+    assert found is not None and found.display_name == "Viktor Marchenko"
+    assert sp.find_speaker_profile_by_id("subj_nothing_here") is None
+
+
+def test_a_new_subject_id_is_never_an_existing_one():
+    ids = {sp.new_subject_id() for _ in range(200)}
+    assert len(ids) == 200
+    assert all(i.startswith("subj_") for i in ids)
+
+
+def test_deleting_a_subject_that_is_not_there_is_not_an_error(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    sp.delete_speaker_profile(sp.SpeakerProfile(display_name="Nobody"))
+
+
+def test_a_delete_that_fails_is_reported(tmp_path, monkeypatch):
+    """A subject still on disk is still compared against."""
+    _isolate(tmp_path, monkeypatch)
+    profile = sp.SpeakerProfile(display_name="Viktor Marchenko")
+    sp.save_speaker_profile(profile)
+
+    def refuse(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr("pathlib.Path.unlink", refuse)
+    with pytest.raises(sp.ProfileError) as caught:
+        sp.delete_speaker_profile(profile)
+    assert "Couldn't delete" in str(caught.value)
+
+
+# -- Changes applied to the stored subject (QA-37) -----------------------------
+# Enrolment holds a copy for minutes; saving it wrote back a sample removed in
+# the meantime, as trusted reference material.
+
+
+def _stored_subject(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    subject = SpeakerProfile(display_name="Viktor Marchenko", embedding_model=_model())
+    for name in ("r0.wav", "r1.wav", "r2.wav"):
+        subject.add_reference_sample(
+            _sample(
+                source_filename=name,
+                source_sha256=name,
+                source_start=0.0,
+                source_end=8.0,
+            )
+        )
+    save_speaker_profile(subject)
+    return subject
+
+
+def test_enrolment_does_not_bring_back_a_removed_sample(tmp_path, monkeypatch):
+    subject = _stored_subject(tmp_path, monkeypatch)
+    held = sp.find_speaker_profile_by_id(subject.subject_id)  # the worker's copy
+    removed = held.samples[1].sample_id
+    # The operator removes r1 on Speaker Profiles while enrolment runs.
+    sp.update_speaker_profile(subject.subject_id, lambda s: s.remove_sample(removed))
+    new = held.add_reference_sample(
+        _sample(
+            source_filename="new.wav",
+            source_sha256="new",
+            source_start=0.0,
+            source_end=8.0,
+        )
+    )
+
+    stored, added = sp.add_samples(held, [new])
+
+    names = [
+        s.source_filename
+        for s in sp.find_speaker_profile_by_id(subject.subject_id).samples
+    ]
+    assert names == ["r0.wav", "r2.wav", "new.wav"]
+    assert added == [new]
+    assert [s.source_filename for s in stored.samples] == names
+
+
+def test_an_approval_made_meanwhile_is_kept(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    subject = SpeakerProfile(display_name="Subject", embedding_model=_model())
+    pending, _ = subject.propose_learned_sample(
+        _sample(source_sha256="a", source_start=0.0, source_end=8.0)
+    )
+    save_speaker_profile(subject)
+    held = sp.find_speaker_profile_by_id(subject.subject_id)
+    sp.update_speaker_profile(
+        subject.subject_id, lambda s: s.approve_sample(pending.sample_id)
+    )
+    new = held.add_reference_sample(
+        _sample(source_sha256="b", source_start=0.0, source_end=8.0)
+    )
+    sp.add_samples(held, [new])
+    stored = sp.find_speaker_profile_by_id(subject.subject_id)
+    assert next(s for s in stored.samples if s.sample_id == pending.sample_id).approved
+
+
+def test_audio_already_added_meanwhile_is_not_added_twice(tmp_path, monkeypatch):
+    subject = _stored_subject(tmp_path, monkeypatch)
+    first = sp.find_speaker_profile_by_id(subject.subject_id)
+    second = sp.find_speaker_profile_by_id(subject.subject_id)
+    a = first.add_reference_sample(
+        _sample(source_sha256="x", source_start=0.0, source_end=8.0)
+    )
+    b = second.add_reference_sample(
+        _sample(source_sha256="x", source_start=4.0, source_end=12.0)
+    )
+    sp.add_samples(first, [a])
+    _, added = sp.add_samples(second, [b])
+    assert added == []
+    assert len(sp.find_speaker_profile_by_id(subject.subject_id).samples) == 4
+
+
+def test_a_deleted_subject_is_not_recreated(tmp_path, monkeypatch):
+    subject = _stored_subject(tmp_path, monkeypatch)
+    held = sp.find_speaker_profile_by_id(subject.subject_id)
+    sp.delete_speaker_profile(subject)
+    new = held.add_reference_sample(
+        _sample(source_sha256="n", source_start=0.0, source_end=8.0)
+    )
+    with pytest.raises(ProfileError, match="no longer stored"):
+        sp.add_samples(held, [new])
+    assert list_speaker_profiles() == []
+
+
+def test_a_new_subject_is_saved_as_given(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    subject = SpeakerProfile(display_name="New person")
+    new = subject.add_reference_sample(
+        _sample(source_sha256="n", source_start=0.0, source_end=8.0)
+    )
+    stored, added = sp.add_samples(subject, [new], new_subject=True)
+    assert added == [new]
+    assert [p.display_name for p in list_speaker_profiles()] == ["New person"]

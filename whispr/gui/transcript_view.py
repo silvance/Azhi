@@ -19,11 +19,13 @@ from ..editing import (
     split_segment_on_span,
     split_segment_on_word,
 )
+from ..speaker_names import bare_name, is_lead
 from ..transcription import (
     TranscriptionResult,
     is_low_confidence_segment,
     is_low_confidence_word,
 )
+from .confirm_lead import ask_confirm_lead
 from .dialogs import active_window
 from .theme import palette
 
@@ -32,6 +34,9 @@ _LOW_CONFIDENCE_COLOR = "#ff7a7a"
 # Background colours for in-transcript search (all matches / the current one).
 _SEARCH_COLOR = "#5b5300"
 _SEARCH_CURRENT_COLOR = "#b58900"
+
+# In place of the correction items while a run is going.
+PAUSED_NOTE = "Speaker corrections wait until the run finishes"
 
 
 class TranscriptView:
@@ -63,6 +68,9 @@ class TranscriptView:
         self._on_enroll = on_enroll
         self._result: Optional[TranscriptionResult] = None
         self._speaker_names: Dict[str, str] = {}
+        # Off while a run or redo is going: an edit made then was lost when the
+        # run put up the next transcript. Playing a line stays available.
+        self._editable = True
         # Where the next "find" search starts (advances as you step through hits).
         self._find_pos = "1.0"
         self.widget = ScrolledText(
@@ -80,6 +88,23 @@ class TranscriptView:
         self.widget.bind("<Button-1>", self._on_drag_press)
         self.widget.bind("<B1-Motion>", self._on_drag_motion)
         self.widget.bind("<ButtonRelease-1>", self._on_drag_release)
+
+    def set_editable(self, editable: bool) -> None:
+        """Allow or pause speaker corrections (playback is unaffected)."""
+        self._editable = editable
+        if not editable:
+            self._drag = None
+            self.widget.config(cursor="")
+
+    @staticmethod
+    def _popup(menu: tk.Menu, event: object) -> None:
+        try:
+            menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+        finally:
+            menu.grab_release()
+
+    def _add_paused_note(self, menu: tk.Menu) -> None:
+        menu.add_command(label=PAUSED_NOTE, state="disabled")
 
     def set_result(
         self, result: Optional[TranscriptionResult], speaker_names: Dict[str, str]
@@ -156,7 +181,11 @@ class TranscriptView:
             result = self._result
             self.widget.configure(state="normal")
             self.widget.delete("1.0", "end")
-            self.widget.tag_config("lowconf", foreground=_LOW_CONFIDENCE_COLOR)
+            # Underlined as well as coloured: the red alone is the red used
+            # for errors, and colour alone is lost on some screens and eyes.
+            self.widget.tag_config(
+                "lowconf", foreground=_LOW_CONFIDENCE_COLOR, underline=True
+            )
             if result is None:
                 if self._placeholder:
                     self.widget.tag_config(
@@ -303,6 +332,10 @@ class TranscriptView:
                     command=lambda: self._play_line(index),
                 )
                 menu.add_separator()
+            if not self._editable:
+                self._add_paused_note(menu)
+                self._popup(menu, event)
+                return
             # Reassign just this line to the correct speaker - the fix for the
             # boundary/overlap errors diarization can't get right on its own.
             for sid in self._ordered_speaker_ids():
@@ -315,13 +348,14 @@ class TranscriptView:
             menu.add_separator()
             cur_name = self._speaker_names.get(current, current)
             menu.add_command(
-                label=f"Rename '{cur_name}' everywhere…",
+                label=(
+                    f"Confirm or correct \u2018{bare_name(cur_name)}\u2019…"
+                    if is_lead(cur_name)
+                    else f"Rename \u2018{cur_name}\u2019 everywhere…"
+                ),
                 command=lambda: self._rename_speaker(current),
             )
-            try:
-                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
-            finally:
-                menu.grab_release()
+            self._popup(menu, event)
 
         return handler
 
@@ -333,7 +367,7 @@ class TranscriptView:
 
     def _reassign_segment(self, index: int, speaker_id: str) -> None:
         result = self._result
-        if result is None or index >= len(result.segments):
+        if not self._editable or result is None or index >= len(result.segments):
             return
         segment = result.segments[index]
         segment.speaker = speaker_id
@@ -354,6 +388,28 @@ class TranscriptView:
         if name:
             self._on_enroll(name, spans)
 
+    def _confirm_lead(self, speaker_id: str, name: str) -> Optional[str]:
+        """Ask about a lead; the name to apply, or None to leave it."""
+        result = self._result
+        turns = [
+            seg
+            for seg in (result.segments if result is not None else [])
+            if (seg.speaker or "UNKNOWN") == speaker_id
+        ]
+        seconds = sum(max(0.0, seg.end - seg.start) for seg in turns)
+        play = None
+        if self._on_play is not None and turns:
+            longest = max(turns, key=lambda seg: seg.end - seg.start)
+            on_play = self._on_play
+
+            def play() -> None:
+                on_play(longest.start, longest.end)
+
+        outcome = ask_confirm_lead(
+            self.root, name=name, lines=len(turns), seconds=seconds, on_play=play
+        )
+        return outcome[1] if outcome is not None else None
+
     # -- Playback ----------------------------------------------------------
 
     def _line_menu_handler(self, index: int) -> Callable[[object], None]:
@@ -366,10 +422,7 @@ class TranscriptView:
             menu.add_command(
                 label="▶ Play this line", command=lambda: self._play_line(index)
             )
-            try:
-                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
-            finally:
-                menu.grab_release()
+            self._popup(menu, event)
 
         return handler
 
@@ -426,6 +479,10 @@ class TranscriptView:
                     command=lambda: self._play_from_word(seg_index, word_index),
                 )
                 menu.add_separator()
+            if not self._editable:
+                self._add_paused_note(menu)
+                self._popup(menu, event)
+                return
             # Move just this word (splits the segment around it).
             for sid in self._ordered_speaker_ids():
                 if sid == current:
@@ -446,10 +503,7 @@ class TranscriptView:
                     label=f"From “{word_text}” onward → {name}",
                     command=self._word_command(seg_index, word_index, sid, True),
                 )
-            try:
-                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
-            finally:
-                menu.grab_release()
+            self._popup(menu, event)
 
         return handler
 
@@ -465,7 +519,7 @@ class TranscriptView:
         self, seg_index: int, word_index: int, speaker_id: str, to_end: bool
     ) -> None:
         result = self._result
-        if result is None or seg_index >= len(result.segments):
+        if not self._editable or result is None or seg_index >= len(result.segments):
             return
         segment = result.segments[seg_index]
         if word_index >= len(segment.words):
@@ -530,6 +584,8 @@ class TranscriptView:
         return (s_idx, w_idxs[0], w_idxs[-1])
 
     def _selection_menu(self, event: object) -> None:
+        if not self._editable:
+            return
         result = self._result
         span = self._selected_word_span()
         if result is None or span is None:
@@ -546,10 +602,7 @@ class TranscriptView:
                 label=f"Move selection → {name}",
                 command=self._span_command(seg_index, first_word, last_word, sid),
             )
-        try:
-            menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
-        finally:
-            menu.grab_release()
+        self._popup(menu, event)
 
     def _span_command(
         self, seg_index: int, first_word: int, last_word: int, speaker_id: str
@@ -563,7 +616,7 @@ class TranscriptView:
         self, seg_index: int, first_word: int, last_word: int, speaker_id: str
     ) -> None:
         result = self._result
-        if result is None or seg_index >= len(result.segments):
+        if not self._editable or result is None or seg_index >= len(result.segments):
             return
         segment = result.segments[seg_index]
         moved = segment.words[first_word : last_word + 1]
@@ -610,6 +663,8 @@ class TranscriptView:
     def _on_drag_press(self, event: object) -> Optional[str]:
         """Begin dragging the selection if the press lands inside it."""
         self._drag = None
+        if not self._editable:
+            return None
         if not self._has_selection() or not self._index_in_selection(event):
             return None
         span = self._selected_word_span()
@@ -649,14 +704,22 @@ class TranscriptView:
         return "break"
 
     def _rename_speaker(self, speaker_id: str) -> None:
+        if not self._editable:
+            return
         current = self._speaker_names.get(speaker_id, speaker_id)
-        new_name = simpledialog.askstring(
-            "Rename speaker",
-            f"New name for {current}:",
-            initialvalue=current,
-            parent=active_window(self.root),
-        )
-        if not new_name or not new_name.strip():
+        if is_lead(current):
+            # A voice-similarity suggestion is confirmed in its own dialog, not
+            # this rename box: confirming trains the profile, so it has to be
+            # a deliberate act - see whispr.gui.confirm_lead.
+            new_name = self._confirm_lead(speaker_id, bare_name(current))
+        else:
+            new_name = simpledialog.askstring(
+                "Rename speaker",
+                f"New name for {current}:",
+                initialvalue=current,
+                parent=active_window(self.root),
+            )
+        if not new_name or not new_name.strip() or not self._editable:
             return
         self._speaker_names[speaker_id] = new_name.strip()
         # Naming a whole speaker confirms every one of their turns - a strong

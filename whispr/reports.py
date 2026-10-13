@@ -1,9 +1,9 @@
 """Operator-facing analysis report: what was analysed, by what, and what it means.
 
 Produces a hand-off document covering the case/source information (including the
-source recording's SHA-256), the transcript, every speaker comparison performed,
-and a prominent statement of what a similarity result does and does not
-establish.
+source recording's SHA-256), the transcript, the speaker comparisons and
+searches it is asked to report, and a prominent statement of what a similarity
+result does and does not establish.
 
 The *content* is assembled as plain sections by :func:`build_report_sections`,
 which needs no optional dependency and is unit-tested; :func:`write_docx` renders
@@ -19,8 +19,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Union
 
-from .matching import ComparisonResult
+from .matching import ComparisonResult, GalleryResult
 from .provenance import AnalysisProvenance
+from .speaker_names import LEAD_LEGEND, any_leads
 from .thresholds import DISCLAIMER, Thresholds, active, describe
 from .transcription import TranscriptionResult
 
@@ -53,14 +54,65 @@ def _transcript_lines(
     if not result.segments:
         return [result.text or "(empty transcript)"]
     lines: List[str] = []
+    labels: List[str] = []
     for segment in result.segments:
         stamp = f"[{_clock(segment.start)}-{_clock(segment.end)}]"
         if segment.speaker:
             label = result._speaker_label(segment.speaker, speaker_names)
+            labels.append(label)
             lines.append(f"{stamp} [{label}] {segment.text}")
         else:
             lines.append(f"{stamp} {segment.text}")
+    if any_leads(labels):
+        return [LEAD_LEGEND, ""] + lines
     return lines
+
+
+@dataclass
+class GallerySearch:
+    """A search of every reference profile, with the speech it measured."""
+
+    result: GalleryResult
+    questioned_seconds: float = 0.0
+    questioned_quality: str = ""
+    questioned_window_count: int = 0
+
+    @property
+    def questioned_source_filename(self) -> Optional[str]:
+        return self.result.questioned_source_filename
+
+    @property
+    def questioned_source_sha256(self) -> Optional[str]:
+        return self.result.questioned_source_sha256
+
+
+# What the speaker-analysis section can hold: a one-to-one comparison, or a
+# search of every profile. Searches could not be reported at all, so exporting
+# from Compare with a search on screen wrote an earlier comparison instead.
+ReportEntry = Union[ComparisonResult, GallerySearch]
+
+
+def _search_lines(search: GallerySearch) -> List[str]:
+    """One search, in the words the Compare page and History use for it."""
+    measured = (
+        f", measured across {search.questioned_window_count} window(s)"
+        if search.questioned_window_count
+        else ""
+    )
+    lines = list(search.result.summary_lines())
+    # With the recording lines, above the ranking.
+    at = lines.index("") if search.questioned_source_filename else 0
+    lines[at:at] = [
+        f"Questioned speech: {search.questioned_seconds:.1f} sec "
+        f"({search.questioned_quality or 'not recorded'}){measured}",
+    ]
+    return lines
+
+
+def _entry_lines(entry: ReportEntry) -> List[str]:
+    if isinstance(entry, GallerySearch):
+        return _search_lines(entry)
+    return _comparison_lines(entry)
 
 
 def _comparison_lines(comparison: ComparisonResult) -> List[str]:
@@ -118,7 +170,7 @@ def build_report_sections(
     result: Optional[TranscriptionResult] = None,
     speaker_names: Optional[Dict[str, str]] = None,
     provenance: Optional[AnalysisProvenance] = None,
-    comparisons: Sequence[ComparisonResult] = (),
+    comparisons: Sequence[ReportEntry] = (),
     thresholds: Optional[Thresholds] = None,
     case_notes: str = "",
 ) -> List[ReportSection]:
@@ -183,11 +235,16 @@ def build_report_sections(
 
     comparison_lines: List[str] = []
     if comparisons:
-        for index, comparison in enumerate(comparisons, 1):
+        for index, entry in enumerate(comparisons, 1):
             if index > 1:
                 comparison_lines.append("")
-            comparison_lines.append(f"Comparison {index}")
-            comparison_lines += _comparison_lines(comparison)
+            kind = (
+                "Search of all reference profiles"
+                if isinstance(entry, GallerySearch)
+                else "Comparison"
+            )
+            comparison_lines.append(f"{kind} {index}")
+            comparison_lines += _entry_lines(entry)
     else:
         comparison_lines.append("No speaker comparisons were performed.")
     comparison_lines += ["", "Active thresholds:"] + describe(thresholds)
@@ -248,7 +305,7 @@ def write_analysis_report(
     result: Optional[TranscriptionResult] = None,
     speaker_names: Optional[Dict[str, str]] = None,
     provenance: Optional[AnalysisProvenance] = None,
-    comparisons: Sequence[ComparisonResult] = (),
+    comparisons: Sequence[ReportEntry] = (),
     thresholds: Optional[Thresholds] = None,
     case_notes: str = "",
     title: str = REPORT_TITLE,

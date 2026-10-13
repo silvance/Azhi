@@ -12,11 +12,11 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import IO, Callable, Optional
+from typing import IO, Optional
 
 from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber, test_connection
-from ..resources import bundled_models
-from ..transcription import MODEL_SIZES
+from ..resources import bundled_models, is_bundle
+from ..transcription import MODEL_SIZES, ModelUnavailable, resolve_model_choice
 from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
@@ -43,12 +43,9 @@ class LiveTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
     ) -> None:
         self.parent = parent
         self.root = root
-        self._on_cancel = on_cancel
 
         self._bundled_models = bundled_models()
         default_model = "base.en"
@@ -122,8 +119,15 @@ class LiveTab:
         ttk.Label(settings, text="Model", style=Style.FIELD_LABEL).grid(
             row=3, column=0, sticky="w", padx=(0, 8), pady=4
         )
+        # Pick-only wherever models are bundled, and always in a shipped copy:
+        # a typed name the bundle does not hold could only be downloaded.
+        locked = bool(self._bundled_models) or is_bundle()
         ttk.Combobox(
-            settings, textvariable=self.model_var, values=model_values, width=18
+            settings,
+            textvariable=self.model_var,
+            values=model_values,
+            width=18,
+            state="readonly" if locked else "normal",
         ).grid(row=3, column=1, sticky="w", pady=4)
         ttk.Label(
             settings,
@@ -287,8 +291,13 @@ class LiveTab:
             return
         language = self.language_var.get().strip()
         language_arg = None if language in ("", "Auto") else language
-        model_sel = self.model_var.get().strip()
-        model = str(self._bundled_models.get(model_sel, model_sel))
+        try:
+            # The same policy as the Transcribe page, so the two cannot differ
+            # about what this copy may load.
+            model = resolve_model_choice(self.model_var.get(), self._bundled_models)
+        except ModelUnavailable as exc:
+            self.status_var.set(str(exc))
+            return
 
         # Open the save file (append) if requested.
         self._save_fh = None
@@ -392,12 +401,7 @@ class LiveTab:
         self.transcript.delete("1.0", "end")
         self.transcript.configure(state="disabled")
 
-    # -- Shared-cancel + shutdown hooks ------------------------------------
-
-    def notify_cancelling(self) -> None:
-        """The shared Cancel button stops a running live session."""
-        if self._live is not None:
-            self._stop()
+    # -- Shutdown hook -----------------------------------------------------
 
     def close(self) -> None:
         """Release resources when the app closes."""

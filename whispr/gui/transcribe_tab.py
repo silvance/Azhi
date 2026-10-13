@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from .. import enhance, folder_batch, listening, output_names, speaker_count
 from ..acceleration import (
@@ -31,7 +31,7 @@ from ..acceleration import (
     offered_modes,
 )
 from ..acceleration import resolve as resolve_device
-from ..diarization import assign_speakers, diarize
+from ..diarization import assign_speakers, chosen_backend, diarize
 from ..diarization import is_available as diarization_available
 from ..enrollment import enroll_from_media, enroll_from_wav, spans_by_speaker_name
 from ..export import transcript_to_docx
@@ -39,12 +39,16 @@ from ..playback import PlaybackError, SegmentPlayer, playback_available
 from ..profiles import (
     PROFILE_SUFFIX,
     Profile,
+    ProfileSaveError,
+    add_learned_voice,
     delete_profile,
+    existing_profile_name,
     export_profile,
     list_profiles,
     load_profile,
     read_profile_file,
     save_profile,
+    store_profile_settings,
 )
 from ..project import PROJECT_SUFFIX, load_project_record, save_project
 from ..provenance import (
@@ -55,7 +59,7 @@ from ..provenance import (
     transcription_model_sha256,
 )
 from ..reports import write_analysis_report
-from ..resources import bundled_embedding_model, bundled_models
+from ..resources import bundled_embedding_model, bundled_models, is_bundle
 from ..run_summary import (
     FailedRun,
     SkippedRun,
@@ -65,12 +69,12 @@ from ..run_summary import (
 )
 from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
 from ..speaker_count import UNSET as SPEAKERS_UNSET
-from ..speaker_names import preset_names
+from ..speaker_names import LEAD_LEGEND, any_leads, is_lead, preset_names
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
     ProfileError,
+    add_samples,
     find_speaker_profile_by_name,
-    save_speaker_profile,
 )
 from ..thresholds import active as active_thresholds
 from ..transcription import (
@@ -79,14 +83,16 @@ from ..transcription import (
     MODEL_PREFERENCE,
     MODEL_SIZES,
     CancelledError,
+    ModelUnavailable,
     Segment,
     TranscriptionResult,
     convert_to_wav,
     is_video,
+    resolve_model_choice,
     transcribe_audio,
+    usable_model_folder,
 )
-from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
-from . import speaker_compare
+from ..voiceprints import SpeakerEmbedder, Voiceprint, enroll_spans, recognize
 from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
@@ -113,6 +119,7 @@ from .widgets import (
     danger_button,
     primary_button,
     register_drop,
+    scroll_into_view,
     scrollable_body,
     secondary_button,
     style_text_widget,
@@ -187,6 +194,27 @@ def _device_label(mode: str) -> str:
     return offered_modes()[0][1]
 
 
+def _derived_voice_refusal(source: "Optional[Path]") -> Optional[str]:
+    """Why a voice must not be measured from ``source``, or None if it may.
+
+    A transcript can be made from a cleaned or listening copy on purpose -
+    they are for reading and listening - but nothing measured from one can go
+    into a voiceprint or a subject's reference audio. Speaker Profiles already
+    refused such a file; the Transcribe page's own routes to enrolment did not.
+    """
+    if source is None:
+        return None
+    kind = listening.derived_kind(source)
+    if kind is None:
+        return None
+    return (
+        f"This transcript was made from a {kind}, not the recording. Voices are "
+        "never measured from processed audio, because processing changes the "
+        "detail a voiceprint measures. Transcribe the original recording to "
+        "save or learn a voice."
+    )
+
+
 class _SkipWrite(Exception):
     """The output folder is already known to be gone; do not try to write."""
 
@@ -198,16 +226,21 @@ class TranscribeTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
         *,
         dnd_ok: bool,
     ) -> None:
         self.parent = parent
         self.root = root
-        self._cancel_event = cancel_event
-        self._on_cancel = on_cancel
+        # This page's own: one signal shared by every page meant Cancel here
+        # stopped a Live session, and starting a translation cleared a
+        # transcription's pending cancel.
+        self._cancel_event = threading.Event()
         self._dnd_ok = dnd_ok
+        # True from the moment a run or redo is asked for until it has ended,
+        # set and cleared on the UI thread. The buttons are switched off from
+        # the worker via after(), which left a window in which a second click
+        # started a second run, and nothing else checked at all.
+        self._busy = False
 
         # Bundled (offline) models take priority so the app works air-gapped;
         # the order preferred is DEFAULT_MODEL first, and why is stated there.
@@ -291,6 +324,9 @@ class TranscribeTab:
         self._diarized_count = 0
         # Speaker tags changed by hand since that run - what redoing it spends.
         self._speaker_edits = 0
+        # Corrections not yet kept anywhere (a project, a Word file or the
+        # output folder), so closing the window can ask first.
+        self._unsaved_edits = 0
         # Recordings this run's silence filter mostly passed over, in order.
         self._skipped_much: "List[SkippedRun]" = []
         # Queued recordings that were not there when the run reached them.
@@ -324,6 +360,8 @@ class TranscribeTab:
         self._profile: Optional[Profile] = None
         # Names recognised from voiceprints on the last diarized run (voice::Name).
         self._recognized_names: Dict[str, str] = {}
+        # The speaker-separation engine the last split actually ran.
+        self._diar_engine_used = "auto"
         # A 16 kHz mono copy of the last diarized audio, kept so corrections can
         # enrol voiceprints after the run; removed on the next run and on close.
         self._session_wav: Optional[Path] = None
@@ -344,6 +382,7 @@ class TranscribeTab:
 
     def _build(self) -> None:
         transcribe_canvas, container = scrollable_body(self.parent)
+        self._page_canvas = transcribe_canvas
         self._page = container
 
         PageHeader(
@@ -529,7 +568,7 @@ class TranscribeTab:
                 "lets the tool decide, which on a long or muffled recording can "
                 "split one person into several."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         )
@@ -563,7 +602,7 @@ class TranscribeTab:
                 "quiet or distant speech it can still cut a little; turn it off "
                 "if a recording matters more than the time it takes."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -577,7 +616,7 @@ class TranscribeTab:
             ttk.Label(
                 audio.body,
                 text=f"{enhance.HELPS_WITH} {enhance.DOES_NOT}",
-                style=Style.META,
+                style=Style.MUTED,
                 wraplength=560,
                 justify="left",
             ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -587,7 +626,7 @@ class TranscribeTab:
                     "The recording itself is never changed — a cleaned copy is "
                     f"written beside the output. {enhance.NOT_FOR_COMPARISON}"
                 ),
-                style=Style.META,
+                style=Style.MUTED,
                 wraplength=560,
                 justify="left",
             ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -600,11 +639,11 @@ class TranscribeTab:
         ttk.Label(
             audio.body,
             text=f"{listening.HELPS_WITH} {listening.DOES_NOT}",
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
-        strength_row = ttk.Frame(audio.body)
+        strength_row = ttk.Frame(audio.body, style=Style.CARD_INNER)
         strength_row.pack(anchor="w", pady=(0, SPACE_XS))
         ttk.Label(strength_row, text="Strength:", style=Style.META).pack(side="left")
         ttk.Combobox(
@@ -620,7 +659,7 @@ class TranscribeTab:
                 "The recording itself is never changed — a separate listening "
                 f"copy is written beside the output. {listening.NOT_FOR_COMPARISON}"
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -664,7 +703,7 @@ class TranscribeTab:
         ).pack(anchor="w", pady=(SPACE_XS, 0))
         ttk.Checkbutton(
             audio.body,
-            text="Highlight low-confidence words (verify these)",
+            text="Highlight low-confidence words (red, underlined: verify these)",
             variable=self.highlight_conf_var,
             command=self._rerender_transcript,
             style=Style.CHECK,
@@ -829,11 +868,11 @@ class TranscribeTab:
             ("Save", self._save_profile_settings),
             ("Export…", self._export_profile),
             ("Import…", self._import_profile),
-            ("Export speaker…", self._export_speaker),
-            ("Compare voices…", self._compare_voices),
         ):
             subtle_button(buttons, text, command).pack(side="left", padx=(0, SPACE_SM))
-        danger_button(buttons, "Delete", self._delete_profile).pack(side="left")
+        danger_button(buttons, "Delete profile…", self._delete_profile).pack(
+            side="left"
+        )
 
         ttk.Checkbutton(
             frame,
@@ -844,11 +883,13 @@ class TranscribeTab:
         ttk.Label(
             frame,
             text=(
-                "With speaker identification on, each speaker is matched against "
-                "the voices this profile has learned. Correcting a name teaches it "
-                "that voice for next time; it does not change the words themselves."
+                "With speaker identification on, each speaker is compared with "
+                "the voices this profile has learned, and a similar one is shown "
+                "as a suggestion marked \u201c(unconfirmed\u00a0voice\u00a0lead)\u201d for you to "
+                "confirm. Confirming or correcting a name teaches it that voice "
+                "for next time; it does not change the words themselves."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
@@ -864,7 +905,7 @@ class TranscribeTab:
             actions, "Transcribe recording", self.run_in_thread
         )
         self.run_button.pack(side="left")
-        self.cancel_button = secondary_button(actions, "Cancel", self._on_cancel)
+        self.cancel_button = secondary_button(actions, "Cancel", self._cancel)
         self.cancel_button.configure(state="disabled")
         self.cancel_button.pack(side="left", padx=(SPACE_SM, 0))
         self.toggle_settings_button = subtle_button(
@@ -874,7 +915,9 @@ class TranscribeTab:
 
         progress = ttk.Frame(parent, style=Style.PAGE)
         progress.pack(fill="x", pady=(SPACE_SM, 0))
-        self.progress_bar = ttk.Progressbar(progress, mode="indeterminate")
+        # Determinate and empty until a run starts: created indeterminate and
+        # never started, it showed a stuck block at Idle.
+        self.progress_bar = ttk.Progressbar(progress, mode="determinate", value=0)
         self.progress_bar.pack(fill="x")
         ttk.Label(
             progress, textvariable=self.progress_label_var, style=Style.PAGE_SUBTITLE
@@ -922,6 +965,17 @@ class TranscribeTab:
         self._result_caveat = ttk.Label(
             results.body,
             textvariable=self.result_caveat_var,
+            style=Style.WARNING,
+            wraplength=760,
+            justify="left",
+        )
+
+        # What "(unconfirmed voice lead)" means, shown whenever one is on
+        # screen. The marker is clear on its own; this says what to do about it.
+        self.lead_legend_var = tk.StringVar(value="")
+        self._lead_legend = ttk.Label(
+            results.body,
+            textvariable=self.lead_legend_var,
             style=Style.WARNING,
             wraplength=760,
             justify="left",
@@ -975,6 +1029,11 @@ class TranscribeTab:
 
         exports = ttk.Frame(results.body, style=Style.CARD_INNER)
         exports.pack(fill="x", pady=(SPACE_SM, 0))
+        # Inside the card, just above the buttons it reports on: popped out,
+        # the card is in its own window and the page banner is not on screen.
+        self._card_banner = StatusBanner(results.body, wraplength=760)
+        self._card_banner.insert_before(exports)
+        self._card_banner.wrap_to(results.body)
         for text, command in (
             ("Copy transcript", self._copy_transcript),
             ("Save as Word…", self._save_transcript_docx),
@@ -1049,6 +1108,13 @@ class TranscribeTab:
         )
 
     # -- Cancellation ------------------------------------------------------
+
+    def _cancel(self) -> None:
+        """Ask this page's run to stop at its next checkpoint."""
+        if not self._busy:
+            return
+        self._cancel_event.set()
+        self.notify_cancelling()
 
     def notify_cancelling(self) -> None:
         self.cancel_button.configure(state="disabled")
@@ -1171,22 +1237,68 @@ class TranscribeTab:
                 self.progress_bar.start(12)
                 self.progress_label_var.set(message or "Working…")
                 self.banner.hide()
+                self._card_banner.hide()
             else:
                 self.progress_bar.stop()
                 self.progress_bar.configure(mode="determinate")
                 self.progress_bar["value"] = 0
                 self.progress_label_var.set(message or "Ready")
-                self.run_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
-                # Whether the redo comes back depends on what the run left
-                # behind, so let that decide rather than enabling it here.
-                self._update_redo_state()
+                self._release_busy()
 
         self.root.after(0, _do)
 
     def _announce(self, kind: str, message: str) -> None:
         """Put a result or a failure where it cannot be scrolled past."""
-        self.root.after(0, lambda: self.banner.show(kind, message))
+
+        def _do() -> None:
+            self.banner.show(kind, message)
+            scroll_into_view(self._page_canvas, self.banner)
+
+        self.root.after(0, _do)
+
+    def busy_description(self) -> Optional[str]:
+        """What closing the window now would lose, in words, or None."""
+        if self._busy:
+            return "A transcription is still running and will be lost."
+        if self._unsaved_edits:
+            return (
+                f"{self._unsaved_edits} speaker correction(s) have not been saved. "
+                "Save project… keeps them."
+            )
+        return None
+
+    def _announce_in_card(self, kind: str, message: str) -> None:
+        """Report beside the transcript's own buttons (any thread)."""
+        self.root.after(0, lambda: self._card_banner.show(kind, message))
+
+    def _report(self, kind: str, message: str, *, in_card: bool) -> None:
+        if in_card:
+            self._announce_in_card(kind, message)
+        else:
+            self._announce(kind, message)
+
+    def _report_saved(self, path: str, *, in_card: bool = True) -> None:
+        """A save the operator asked for: say where it went, beside the button."""
+        target = Path(path)
+        self._report(
+            "success", f"Saved {target.name} in {target.parent}.", in_card=in_card
+        )
+        self.progress_label_var.set(f"Saved {target.name}")
+
+    def _report_not_saved(
+        self, what: str, exc: Exception, *, in_card: bool = True
+    ) -> None:
+        """A save or open that failed, where it will be seen.
+
+        These went only to the small line under the progress bar, which is not
+        on screen with the transcript popped out or the page scrolled down to
+        the export buttons.
+        """
+        message = f"{what}. {friendly_error(exc)}"
+        append_line(self.status, message)
+        self._report("error", message, in_card=in_card)
+        self.progress_label_var.set(what)
 
     def _set_result_caveat(self, message: str) -> None:
         """Carry a completion warning into the transcript card itself."""
@@ -1308,7 +1420,27 @@ class TranscribeTab:
             parent=active_window(self.root),
         )
         if path:
-            self.input_file_var.set(path)
+            self._use_single_file(Path(path))
+
+    def _use_single_file(self, path: Path) -> None:
+        """One chosen or dropped file: the input, or the next in the queue.
+
+        With a folder queued, a single file used to go into the Recording box
+        in large type while Transcribe recording ran the queue and ignored it.
+        It now joins the queue, which is what the guide promises ("add it with
+        Choose file and it will be used"), and the box never shows a file that
+        will not run.
+        """
+        if self._batch_files:
+            if path not in self._batch_files:
+                self._batch_files.append(path)
+            self._update_batch_label()
+            self.progress_label_var.set(
+                f"Added {path.name} to the queue of {len(self._batch_files)}"
+            )
+            return
+        self.input_file_var.set(str(path))
+        self.progress_label_var.set(f"Loaded {path.name}")
 
     def choose_output_dir(self) -> None:
         path = filedialog.askdirectory(parent=active_window(self.root))
@@ -1363,7 +1495,7 @@ class TranscribeTab:
 
     def _model_is_available(self, model: str) -> bool:
         """True if ``model`` is bundled in this build or is a local model folder."""
-        return model in self._bundled_models or (bool(model) and Path(model).is_dir())
+        return model in self._bundled_models or usable_model_folder(model)
 
     def _update_model_status(self, *_args: object) -> None:
         """Reflect whether the chosen model is actually usable in this build."""
@@ -1372,29 +1504,75 @@ class TranscribeTab:
             self.model_status_var.set("")
         elif model in self._bundled_models:
             self.model_status_var.set("✓ in this build (works offline)")
-        elif Path(model).is_dir():
+        elif usable_model_folder(model):
             self.model_status_var.set("✓ local model folder")
-        elif self._bundled_models:
-            # A real bundle, but this size wasn't included - it can't be fetched
-            # on an air-gapped machine, so say so before Run rather than after.
+        elif Path(model).is_dir():
+            self.model_status_var.set("⚠ that folder has no model in it")
+        elif self._bundled_models or is_bundle():
+            # It can't be fetched on an air-gapped machine, so say so before
+            # Run rather than after. A shipped copy with *no* models used to
+            # land in the branch below and promise a download it must not make.
             self.model_status_var.set(
-                "⚠ not in this build — rebuild including it, or pick a ✓ model "
-                "(see Self-test…)"
+                "⚠ not in this copy — pick a ✓ model (System status lists them)"
             )
         else:
-            # Running from source with nothing bundled: faster-whisper will fetch it.
+            # Running from source with nothing bundled: faster-whisper will fetch
+            # it. Never reached in a shipped copy - see is_bundle().
             self.model_status_var.set("will be downloaded on first use")
 
     # -- Run ---------------------------------------------------------------
 
+    def _refuse_while_busy(self, what: str) -> bool:
+        """True (and say why) when a run or redo is still going."""
+        if not self._busy:
+            return False
+        self._announce(
+            "warning",
+            f"Wait for the current run to finish, or cancel it, before {what}.",
+        )
+        return True
+
+    def _claim_busy(self) -> None:
+        """Mark the page busy now, before the worker starts (UI thread)."""
+        self._busy = True
+        self.run_button.configure(state="disabled")
+        self.redo_button.configure(state="disabled")
+        # Corrections made while a run is going were lost: a redo replaces the
+        # transcript when it ends, and a batch replaces it with each file.
+        self.transcript_view.set_editable(False)
+
+    def _release_busy(self) -> None:
+        """End the busy state begun by :meth:`_claim_busy` (UI thread)."""
+        self._busy = False
+        self.transcript_view.set_editable(True)
+        self.run_button.configure(state="normal")
+        # Whether the redo comes back depends on what the run left behind, so
+        # let that decide rather than enabling it here.
+        self._update_redo_state()
+
     def run_in_thread(self) -> None:
+        if self._busy:
+            return  # a second click before the button was switched off
         # One question has to be answered before a long job starts, because the
         # cost of getting it wrong is only visible once the job has finished.
         if not self._speaker_count_answered():
             self._ask_for_speaker_count()
             return
+        # The model is the same for every file, so it is checked once, here,
+        # before anything is converted, cleaned or written. It used to be
+        # checked inside each file's run - after the conversion, the noise
+        # reduction and the listening copy - so a batch did all of that for
+        # every file and then refused each one in turn, as a crash.
+        try:
+            resolve_model_choice(self._selected_model(), self._bundled_models)
+        except ModelUnavailable as exc:
+            self._show_settings(True)
+            self._announce("error", str(exc))
+            self.progress_label_var.set("Choose a model this copy has")
+            return
         # Collapse the settings so the transcript and progress get the space.
         self._collapse_all_settings()
+        self._claim_busy()
         self._cancel_event.clear()
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -1434,9 +1612,14 @@ class TranscribeTab:
         self._failed_files = []
         self._failed_saves = []
         self._output_names = {}
+        self._unsaved_edits = 0
         self._set_result_caveat("")
         try:
-            self.transcript_view.set_result(None, {})
+            # The names belonged to the transcript being cleared; left in
+            # place, the voice-lead legend would stand over an empty pane.
+            self._speaker_names = {}
+            self.transcript_view.set_result(None, self._speaker_names)
+            self._refresh_lead_legend()
             # The summary names a recording. Left standing, it names the
             # previous one while the next is being transcribed.
             self.root.after(0, lambda: self.result_summary_var.set(""))
@@ -1452,6 +1635,12 @@ class TranscribeTab:
                 return
 
             outdir = self.output_dir_var.get() if self.write_output_var.get() else None
+            # "Save a copy to a folder" is ticked by default with no folder in
+            # it. A single file in that state used to write nothing and finish
+            # on a green "complete"; it now saves beside the recording, as a
+            # batch already did, and the banner says where.
+            save_beside = bool(self.write_output_var.get())
+            saved_in: Set[Path] = set()
             total = len(jobs)
             done = 0
             saved = 0
@@ -1481,12 +1670,13 @@ class TranscribeTab:
                     append_line(self.status, f"Skipped (file not found): {src}")
                     continue
                 prefix = f"({index}/{total}) " if total > 1 else ""
-                # Where to write: the chosen folder, else beside the source for a
-                # batch (so a multi-file run never silently drops output). A single
-                # file with no output folder keeps the old "don't write" behaviour.
+                # Where to write: the chosen folder; else beside the source when
+                # a copy was asked for, or for any batch (so a multi-file run
+                # never silently drops output). Only a single file with the box
+                # unticked writes nothing - which is what unticking it says.
                 if outdir:
                     save_dir: Optional[Path] = Path(outdir)
-                elif total > 1:
+                elif total > 1 or save_beside:
                     save_dir = src.parent
                 else:
                     save_dir = None
@@ -1500,7 +1690,9 @@ class TranscribeTab:
                     written = self._transcribe_one(
                         src, task, save_dir, prefix, set_view=True
                     )
-                except CancelledError:
+                except (CancelledError, ModelUnavailable):
+                    # A missing model is not one file's problem: every file
+                    # would be refused the same way.
                     raise
                 except Exception as exc:  # noqa: BLE001 - one file, not the run
                     # A batch is often a folder left running unattended. One
@@ -1520,11 +1712,22 @@ class TranscribeTab:
                 done += 1
                 if written is not False:
                     saved += 1
+                if written and save_dir is not None:
+                    saved_in.add(save_dir)
             if self._missing_files or self._failed_files or self._failed_saves:
                 final_status = f"Finished {done} of {total} — see Status"
             else:
                 final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
             kind, message = self._completion_message(done, total, saved)
+            if kind == "success" and saved_in:
+                # A run that saved should say where: "complete" alone left the
+                # operator to guess, or to assume a folder that held nothing.
+                where = (
+                    str(next(iter(saved_in)))
+                    if len(saved_in) == 1
+                    else f"{len(saved_in)} folders"
+                )
+                message = f"{message} Saved in {where}."
             if kind == "warning":
                 append_line(self.status, message)
             self._announce(kind, message)
@@ -1538,6 +1741,12 @@ class TranscribeTab:
             append_line(self.status, "Cancelled.")
             self._announce("info", "Cancelled before finishing.")
             final_status = "Cancelled"
+        except ModelUnavailable as exc:
+            # An expected refusal, written for the operator - not a crash, so
+            # no traceback and no jump to the Status tab.
+            append_line(self.status, str(exc))
+            self._announce("error", str(exc))
+            final_status = "Not started"
         except Exception as exc:
             friendly = friendly_error(exc)
             append_line(self.status, friendly)
@@ -1618,6 +1827,12 @@ class TranscribeTab:
                     temp_wav = media_path
                 append_line(self.status, f"Converted to {media_path}")
 
+            # What speaker separation, recognition and enrolment read. It starts
+            # as whatever is being transcribed and is pinned to the original by
+            # the noise-reduction step below, so a voice is never measured from
+            # cleaned audio.
+            voice_path, voice_is_normalized = media_path, media_is_normalized
+
             # Noise reduction, when it was asked for. The recording itself is
             # never touched: this works on a normalised copy and writes another
             # one, and what the run then transcribes is that copy - recorded in
@@ -1631,6 +1846,9 @@ class TranscribeTab:
                     )
                     media_is_normalized = True
                     temp_wav = media_path
+                # Voices are measured from this - the normalised original -
+                # and never from the cleaned copy made next. See _diarize_into.
+                voice_path, voice_is_normalized = media_path, True
                 if save_dir is not None and save_dir.is_dir():
                     clean_dest: Optional[Path] = save_dir / (
                         self._output_base(src) + enhance.SUFFIX
@@ -1698,17 +1916,10 @@ class TranscribeTab:
             # Resolve a bundled model name to its local directory so we never
             # try to download on an air-gapped machine.
             model_sel = self._selected_model()
-            # This build has models, but the chosen one isn't among them and isn't
-            # a local folder: it can't be fetched offline, so fail with a clear
-            # message instead of a cryptic download error. (When nothing is bundled
-            # - running from source - fall through and let faster-whisper fetch it.)
-            if self._bundled_models and not self._model_is_available(model_sel):
-                raise RuntimeError(
-                    f"The model '{model_sel}' isn't in this build. Open Self-test… "
-                    f"to see the bundled models and pick one of those, or rebuild "
-                    f"the bundle with '{model_sel}' included."
-                )
-            model = str(self._bundled_models.get(model_sel, model_sel))
+            # One policy for every page (see resolve_model_choice): bundled names
+            # and model folders are used; anything else is refused in a shipped
+            # copy rather than handed to faster-whisper to download.
+            model = resolve_model_choice(model_sel, self._bundled_models)
 
             verb = "Translating" if task == "translate" else "Transcribing"
             transcribe_label = f"{prefix}{verb}"
@@ -1754,6 +1965,8 @@ class TranscribeTab:
             # Record what produced this result while the settings are in hand.
             provenance = AnalysisProvenance(
                 source=SourceRecord.from_path(src),
+                # The thresholds this run used, not the shipped defaults.
+                thresholds=active_thresholds(),
                 transcription=TranscriptionProvenance(
                     model_name=model_sel,
                     model_sha256=transcription_model_sha256(model),
@@ -1790,11 +2003,12 @@ class TranscribeTab:
                 # screen, which in a batch is the one that finished most
                 # recently.
                 undiarized = copy.deepcopy(result.segments) if set_view else None
-                self._diarize_into(result, src, media_path, media_is_normalized)
+                self._diarize_into(result, src, voice_path, voice_is_normalized)
                 provenance.diarization = DiarizationProvenance.from_bundle(
-                    engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                    engine=self._diar_engine_used,
                     expected_speaker_count=self._parse_num_speakers(),
                     clustering_threshold=self._parse_threshold(),
+                    voice_leads=list(self._recognized_names.values()),
                 )
             else:
                 undiarized = None
@@ -1811,6 +2025,7 @@ class TranscribeTab:
                 self._speaker_choice_used = self.speaker_count_var.get()
                 self._speaker_edits = 0
                 self.transcript_view.set_result(result, names)
+                self._refresh_lead_legend()
                 self._update_redo_state()
 
             self._note_if_much_was_skipped(result, src)
@@ -1849,6 +2064,13 @@ class TranscribeTab:
         media_path: Path,
         media_is_normalized: bool,
     ) -> None:
+        # ``media_path`` here is the audio voices may be measured from: the
+        # original, normalised, and never the cleaned copy even when the words
+        # came from one. Everything below - the speaker split, recognising
+        # learned voices, and the copy kept for later enrolment - reads it.
+        # It used to be the cleaned copy, which put cleaned audio into
+        # voiceprints under the original recording's hash.
+        #
         # Diarization needs a 16 kHz mono WAV; convert to a temp file unless the
         # media we already have is one we normalized.
         diar_wav = media_path
@@ -1861,10 +2083,17 @@ class TranscribeTab:
             diar_temp = diar_wav
         # The bar is sitting at 100% from the transcription that just finished.
         self._begin_phase("Identifying speakers…")
+        # Settled once, here, and handed to diarize() as a concrete engine: the
+        # record names the same one. Reading the setting again afterwards named
+        # whatever Method said when the run finished - and Method can be
+        # changed while a run is going.
+        self._diar_engine_used = chosen_backend(
+            ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+        )
         try:
             speaker_segments = diarize(
                 diar_wav,
-                backend=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                backend=self._diar_engine_used,
                 num_speakers=self._parse_num_speakers(),
                 threshold=self._parse_threshold(),
                 progress=self._step,
@@ -1877,7 +2106,9 @@ class TranscribeTab:
             # Recognise enrolled voices (relabel turns to known speakers).
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
-                speaker_segments = self._recognize_speakers(speaker_segments, diar_wav)
+                speaker_segments = self._recognize_speakers(
+                    speaker_segments, diar_wav, source
+                )
             # Keep a 16 kHz copy of the audio for the rest of the session, so a
             # post-run correction can teach a voice - and so the speaker split
             # can be redone without transcribing the recording a second time.
@@ -1950,12 +2181,35 @@ class TranscribeTab:
 
     def _save_outputs_if_possible(self) -> None:
         """Re-save after a transcript edit, when an output folder is in use."""
+        # A rename may have confirmed the last lead, or a move created one.
+        self._refresh_lead_legend()
         # Every call is a speaker tag changed by hand (the transcript view only
         # signals for reassignments and renames), which is what a redo costs.
         self._speaker_edits += 1
         self._update_redo_state()
         if self._result is not None and self._result_source and self._result_outdir:
-            self._save_outputs(self._result, self._result_source, self._result_outdir)
+            self._resave_outputs()
+        else:
+            self._unsaved_edits += 1
+
+    def _resave_outputs(self) -> None:
+        """Write the transcript again after a correction or a redo.
+
+        A failure here went only to the Status tab: the correction stayed on
+        screen and the file on disk silently kept the old version.
+        """
+        result, source, outdir = self._result, self._result_source, self._result_outdir
+        if result is None or source is None or outdir is None:
+            return
+        if self._save_outputs(result, source, outdir) is False:
+            reason = self._failed_saves[-1].reason if self._failed_saves else ""
+            # Corrections are made in the card, so that is where this is said.
+            self._announce_in_card(
+                "error",
+                f"The change is on screen, but the saved transcript in {outdir} "
+                f"still has the old version ({reason.rstrip('.')}). Use Save as "
+                "Word… or Save project… to keep it somewhere else.",
+            )
 
     # -- Redoing the speaker split -----------------------------------------
 
@@ -1974,7 +2228,12 @@ class TranscribeTab:
 
     def _update_redo_state(self) -> None:
         def _do() -> None:
-            if self._can_redo_speakers():
+            if self._busy:
+                # Each finished file of a batch, and every edit, asked for the
+                # button back - mid-run, where a redo would end the run's busy
+                # state while the batch carried on.
+                self.redo_button.configure(state="disabled")
+            elif self._can_redo_speakers():
                 self.redo_button.configure(state="normal")
                 people = "speaker" if self._diarized_count == 1 else "speakers"
                 self.redo_hint_var.set(
@@ -1992,6 +2251,8 @@ class TranscribeTab:
 
     def _redo_speakers(self) -> None:
         """Ask for a different speaker count and split the transcript again."""
+        if self._refuse_while_busy("splitting the speakers again"):
+            return
         if not self._can_redo_speakers():
             self._announce(
                 "warning",
@@ -2009,6 +2270,9 @@ class TranscribeTab:
         )
         if choice is None:  # cancelled; "" is a real answer ("work it out")
             return
+        if self._refuse_while_busy("splitting the speakers again"):
+            return  # a run was started while the question was open
+        self._claim_busy()
         self._cancel_event.clear()
         threading.Thread(
             target=self._redo_speakers_worker, args=(choice,), daemon=True
@@ -2045,9 +2309,12 @@ class TranscribeTab:
                 + " — the recording is not being transcribed again.",
             )
             self._begin_phase("Identifying speakers…")
+            self._diar_engine_used = chosen_backend(
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+            )
             speaker_segments = diarize(
                 wav,
-                backend=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                backend=self._diar_engine_used,
                 num_speakers=requested,
                 threshold=self._parse_threshold(),
                 progress=self._step,
@@ -2057,7 +2324,9 @@ class TranscribeTab:
             found = len({seg.speaker for seg in speaker_segments})
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
-                speaker_segments = self._recognize_speakers(speaker_segments, wav)
+                speaker_segments = self._recognize_speakers(
+                    speaker_segments, wav, self._result_source
+                )
             # From the words as transcribed, never from the last split's output.
             result.segments = assign_speakers(copy.deepcopy(base), speaker_segments)
             self._diarized_count = found
@@ -2069,12 +2338,13 @@ class TranscribeTab:
             # The hand corrections were made against the old split and are gone
             # with it; the operator was told so before this started.
             self._speaker_edits = 0
+            self._unsaved_edits = 0
             names = self._preset_names_for(result, typed_names=False)
             self._speaker_names = names
             self.transcript_view.set_result(result, names)
+            self._refresh_lead_legend()
             self._record_redo_provenance(requested)
-            if self._result_source and self._result_outdir:
-                self._save_outputs(result, self._result_source, self._result_outdir)
+            self._resave_outputs()
             people = "speaker" if found == 1 else "speakers"
             message = f"Split again into {found} {people}."
             append_line(self.status, message)
@@ -2098,9 +2368,10 @@ class TranscribeTab:
         if provenance is None:
             return
         provenance.diarization = DiarizationProvenance.from_bundle(
-            engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+            engine=self._diar_engine_used,
             expected_speaker_count=requested,
             clustering_threshold=self._parse_threshold(),
+            voice_leads=list(self._recognized_names.values()),
         )
 
     def _rerender_transcript(self) -> None:
@@ -2121,12 +2392,36 @@ class TranscribeTab:
         count = self.transcript_view.find(query, backwards=backwards)
         self.find_status_var.set(f"{count} match(es)" if count else "No matches")
 
+    def _refresh_lead_legend(self) -> None:
+        """Show the voice-lead legend while any lead is on screen.
+
+        Called from runs and redos, which are on worker threads; widgets are
+        only touched on the UI thread, so from anywhere else it reschedules
+        itself there.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            self.root.after(0, self._refresh_lead_legend)
+            return
+        if any_leads(self._speaker_names.values()):
+            self.lead_legend_var.set(LEAD_LEGEND)
+            if not self._lead_legend.winfo_manager():
+                self._lead_legend.pack(
+                    anchor="w", pady=(SPACE_XS, 0), before=self._output_tabs
+                )
+        else:
+            self.lead_legend_var.set("")
+            self._lead_legend.pack_forget()
+
     def _copy_transcript(self) -> None:
         """Copy the rendered transcript text to the clipboard."""
         text = self.transcript_view.get_text()
         if not text.strip():
             self.progress_label_var.set("Nothing to copy yet.")
             return
+        if any_leads(self._speaker_names.values()):
+            # Pasted into a report, the lines lose the screen around them; the
+            # legend goes with them, as it does in every saved format.
+            text = f"{LEAD_LEGEND}\n\n{text}"
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.progress_label_var.set("Transcript copied to clipboard.")
@@ -2158,9 +2453,10 @@ class TranscribeTab:
                 self._speaker_names,
                 blank_lines=self.blank_lines_var.get(),
             )
-            self.progress_label_var.set(f"Saved {Path(path).name}")
+            self._unsaved_edits = 0
+            self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The Word document was not saved", exc)
 
     def current_analysis(
         self,
@@ -2198,9 +2494,9 @@ class TranscribeTab:
                 speaker_names=self._speaker_names,
                 provenance=self._result_provenance,
             )
-            self.progress_label_var.set(f"Saved {Path(path).name}")
+            self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The analysis report was not saved", exc)
 
     def _save_project(self) -> None:
         """Save the result + speaker edits to a reloadable project file."""
@@ -2229,12 +2525,15 @@ class TranscribeTab:
                 self._result_source,
                 self._result_provenance,
             )
-            self.progress_label_var.set(f"Saved {Path(path).name}")
+            self._unsaved_edits = 0
+            self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The project was not saved", exc)
 
     def _open_project(self) -> None:
         """Load a saved project so its transcript can be reviewed/edited again."""
+        if self._refuse_while_busy("opening a project"):
+            return
         path = filedialog.askopenfilename(
             title="Open project",
             filetypes=[
@@ -2252,7 +2551,7 @@ class TranscribeTab:
             source = record.source
             self._result_provenance = record.provenance
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The project could not be opened", exc)
             return
         self._result = result
         self._speaker_names = speaker_names
@@ -2271,11 +2570,25 @@ class TranscribeTab:
         self._undiarized_segments = None
         self._diarized_count = 0
         self._speaker_edits = 0
+        self._unsaved_edits = 0
         self._speaker_choice_used = SPEAKERS_UNSET
         self._update_redo_state()
         # That caveat was about the run this transcript did not come from.
         self._set_result_caveat("")
+        # So were the output names, the summary line above the transcript and
+        # the banner. Left standing, the page described the previous recording
+        # - its name, language and length, and a green "complete" - over a
+        # transcript of a different one.
+        self._output_names = {}
         self.transcript_view.set_result(result, self._speaker_names)
+        self._refresh_lead_legend()
+        self._describe_result()
+        recording = self._result_source.name if self._result_source else None
+        self.banner.show(
+            "info",
+            f"Opened {Path(path).name}"
+            + (f" \u2014 the transcript of {recording}." if recording else "."),
+        )
         self.progress_label_var.set(f"Opened {Path(path).name}")
 
     def _on_drop_media(self, paths: List[Path]) -> None:
@@ -2283,8 +2596,7 @@ class TranscribeTab:
         if not paths:
             return
         if len(paths) == 1 and not paths[0].is_dir():
-            self.input_file_var.set(str(paths[0]))
-            self.progress_label_var.set(f"Loaded {paths[0].name}")
+            self._use_single_file(paths[0])
         else:
             self._add_batch_paths(paths)
 
@@ -2311,6 +2623,16 @@ class TranscribeTab:
         """Add files, and the recordings inside any folders, to the queue."""
         found = folder_batch.expand(paths)
         added = 0
+        # A file already chosen as the single input goes into the queue first:
+        # once a queue exists it is all that runs, and leaving the file in the
+        # Recording box would show something that is never transcribed.
+        single = self.input_file_var.get().strip()
+        if single and found.recordings:
+            chosen = Path(single)
+            if chosen not in self._batch_files:
+                self._batch_files.append(chosen)
+                added += 1
+            self.input_file_var.set("")
         for path in found.recordings:
             if path not in self._batch_files:
                 self._batch_files.append(path)
@@ -2430,8 +2752,21 @@ class TranscribeTab:
                 )
         return self._embedder if isinstance(self._embedder, SpeakerEmbedder) else None
 
-    def _recognize_speakers(self, speaker_segments, diar_wav: Path):
-        """Relabel diarizer turns to enrolled voices; fills ``_recognized_names``."""
+    def _recognize_speakers(
+        self, speaker_segments, diar_wav: Path, source: "Optional[Path]"
+    ):
+        """Relabel diarizer turns to enrolled voices; fills ``_recognized_names``.
+
+        ``source`` is the recording the transcript was made from. The refusal
+        for processed audio lives here, the one place every route to
+        recognition passes through. It was checked at the first run's call
+        only, so Redo speaker separation recognised voices on a transcript of a
+        cleaned copy that the first run had correctly refused.
+        """
+        refusal = _derived_voice_refusal(source)
+        if refusal is not None:
+            append_line(self.status, f"Voice recognition skipped. {refusal}")
+            return speaker_segments
         profile = self._profile
         if profile is None or not profile.voiceprints:
             return speaker_segments
@@ -2447,9 +2782,12 @@ class TranscribeTab:
                 embedder,
                 threshold=active.recognition_acceptance,
                 margin=active.recognition_margin,
-                # min_seconds stays voiceprints.MIN_TURN_SECONDS: it is the
-                # shortest turn worth embedding at all, not the comparison
-                # tool's minimum for making an assessment.
+                # Putting a person's name on a turn is an assessment, so it
+                # takes the same minimum the comparison page uses before it will
+                # make one. It used to be the 1 s embedding floor, which named
+                # speakers on turns the comparison page would have called
+                # Insufficient data.
+                min_assess_seconds=active.min_questioned_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - never fail a run on recognition
             append_line(self.status, f"Voice recognition skipped: {exc}")
@@ -2457,7 +2795,10 @@ class TranscribeTab:
         self._recognized_names = name_map
         if name_map:
             recognised = ", ".join(sorted(set(name_map.values())))
-            append_line(self.status, f"Recognised voice(s): {recognised}.")
+            append_line(
+                self.status,
+                f"Suggested by voice similarity (unconfirmed leads): {recognised}.",
+            )
         return relabeled
 
     def _set_session_wav(self, diar_wav: Path) -> None:
@@ -2488,30 +2829,70 @@ class TranscribeTab:
         profile = self._profile
         if profile is None or not self.learn_var.get():
             return
+        if is_lead(name):
+            # The name is still the recogniser's suggestion. Learning its voice
+            # from a line attributed to it would let a guess reinforce itself,
+            # so the operator confirms the name first.
+            self.progress_label_var.set(
+                f"Not learned: {name} is still a suggestion. Click the speaker "
+                "tag and confirm the name first."
+            )
+            return
+        refusal = _derived_voice_refusal(self._result_source)
+        if refusal is not None:
+            self.progress_label_var.set(f"Voice not learned. {refusal}")
+            return
         wav = self._session_wav
         if wav is None or not wav.exists():
             return
         embedder = self._get_embedder()
         if embedder is None:
             return
+        # Read now, on the UI thread: by the time the worker files a proposed
+        # sample, a new run may have replaced both, and the sample would be
+        # recorded as coming from a recording it never came from.
+        source = self._result_source
+        provenance = self._result_provenance
+        source_sha256 = (
+            provenance.source.sha256 if provenance and provenance.source else None
+        )
 
         def _worker() -> None:
             try:
-                voiceprint = profile.voiceprint_for(name)
-                added = enroll_spans(voiceprint, wav, spans, embedder)
+                learned = Voiceprint(name=name)
+                added = enroll_spans(learned, wav, spans, embedder)
                 if added:
-                    save_profile(profile)
-                    self.progress_label_var.set(
-                        f"Learned {name}'s voice (+{added} sample(s))."
+                    # Added to the profile as stored now, not to the copy held
+                    # when this started: saving that copy wrote over anything
+                    # stored in the seconds between, such as an import.
+                    stored = add_learned_voice(profile.name, name, learned.vectors)
+                    self.root.after(0, lambda: self._adopt_profile(profile, stored))
+                    self.root.after(
+                        0,
+                        lambda: self.progress_label_var.set(
+                            f"Learned {name}'s voice (+{added} sample(s))."
+                        ),
                     )
+            except ProfileSaveError as exc:
+                # Learned in memory but not kept: say so, rather than
+                # "Learned", which the next session would contradict.
+                self._announce("error", f"Voice not kept. {exc}")
             except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
                 self.progress_label_var.set(friendly_error(exc))
-            self._propose_to_speaker_profile(name, wav, spans, embedder)
+            self._propose_to_speaker_profile(
+                name, wav, spans, embedder, source, source_sha256
+            )
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _propose_to_speaker_profile(
-        self, name: str, wav: Path, spans: List[Tuple[float, float]], embedder
+        self,
+        name: str,
+        wav: Path,
+        spans: List[Tuple[float, float]],
+        embedder,
+        source: Optional[Path],
+        source_sha256: Optional[str],
     ) -> None:
         """Offer this correction to a known subject's profile - unapproved.
 
@@ -2525,26 +2906,30 @@ class TranscribeTab:
             subject = find_speaker_profile_by_name(name)
             if subject is None:
                 return
-            source = self._result_source
             result = enroll_from_wav(
                 subject,
                 wav,
                 spans,
                 embedder,
                 source_filename=source.name if source else None,
-                source_sha256=(
-                    self._result_provenance.source.sha256
-                    if self._result_provenance and self._result_provenance.source
-                    else None
-                ),
+                source_sha256=source_sha256,
                 sample_type=SAMPLE_LEARNED,
                 notes="Proposed automatically from a transcript correction.",
             )
             if not result.added:
                 return
-            save_speaker_profile(subject)
+            # Into the subject as stored now: a second correction's proposal,
+            # or a removal on Speaker Profiles, may have saved it meanwhile.
+            subject, added = add_samples(subject, result.added)
+            if not added:
+                return
+            # Speaker Profiles may be showing this subject: without this it
+            # could later save its older copy over these proposed samples.
+            notify = self.on_profiles_changed
+            if notify is not None:
+                self.root.after(0, notify)
             self.progress_label_var.set(
-                f"{result.added_count} sample(s) proposed for {subject.display_name} - "
+                f"{len(added)} sample(s) proposed for {subject.display_name} - "
                 "approve them in Speaker profiles before they are used."
             )
         except Exception as exc:  # noqa: BLE001 - never fail a correction on this
@@ -2568,10 +2953,30 @@ class TranscribeTab:
         known subject - pending review, never trusted on the strength of a
         correction alone.
         """
+        if self._refuse_while_busy("saving a speaker"):
+            return
         if self._result is None:
             self._announce("warning", "Transcribe a recording first.")
             return
+        refusal = _derived_voice_refusal(self._result_source)
+        if refusal is not None:
+            self._announce("warning", refusal)
+            return
         spans = self._speaker_spans()
+        # Unconfirmed suggestions are not offered. Saving one would add the
+        # recogniser's own pick to that subject's review queue - audio that is,
+        # by construction, similar to the reference, so the outlier check would
+        # not flag it.
+        leads = sorted(name for name in spans if is_lead(name))
+        spans = {name: value for name, value in spans.items() if not is_lead(name)}
+        if leads and not spans:
+            self._announce(
+                "warning",
+                "Every speaker here is still an unconfirmed voice lead. Click a "
+                "speaker tag and confirm or correct the name before saving it to "
+                "a subject.",
+            )
+            return
         if not spans:
             self._announce(
                 "warning",
@@ -2614,6 +3019,12 @@ class TranscribeTab:
         )
         if choice is None:
             return
+        if self._refuse_while_busy("saving a speaker"):
+            return
+        # Held for the few seconds it takes: the worker reads this run's audio
+        # and source, which a run started meanwhile would delete and replace -
+        # filing one recording's speaker under another recording's name.
+        self._claim_busy()
         threading.Thread(
             target=self._save_speaker_worker,
             args=(choice, list(spans[choice.speaker]), embedder),
@@ -2627,6 +3038,17 @@ class TranscribeTab:
         embedder: SpeakerEmbedder,
     ) -> None:
         """Enrol the chosen speaker's audio off the UI thread, then report."""
+        try:
+            self._save_speaker(choice, spans, embedder)
+        finally:
+            self.root.after(0, self._release_busy)
+
+    def _save_speaker(
+        self,
+        choice: SaveSpeakerChoice,
+        spans: List[Tuple[float, float]],
+        embedder: SpeakerEmbedder,
+    ) -> None:
         subject = choice.profile
         self.progress_label_var.set(f"Measuring {choice.speaker}\u2019s speech\u2026")
         notes = (
@@ -2679,8 +3101,11 @@ class TranscribeTab:
                 self.progress_label_var.set("Ready")
                 return
             # An empty new subject is never written: the profile only reaches
-            # disk once there is something in it.
-            save_speaker_profile(subject)
+            # disk once there is something in it. An existing one is added to
+            # as stored now, not as it was when the dialog opened.
+            subject, added = add_samples(
+                subject, result.added, new_subject=choice.is_new
+            )
         except ProfileError as exc:
             self._announce("error", friendly_error(exc))
             self.progress_label_var.set("Ready")
@@ -2694,7 +3119,8 @@ class TranscribeTab:
         created = " (new subject)" if choice.is_new else ""
         self._announce(
             "success",
-            f"Added {result.added_count} sample(s) - {result.added_seconds:.0f} "
+            f"Added {len(added)} sample(s) - "
+            f"{sum(sample.speech_duration for sample in added):.0f} "
             f"sec of speech - to {subject.display_name}{created}. They are "
             "pending review: approve them on the Speaker Profiles page before "
             "they are used as reference material.",
@@ -2735,6 +3161,45 @@ class TranscribeTab:
             f"Profile '{profile.name}' loaded ({vp_count} learned voice(s))."
         )
 
+    def _confirm_replace_profile(self, name: str, taken: str) -> bool:
+        """Ask before ``name`` replaces the stored profile ``taken``."""
+        same = taken == name
+        return messagebox.askyesno(
+            "Replace profile?",
+            (
+                f"A profile called \u2018{taken}\u2019 already exists"
+                + (
+                    ""
+                    if same
+                    else f", and \u2018{name}\u2019 would be stored in its place"
+                )
+                + ". Replacing it loses its settings and every voice it has "
+                "learned. Replace it?"
+            ),
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        )
+
+    def _adopt_profile(self, held: Profile, stored: Profile) -> None:
+        """Take ``stored`` as the active profile if ``held`` still is.
+
+        Recognition reads the active profile's voices, so a voice just learned
+        has to reach it. If the operator has chosen another profile since,
+        that one stays.
+        """
+        if self._profile is held:
+            self._profile = stored
+
+    def _store_profile(self, profile: Profile) -> bool:
+        """Save ``profile``; on failure say so where it will be seen."""
+        try:
+            save_profile(profile)
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return False
+        return True
+
     def _new_profile(self) -> None:
         name = simpledialog.askstring(
             "New profile",
@@ -2743,8 +3208,13 @@ class TranscribeTab:
         )
         if not name or not name.strip():
             return
-        profile = Profile(name=name.strip(), settings=self._profile_settings())
-        save_profile(profile)
+        name = name.strip()
+        taken = existing_profile_name(name)
+        if taken is not None and not self._confirm_replace_profile(name, taken):
+            return
+        profile = Profile(name=name, settings=self._profile_settings())
+        if not self._store_profile(profile):
+            return
         self._profile = profile
         self._refresh_profiles()
         self.profile_var.set(profile.name)
@@ -2756,8 +3226,14 @@ class TranscribeTab:
         if profile is None:
             self.progress_label_var.set("Pick or create a profile first.")
             return
-        profile.settings = self._profile_settings()
-        save_profile(profile)
+        try:
+            # Into the profile as stored, so voices it has learned since it was
+            # loaded - in this window or another - are kept.
+            stored = store_profile_settings(profile.name, self._profile_settings())
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return
+        self._profile = stored
         self.progress_label_var.set(f"Saved profile '{profile.name}'.")
 
     def _delete_profile(self) -> None:
@@ -2765,7 +3241,22 @@ class TranscribeTab:
         if profile is None:
             self.progress_label_var.set("No profile selected.")
             return
-        delete_profile(profile.name)
+        voices = len(profile.voiceprints)
+        if not messagebox.askyesno(
+            "Delete profile",
+            f"Delete the profile \u2018{profile.name}\u2019"
+            + (f" and the {voices} voice(s) it has learned" if voices else "")
+            + "? This cannot be undone.",
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        ):
+            return
+        try:
+            delete_profile(profile.name)
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return
         self._profile = None
         self.profile_var.set("")
         self._refresh_profiles()
@@ -2791,11 +3282,9 @@ class TranscribeTab:
             return
         try:
             export_profile(profile, path)
-            self.progress_label_var.set(
-                f"Exported '{profile.name}' to {Path(path).name}"
-            )
+            self._report_saved(path, in_card=False)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The profile was not exported", exc, in_card=False)
 
     def _import_profile(self) -> None:
         """Load a profile exported from another instance and add it here."""
@@ -2812,17 +3301,18 @@ class TranscribeTab:
         try:
             profile = read_profile_file(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved(
+                "The profile could not be imported", exc, in_card=False
+            )
             return
-        # Don't silently clobber a same-named profile already on this machine.
-        if load_profile(profile.name) is not None and not messagebox.askyesno(
-            "Import profile",
-            f"A profile named '{profile.name}' already exists here. Overwrite it "
-            "with the imported one?",
-            parent=active_window(self.root),
-        ):
+        # Don't silently clobber a profile already on this machine - including
+        # one stored under the same file name with different capitals, or one
+        # whose file cannot be read.
+        taken = existing_profile_name(profile.name)
+        if taken is not None and not self._confirm_replace_profile(profile.name, taken):
             return
-        save_profile(profile)
+        if not self._store_profile(profile):
+            return
         self._profile = profile
         self._refresh_profiles()
         self.profile_var.set(profile.name)
@@ -2832,19 +3322,6 @@ class TranscribeTab:
         self.progress_label_var.set(
             f"Imported profile '{profile.name}' ({vp_count} learned voice(s))."
         )
-
-    # -- Single-speaker export + voice comparison --------------------------
-    # The dialogs live in whispr.gui.speaker_compare (self-contained); these
-    # thin wrappers keep the button commands and pass the active profile + a
-    # status callback.
-
-    def _export_speaker(self) -> None:
-        speaker_compare.export_speaker(
-            self.root, self._profile, self.progress_label_var.set
-        )
-
-    def _compare_voices(self) -> None:
-        speaker_compare.open_compare_dialog(self.root)
 
     def _profile_settings(self) -> Dict[str, object]:
         """The settings a profile remembers (the persisted set plus custom words).

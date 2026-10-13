@@ -17,10 +17,12 @@ read-only config dir just means profiles can't be saved, never a crash.
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
+from .atomicio import write_json_atomic
 from .settings import settings_path
 from .voiceprints import Voiceprint
 
@@ -94,9 +96,18 @@ def list_profiles() -> List[str]:
     return sorted(names)
 
 
+class ProfileSaveError(OSError):
+    """An operation profile could not be saved or removed, in plain words."""
+
+
+def profile_path(name: str) -> Path:
+    """The file the profile called ``name`` is kept in."""
+    return profiles_dir() / f"{_slug(name)}.json"
+
+
 def load_profile(name: str) -> Optional[Profile]:
     """Load the profile called ``name``, or ``None`` if missing/unreadable."""
-    path = profiles_dir() / f"{_slug(name)}.json"
+    path = profile_path(name)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - missing/corrupt -> no profile
@@ -106,26 +117,114 @@ def load_profile(name: str) -> Optional[Profile]:
     return Profile.from_dict(data)
 
 
-def save_profile(profile: Profile) -> None:
-    """Write ``profile`` to its JSON file (best-effort; never raises on OSError)."""
+def existing_profile_name(name: str) -> Optional[str]:
+    """The profile that saving under ``name`` would replace, or None.
+
+    Profiles are stored by a simplified file name, so different names can share
+    one file: "Op Alpha" and "op alpha" both become ``op_alpha.json``. Creating
+    the second used to replace the first without a word, learned voices and
+    all. This answers with the *stored* profile's own name, so the question put
+    to the operator names the thing they would lose. A file that exists but
+    cannot be read still counts as taken - replacing it would destroy it too.
+    """
+    path = profile_path(name)
+    if not path.exists():
+        return None
+    existing = load_profile(name)
+    return existing.name if existing is not None else path.name
+
+
+def save_profile(profile: Profile) -> Path:
+    """Write ``profile`` atomically. Raises :class:`ProfileSaveError` on failure.
+
+    It used to write in place and swallow every error, while the page went on
+    to say "Saved", "Created" or "Learned".
+    """
+    path = profile_path(profile.name)
     try:
-        directory = profiles_dir()
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{_slug(profile.name)}.json"
-        path.write_text(
-            json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        return write_json_atomic(path, profile.to_dict())
+    except OSError as exc:
+        raise ProfileSaveError(
+            f"The profile \u2018{profile.name}\u2019 could not be saved to "
+            f"{path}: {exc.strerror or exc}."
+        ) from exc
+
+
+# One read-change-write at a time, so two learning runs finishing together
+# cannot each re-read the same copy and keep only the last one's voices.
+_UPDATE_LOCK = threading.Lock()
+
+
+def _stored_for_update(name: str) -> Profile:
+    """The stored profile ``name``, re-read now, for a change to be applied to.
+
+    Raises :class:`ProfileSaveError` when there is nothing safe to change: the
+    file has gone, cannot be read (it is left as it is), or now holds a
+    different profile because it was replaced under another name.
+    """
+    path = profile_path(name)
+    stored = load_profile(name)
+    if stored is None:
+        if path.exists():
+            raise ProfileSaveError(
+                f"The profile \u2018{name}\u2019 could not be read, so it was "
+                "left as it is."
+            )
+        raise ProfileSaveError(
+            f"The profile \u2018{name}\u2019 is no longer on this computer."
         )
-    except OSError:
-        pass
+    if stored.name != name:
+        raise ProfileSaveError(
+            f"The profile \u2018{name}\u2019 has been replaced by "
+            f"\u2018{stored.name}\u2019. Choose that profile to go on."
+        )
+    return stored
+
+
+def add_learned_voice(
+    name: str, speaker: str, vectors: Sequence[Sequence[float]]
+) -> Profile:
+    """Add newly learned ``vectors`` for ``speaker`` to the stored profile ``name``.
+
+    The profile is re-read first and only that speaker's voice changes. Learning
+    takes a few seconds, and saving the copy held when it started wrote over
+    whatever was stored in between - an import, a replacement, another window's
+    learning - without a word. Returns the profile as saved.
+    """
+    with _UPDATE_LOCK:
+        stored = _stored_for_update(name)
+        voiceprint = stored.voiceprint_for(speaker)
+        for vector in vectors:
+            voiceprint.add(vector)
+        save_profile(stored)
+    return stored
+
+
+def store_profile_settings(name: str, settings: Dict[str, object]) -> Profile:
+    """Replace the stored profile's settings, keeping the voices it has learned.
+
+    The voices are the ones on disk now, not the ones in memory, for the same
+    reason as :func:`add_learned_voice`. Returns the profile as saved.
+    """
+    with _UPDATE_LOCK:
+        stored = _stored_for_update(name)
+        stored.settings = dict(settings)
+        save_profile(stored)
+    return stored
 
 
 def delete_profile(name: str) -> None:
-    """Remove the profile called ``name`` (best-effort)."""
+    """Remove the profile called ``name``. Raises if it is there and cannot go."""
+    path = profile_path(name)
     try:
-        (profiles_dir() / f"{_slug(name)}.json").unlink()
-    except OSError:
-        pass
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ProfileSaveError(
+            f"The profile \u2018{name}\u2019 could not be deleted: "
+            f"{exc.strerror or exc}."
+        ) from exc
 
 
 # Suffix for exported/shared profile files (a single self-contained JSON that
@@ -162,45 +261,3 @@ def read_profile_file(path: "str | Path") -> Profile:
 
 
 # Suffix for a single exported speaker voiceprint (for cross-profile comparison).
-VOICEPRINT_SUFFIX = ".whispr-voiceprint.json"
-_VOICEPRINT_KIND = "whispr-voiceprint"
-
-
-def export_voiceprint(
-    voiceprint: Voiceprint, path: "str | Path", *, source_profile: Optional[str] = None
-) -> None:
-    """Write a single speaker's voiceprint to ``path`` for comparison elsewhere.
-
-    Records the originating profile name (informational) alongside the vectors.
-    Raises on failure so the caller can surface it.
-    """
-    data: Dict[str, object] = {"kind": _VOICEPRINT_KIND, **voiceprint.to_dict()}
-    if source_profile:
-        data["source_profile"] = source_profile
-    Path(path).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def read_voiceprints(path: "str | Path") -> Dict[str, Voiceprint]:
-    """Load speaker voiceprints from a file: a single-speaker export or a profile.
-
-    Returns a ``{name: Voiceprint}`` map (one entry for a voiceprint export, one
-    per speaker for a full profile). Raises ``ValueError`` for anything else so
-    the caller can show a clear message.
-    """
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise ValueError(f"Couldn't read the file: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ValueError("This file has no speaker voiceprints.")
-    if data.get("kind") == _VOICEPRINT_KIND:
-        vp = Voiceprint.from_dict(data)
-        if vp.name and vp.vectors:
-            return {vp.name: vp}
-    elif data.get("name") is not None:
-        profile = Profile.from_dict(data)
-        if profile.voiceprints:
-            return dict(profile.voiceprints)
-    raise ValueError("This file has no speaker voiceprints.")

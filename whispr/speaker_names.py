@@ -38,6 +38,51 @@ def cluster_index(speaker_id: str) -> "Optional[int]":
     return int(match.group(1)) if match else None
 
 
+# How a name suggested by voice similarity is shown, everywhere it is shown.
+#
+# Recognition compares a turn's voice against voices this profile has learned.
+# That is similarity, and the rule for this application is that similarity is
+# never presented as identity. A bare "[Viktor Marchenko]" on a line is
+# indistinguishable from a name the operator typed or confirmed - on screen,
+# and worse, in the .txt, .srt, Word file and report that leave this machine.
+# So a recognised name carries this marker until the operator confirms it by
+# renaming the speaker, which replaces it with a typed name.
+#
+# It is applied to the display name rather than at each place that renders one,
+# because there are five such places and a sixth will be added one day.
+#
+# The wording was reviewed: "Viktor Marchenko? (voice lead)" read, out of
+# context, as doubt about the spelling and as "the main speaker". A line pasted
+# into another document carries no legend, so the marker has to say what it
+# means on its own.
+LEAD_SUFFIX = " (unconfirmed voice lead)"
+LEAD_LEGEND = (
+    'A name marked "(unconfirmed voice lead)" was suggested by voice similarity to a '
+    "voice this profile has learned. It is an investigative lead, not an "
+    "identification. Confirm or correct it before relying on it."
+)
+
+
+def as_lead(name: str) -> str:
+    """``name`` as shown when it was suggested by voice similarity."""
+    return name if is_lead(name) else f"{name}{LEAD_SUFFIX}"
+
+
+def is_lead(name: "Optional[str]") -> bool:
+    """Whether a display name is an unconfirmed voice-similarity suggestion."""
+    return bool(name) and str(name).endswith(LEAD_SUFFIX)
+
+
+def bare_name(name: str) -> str:
+    """The name without the lead marker - what confirming it would produce."""
+    return name[: -len(LEAD_SUFFIX)] if is_lead(name) else name
+
+
+def any_leads(names: "Iterable[str]") -> bool:
+    """Whether any of these display names is an unconfirmed lead."""
+    return any(is_lead(name) for name in names)
+
+
 def preset_names(
     speaker_ids: "Iterable[str]",
     recognized: "Mapping[str, str]",
@@ -47,7 +92,7 @@ def preset_names(
 ) -> "Dict[str, str]":
     """Map speaker id -> display name for one result.
 
-    Recognised voices are applied first. Whatever is left takes its name from
+    Recognised voices are applied first, marked as leads (see LEAD_SUFFIX). Whatever is left takes its name from
     the Speaker 1..N field with *its own* number - SPEAKER_00 from the first
     field, SPEAKER_01 from the second - and not from the next unused field.
 
@@ -62,7 +107,9 @@ def preset_names(
     speakers from scratch, so only the recognised names apply.
     """
     ids = sorted({sid for sid in speaker_ids if sid})
-    names: Dict[str, str] = {sid: recognized[sid] for sid in ids if sid in recognized}
+    names: Dict[str, str] = {
+        sid: as_lead(recognized[sid]) for sid in ids if sid in recognized
+    }
     if not use_typed:
         return names
     for sid in ids:

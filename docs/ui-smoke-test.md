@@ -71,6 +71,13 @@ which can be a different file on each run.
       words. The settings put themselves away.
 - [ ] **Complete:** a green banner says so, the transcript has the page, and
       the line above it names the recording, language, duration and speakers.
+- [ ] **While running:** Redo speaker separation, Open project and Save
+      speaker to profile refuse with a banner, and the transcript's speaker
+      menus offer playback only ("Speaker corrections wait until the run
+      finishes"). A double-click on Transcribe starts one run.
+- [ ] **Cancel stays on its page:** Cancel here does not stop a Live session or
+      put "Cancelling…" on Translate; starting a translation does not undo a
+      Cancel pressed here. Translate's own buttons are off while it runs.
 - [ ] **Cancelled** and **failed** runs both say so where the eye already is,
       and a failure names the friendly reason and points at the Status tab. No
       traceback appears outside the Status tab.
@@ -147,8 +154,12 @@ Only present when the build bundles the model; **System status** says which.
       removed, and a warning about crowd noise.
 - [ ] **Analysis report…** records that the audio was cleaned.
 - [ ] Take that `.cleaned.wav` to **Compare Speakers** and choose it as the
-      questioned recording: it says it is a cleaned copy and that a score from
-      it is not comparable. The same on **Speaker Profiles → Add a recording**.
+      questioned recording: a red line **directly under the file** says it is a
+      cleaned copy and cannot be compared, and **Compare speakers** and
+      **Search all profiles** are greyed out. Choose the original and both come
+      back. The same refusal on **Speaker Profiles → Add a recording**.
+- [ ] Rename the file to upper case (`X.CLEANED.WAV`) and try again: still
+      refused.
 - [ ] Listen to both files on a genuinely noisy recording and judge for
       yourself whether it helped. On a crowded one, expect it not to.
 
@@ -164,7 +175,7 @@ deployment machine:**
 - [ ] The line underneath says GPU support is not included in this build, and
       does **not** say a GPU was "not detected" — that would send someone off
       to fit a card for nothing.
-- [ ] **Self-test…** says the same thing about the hardware, in the same terms.
+- [ ] **System status** says the same thing about the hardware, in the same terms.
 - [ ] Open a settings file or operation profile saved by a source copy with the
       GPU selected, then run: it transcribes on the CPU and the Status tab says
       the build has no GPU support. It must not fail the run.
@@ -198,8 +209,8 @@ properly and expect to find something.
       found (50 or 60 Hz). On a recording without hum, it must **not** claim to
       have found any.
 - [ ] Take that `.listening.wav` to **Compare Speakers** as the questioned
-      recording: it says it is a listening copy and that a score from it is not
-      comparable. The same on **Speaker Profiles → Add a recording**.
+      recording: it is refused the same way, with both buttons greyed out. The
+      same on **Speaker Profiles → Add a recording**.
 - [ ] Put the `.listening.wav` in a folder and run **a whole folder**: it is
       skipped and counted as a derived copy, not queued for transcription.
 - [ ] Listen to both files. On a recording with hum or a very quiet talker,
@@ -237,6 +248,34 @@ properly and expect to find something.
       the run starts without it.
 - [ ] The answer is remembered across a relaunch and travels with an operation
       profile. An operator upgrading from a build that never asked is asked once.
+
+### Names suggested by voice similarity
+
+Needs an operation profile that has learned at least one voice, and a
+recording containing that person speaking for more than three seconds.
+
+- [ ] A recognised speaker reads **[Name (unconfirmed voice lead)]** on every
+      line — never a bare name. A one-line amber explanation sits above the
+      transcript while any such lead is on screen, and disappears once none is.
+- [ ] A turn shorter than three seconds is never given a suggested name.
+- [ ] **Copy transcript**, **.txt**, **Word** and the **analysis report** all
+      open with the explanation; each line keeps its marker. **.srt** keeps the
+      marker on each subtitle.
+- [ ] Click the suggested speaker's tag: the menu offers **Confirm or
+      correct…**, not "Rename". It opens a dialog with **nothing typed in**,
+      focus on **Leave as a suggestion**, a **Play a line** button, and a
+      sentence saying that confirming teaches the profile and proposes samples
+      for review.
+- [ ] Press **Enter** straight away: the dialog closes and the name is **still
+      a suggestion**. No single keystroke confirms it.
+- [ ] **Confirm – I have listened**: the marker goes, on every line. Type a
+      different name instead and use it: the speaker takes that name.
+- [ ] Before confirming, move a line onto the suggested speaker: it says the
+      voice was not learned because the name is still a suggestion.
+- [ ] **Save speaker to profile…** does not offer a speaker that is still a
+      suggestion.
+- [ ] Open a project saved by an earlier version that had a recognised name:
+      it reopens with the marker, unless the name had been typed over.
 
 ### Redoing the speaker split
 
@@ -342,18 +381,41 @@ properly and expect to find something.
 - [ ] With no reference selected, stage 1 says where to create one.
 - [ ] **High similarity:** the band is the largest thing on the result, the
       sentence reads as a lead, and the score reads `0.78 / 1.00`.
-- [ ] **Low similarity** and **no sufficiently strong match** read plainly.
+- [ ] **Low similarity**, and a search that found **No lead**, read plainly.
+      Nowhere on the page or in History does a result use the word "match".
+- [ ] Run a **gallery search** that finds no lead, then open **Comparison
+      History**. The row is filed under **Searches with no lead**, not under whoever
+      ranked first, and its assessment reads **No lead** — not "High
+      similarity". Filtering History by that subject does not list it.
+- [ ] A gallery search that *does* find a lead is filed under that subject
+      and reads **Lead: <name>**, in the accent colour, never green.
+- [ ] A gallery search on too little audio reads **Insufficient data** in
+      History and is filed under nobody. Its ranking — on Compare, in History's
+      detail and in the report — says **Not assessed** beside every name, never
+      a similarity band, and the score row shows no name.
+- [ ] The Subject filter's **All subjects** and the **Searches with no lead**
+      entry are plainly different things.
+- [ ] A search that found a lead reads **Lead: <name>** on Compare and in
+      History alike.
 - [ ] **Insufficient data** visually outranks the score: the band says so and
       the sentence says the score is not meaningful, even when the number is
       high.
 - [ ] **Refused** (a profile from another voice model) says so in the same
       place and gives the reason.
+- [ ] **Compare speakers** is off until a reference and a recording are both
+      chosen, and **Search all profiles** until a recording is; the line beside
+      them names what is missing.
 - [ ] **Search all profiles** on poor audio shows the ranking but states that
       it supports no conclusion.
 - [ ] Nowhere does the screen show a percentage, "match", "confirmed" or
       "same person". The disclaimer is visible without expanding anything.
-- [ ] **Full result text** expands to the copyable block; Export report… and
-      Copy result work.
+- [ ] **Full result text** expands to the copyable block; Copy result works.
+- [ ] **Export this result…** writes the result on screen. Compare recording A,
+      then search all profiles with recording B: the report holds B's search
+      only, and leaves out a transcript that is not of B.
+- [ ] **Export session report…** holds both, in order. **Start a new session
+      report** empties it, says History is untouched, and History still lists
+      both.
 
 ## Comparison History
 
@@ -397,7 +459,8 @@ properly and expect to find something.
 - [ ] Help and System status open themed, scroll, close on **Escape**, and open
       with the Close button focused.
 - [ ] System status still leads with READY / NOT READY.
-- [ ] Compare voices… (from the operation profile card) is themed and readable.
+- [ ] The operation profile card has **no** "Export speaker…" or "Compare
+      voices…" button. Comparing voices happens on Compare Speakers only.
 - [ ] Every dialog is dark like the rest of the application. A pale grey box
       with plain grey buttons is one that was missed.
 - [ ] Every dialog closes on **Escape** and on its window X, and cancelling
@@ -414,6 +477,11 @@ the primary one if the office has such a setup.
       Speaker Profiles page: **Which speech is the subject?** opens on that
       screen, over the window — not on the primary screen, and not behind
       whatever else is open there.
+- [ ] **Which speaker is …?** (Speaker Profiles and Compare): no speaker is
+      preselected and Use this speaker is off until one is chosen; Play sample
+      plays that speaker's longest turn; closing the dialog stops playback.
+      Cancel says "Cancelled. No speaker was chosen" — never "No usable
+      speech". With no audio player, the dialog says where to listen instead.
 - [ ] The same for every other question: **Which speaker is the subject?**,
       **Which speaker is the questioned speaker?**, **Redo speaker
       separation**, **Save speaker to profile**, Help and System status.

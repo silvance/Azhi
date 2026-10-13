@@ -1,7 +1,6 @@
 """The Whispers application shell: window, header, tabs, and entry point.
 
-Holds the shared cancel signal and assembles the tabs this build can actually
-support: Transcribe always, then Speaker profiles and Speaker Compare when a
+Assembles the tabs this build can actually support: Transcribe always, then Speaker profiles and Speaker Compare when a
 speaker-embedding model is bundled, Live when ffmpeg is present, and Translate
 when the translation packs are. ``WHISPR_MODE=transcribe`` forces the lean
 single-purpose window. ``whispr.app`` re-exports :func:`main` so the console
@@ -13,12 +12,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import threading
 import tkinter as tk
 from functools import partial
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Dict
+from typing import Dict, List
 
 from ..diagnostics import format_report
 from ..ocr import ocr_available
@@ -30,9 +28,9 @@ from ..resources import (
     configure_offline_translation,
     find_ffmpeg,
 )
-from ..settings import load_settings, save_settings
+from ..settings import SettingsError, load_settings, update_settings
 from .comparison_log_tab import ComparisonLogTab
-from .dialogs import present
+from .dialogs import active_window, present
 from .live_tab import LiveTab
 from .speaker_compare_tab import SpeakerCompareTab
 from .speaker_profiles_tab import SpeakerProfilesTab
@@ -74,9 +72,6 @@ class WhisprApp:
         # Whether tkdnd was loaded (see _enable_drag_and_drop) so tabs can register
         # file-drop targets.
         self._dnd_ok = drag_and_drop
-        # One shared cancel signal; either tab's Cancel button stops the running
-        # job (only one runs at a time).
-        self.cancel_event = threading.Event()
         self._tabs: list = []
         # Remembered preferences from the last session (best-effort).
         self._settings = load_settings()
@@ -123,8 +118,6 @@ class WhisprApp:
         self.transcribe = TranscribeTab(
             transcribe_root,
             self.root,
-            self.cancel_event,
-            self.cancel,
             dnd_ok=self._dnd_ok,
         )
         self.transcribe.apply_settings(self._settings.get("transcribe", {}))
@@ -135,38 +128,37 @@ class WhisprApp:
         # only when this build actually bundles one.
         if show_speakers:
             profiles_root = self._add_page("speakers", "Speaker Profiles")
-            self.speaker_profiles = SpeakerProfilesTab(
-                profiles_root, self.root, self.cancel_event, self.cancel
-            )
+            self.speaker_profiles = SpeakerProfilesTab(profiles_root, self.root)
             self._tabs.append(self.speaker_profiles)
-            # Saving a corrected speaker from a transcript writes a subject
-            # profile, so this page has to pick the new samples up.
-            self.transcribe.on_profiles_changed = self.speaker_profiles.refresh
 
             compare_root = self._add_page("compare", "Compare Speakers")
             self.speaker_compare = SpeakerCompareTab(
                 compare_root,
                 self.root,
-                self.cancel_event,
-                self.cancel,
                 # Lets a comparison report carry the current transcript and the
                 # provenance of the run that produced it.
                 get_analysis=self.transcribe.current_analysis,
+                dnd_ok=self._dnd_ok,
             )
             self._tabs.append(self.speaker_compare)
 
             # The record of what was actually run. It sits after the pages that
             # produce it, and refreshes when one of them writes an entry.
             history_root = self._add_page("history", "Comparison History")
-            self.comparison_log = ComparisonLogTab(
-                history_root, self.root, self.cancel_event, self.cancel
-            )
+            self.comparison_log = ComparisonLogTab(history_root, self.root)
             self._tabs.append(self.comparison_log)
             self.speaker_compare.on_history_changed = self.comparison_log.refresh
+            # Any page that changes a subject tells all of them. Only
+            # Transcribe -> Speaker Profiles was wired, so Compare went on
+            # listing a subject deleted elsewhere and comparing against it from
+            # memory, and Speaker Profiles could save an old copy over samples
+            # a transcript correction had just proposed.
+            self.transcribe.on_profiles_changed = self._profiles_changed
+            self.speaker_profiles.on_profiles_changed = self._profiles_changed
 
         if show_live:
             live_root = self._add_page("live", "Live")
-            self.live = LiveTab(live_root, self.root, self.cancel_event, self.cancel)
+            self.live = LiveTab(live_root, self.root)
             self._tabs.append(self.live)
 
         if show_translate:
@@ -174,8 +166,6 @@ class WhisprApp:
             self.translate = TranslateTab(
                 translate_root,
                 self.root,
-                self.cancel_event,
-                self.cancel,
                 ocr_available=ocr_available(),
                 detect_available=importlib.util.find_spec("langdetect") is not None,
                 dnd_ok=self._dnd_ok,
@@ -269,13 +259,6 @@ class WhisprApp:
         for name, button in self._nav_buttons.items():
             button.configure(style=Style.NAV_ACTIVE if name == key else Style.NAV)
 
-    def cancel(self) -> None:
-        """Request the running job (transcribe or translate) stop at its next
-        cancellation checkpoint, and reflect that in each tab."""
-        self.cancel_event.set()
-        for tab in self._tabs:
-            tab.notify_cancelling()
-
     def _show_help(self) -> None:
         """Open a short, plain-language guide for first-time / non-technical users."""
         guide = (
@@ -341,7 +324,9 @@ class WhisprApp:
         self._text_window(
             "Whispers — system status",
             report,
-            wrap="none",
+            # Wrapped: with "none" and no sideways scrollbar, the "Missing:"
+            # line and the network statement - the longest lines - were cut.
+            wrap="word",
             width=78,
             monospace=True,
             copyable=True,
@@ -393,11 +378,53 @@ class WhisprApp:
         present(window, self.root)
         close.focus_set()
 
+    def _profiles_changed(self) -> None:
+        """Reload every page that shows subject profiles."""
+        for name in ("speaker_profiles", "speaker_compare", "comparison_log"):
+            page = getattr(self, name, None)
+            if page is not None:
+                page.refresh()
+
     def _on_close(self) -> None:
         """Persist preferences, then close the window."""
+        # Closing used to end a ninety-minute run, or discard corrections never
+        # saved as a project, without a word.
+        losses: List[str] = []
+        transcribing = self.transcribe.busy_description()
+        if transcribing:
+            losses.append(transcribing)
+        translate = getattr(self, "translate", None)
+        if translate is not None and translate.is_busy():
+            losses.append("A translation is still running and will be lost.")
+        if losses and not messagebox.askyesno(
+            "Close Whispers?",
+            "\n\n".join(losses) + "\n\nClose anyway?",
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        ):
+            return
         try:
-            save_settings({"transcribe": self.transcribe.get_settings()})
-        except Exception:  # noqa: BLE001 - never block closing on a save failure
+            saved = update_settings("transcribe", self.transcribe.get_settings())
+            if saved.set_aside is not None:
+                # Said once: the file is gone from the way, so the next close
+                # is quiet.
+                messagebox.showinfo(
+                    "Settings file replaced",
+                    f"The settings file could not be read, so it was kept as "
+                    f"{saved.set_aside.name} beside the new one. Anything an "
+                    "administrator had set in it - comparison thresholds, for "
+                    "example - is in that copy, and is not in use until it is "
+                    "restored.",
+                    parent=active_window(self.root),
+                )
+        except SettingsError as exc:
+            # Said, not swallowed - but closing still goes ahead: losing the
+            # remembered options is not worth keeping someone in the app.
+            messagebox.showwarning(
+                "Settings not saved", str(exc), parent=active_window(self.root)
+            )
+        except Exception:  # noqa: BLE001 - never block closing on anything else
             pass
         # Release any tab resources (e.g. a running live ffmpeg session).
         for tab in self._tabs:

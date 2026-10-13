@@ -118,10 +118,16 @@ def diarize(
             "The pyannote backend was requested but pyannote.audio is not "
             "installed. Choose the sherpa backend or install the pyannote extra."
         )
+    if backend == "pyannote" and not _pyannote_usable_offline():
+        raise RuntimeError(
+            "This copy does not include the pyannote speaker-separation models, "
+            "so that method cannot run here. Choose the sherpa method under "
+            "Advanced options, or untick \u201cIdentify who is speaking\u201d."
+        )
 
-    use_pyannote = backend == "pyannote" or (
-        backend == "auto" and _pyannote_available()
-    )
+    # Not just "is the library installed": in a bundle without the pyannote
+    # cache, Pipeline.from_pretrained would go to the Hugging Face Hub for it.
+    use_pyannote = chosen_backend(backend) == "pyannote"
     if use_pyannote:
         return _diarize_pyannote(
             wav_path,
@@ -189,6 +195,34 @@ def _pyannote_available() -> bool:
         # find_spec raises (rather than returning None) when the parent package
         # itself is absent.
         return False
+
+
+def chosen_backend(backend: str = "auto") -> str:
+    """The engine :func:`diarize` will run for ``backend`` - never "auto".
+
+    One answer for two questions: which engine to run, and which engine the
+    analysis record says ran. The record used to store the *setting*, so a
+    report could only ever say "auto", and could not say which engine's
+    models to name.
+    """
+    backend = (backend or "auto").lower()
+    if backend == "auto":
+        return "pyannote" if _pyannote_usable_offline() else "sherpa"
+    return backend
+
+
+def _pyannote_usable_offline() -> bool:
+    """Whether pyannote can run without reaching for the network.
+
+    The library alone is not enough in a bundle: its models come from the
+    bundled cache or from the Hub, and a bundle may not go to the Hub. From
+    source the Hub is still allowed, as it always was.
+    """
+    from . import resources
+
+    if not _pyannote_available():
+        return False
+    return resources.pyannote_cache_dir() is not None or not resources.is_bundle()
 
 
 def _log_cache_contents(hub, progress: ProgressCallback) -> None:

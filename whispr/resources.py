@@ -22,7 +22,7 @@ import os
 import sys
 from pathlib import Path
 from shutil import which
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 ASSETS_DIRNAME = "whispr_assets"
 ENV_ASSETS = "WHISPR_ASSETS"
@@ -297,6 +297,84 @@ def pyannote_cache_dir() -> Optional[Path]:
     return None
 
 
+def is_bundle() -> bool:
+    """Whether this is a shipped bundle, which must never fetch anything.
+
+    A PyInstaller build is what goes to an air-gapped machine, so every path in
+    one that could reach the network is closed, rather than each relying on
+    there being no network to reach. QA found three that were not: a model name
+    the bundle lacked went to faster-whisper as a download, the Live page passed
+    any typed name the same way, and "auto" speaker separation reached for the
+    Hugging Face Hub whenever the pyannote cache was missing.
+
+    Running from source keeps the developer conveniences - a model fetched on
+    first use, a pyannote pipeline from the Hub - because that is not deployed.
+    """
+    return bool(getattr(sys, "frozen", False))
+
+
+# Every switch the Hugging Face libraries read to stay off the network.
+_OFFLINE_FLAGS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
+
+
+class NetworkRefused(OSError):
+    """A download was attempted in a copy that must never use the network."""
+
+
+def refuse_network_downloads() -> None:
+    """Make every ``urllib`` download in this process fail, plainly, instead.
+
+    The backstop under the switches below. Argos Translate's sentence splitter
+    (MiniSBD) fetches a model from GitHub with ``urllib.request.urlretrieve``
+    whenever the one it wants is not in its cache - and no environment switch
+    turns that off. The application itself makes no ``urllib`` requests, so in
+    a shipped copy any that happens is a library reaching for something the
+    build did not include, and it is stopped here with a sentence that says so.
+    """
+    import urllib.request
+
+    def refuse(self, request):  # noqa: ANN001 - urllib handler signature
+        raise NetworkRefused(
+            "This copy tried to download "
+            f"{request.full_url} and was stopped: a shipped copy never uses "
+            "the network. A component it needed was not included when this "
+            "copy was built; it needs rebuilding."
+        )
+
+    handlers = [
+        type(f"Refuse{base.__name__}", (base,), {f"{scheme}_open": refuse})()
+        for base, scheme in (
+            (urllib.request.HTTPHandler, "http"),
+            (urllib.request.HTTPSHandler, "https"),
+            (urllib.request.FTPHandler, "ftp"),
+        )
+    ]
+    urllib.request.install_opener(urllib.request.build_opener(*handlers))
+
+
+def enforce_offline() -> bool:
+    """In a bundle, close every route a library could take to the network.
+
+    Set unconditionally, not only when a pyannote cache is bundled: a bundle
+    missing that cache is exactly the one that would otherwise go looking for
+    it. Must run before huggingface_hub or argostranslate is imported - both
+    read these into module state at import. Returns whether it did anything.
+
+    Argos reads its settings from the environment first and from a
+    settings.json under the user's config folder second, so setting the model
+    provider here pins it however that file has been edited: a provider of
+    LIBRETRANSLATE or OPENAI would send the text being translated to a server.
+    """
+    if not is_bundle():
+        return False
+    for flag in _OFFLINE_FLAGS:
+        os.environ[flag] = "1"
+    os.environ["ARGOS_MODEL_PROVIDER"] = "OPENNMT"
+    os.environ["ARGOS_CHUNK_TYPE"] = "MINISBD"
+    refuse_network_downloads()
+    return True
+
+
 def configure_offline_hf_cache() -> Optional[Path]:
     """Point Hugging Face at the bundled pyannote cache, in offline mode.
 
@@ -316,6 +394,7 @@ def configure_offline_hf_cache() -> Optional[Path]:
     / HF_HUB_OFFLINE the operator's machine happens to have set, which would
     otherwise point Hugging Face at the wrong (empty) cache in offline mode.
     """
+    enforce_offline()
     cache = pyannote_cache_dir()
     if cache is None:
         return None
@@ -344,6 +423,25 @@ def bundled_argos_data_dir() -> Optional[Path]:
         if directory.is_dir():
             return directory
     return None
+
+
+def bundled_sentence_splitters() -> List[str]:
+    """The offline sentence-splitter models this build holds for translation.
+
+    Argos uses a language pack's own ``minisbd/*.onnx`` if it ships one, and
+    otherwise the MiniSBD cache beside the packs - which it fills by download.
+    A build whose warm-up failed holds packs but no splitter, and would have
+    tried that download the first time an operator translated. Names are the
+    model files' stems: ``de``, ``es`` and so on.
+    """
+    data = bundled_argos_data_dir()
+    if data is None:
+        return []
+    found: Set[str] = set()
+    for folder in [data / "minisbd", *sorted((data / "packages").glob("*/minisbd"))]:
+        if folder.is_dir():
+            found.update(path.stem for path in folder.glob("*.onnx"))
+    return sorted(found)
 
 
 def configure_offline_translation() -> Optional[Path]:

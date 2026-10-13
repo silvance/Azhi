@@ -30,16 +30,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from .atomicio import write_json_atomic
 from .buildinfo import UNKNOWN as UNKNOWN_BUILD
 from .settings import settings_path
-from .speaker_profiles import ProfileError, SpeakerProfile, write_json_atomic
+from .speaker_profiles import ProfileError, SpeakerProfile
+from .thresholds import (
+    BAND_INSUFFICIENT,
+    NO_LEAD_LABEL,
+    NOT_ASSESSED_LABEL,
+    OUTCOME_LEAD,
+    OUTCOME_NO_LEAD,
+    OUTCOME_UNKNOWN_LABEL,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .matching import ComparisonResult, GalleryResult
 
 PathLike = Union[str, Path]
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 RECORD_SUFFIX = ".whispr-comparison.json"
 
 # The two things that get logged.
@@ -170,15 +179,44 @@ class ComparisonRecord:
     build_id: str = ""
     git_commit: str = ""
     warnings: List[str] = field(default_factory=list)
+    # The subject a gallery search found a lead for, or "" when it found none.
+    # Schema 3. Before it, a gallery record kept only the top entry's band,
+    # which is not the search's conclusion - see ``outcome``.
+    lead_name: str = ""
     schema_version: int = SCHEMA_VERSION
 
     @property
     def subject_label(self) -> str:
-        """How this record is filed under a subject in the history."""
+        """How this record is filed under a subject in the history.
+
+        A gallery search is filed under a subject only when it found a lead
+        for one. It used to be filed under whoever ranked first, so filtering
+        History by a subject listed recordings in which no lead for them was
+        ever found. One without a lead is filed by what is known about it:
+        no lead found, not assessed, or (before schema 3) not recorded.
+        """
         if self.kind == KIND_GALLERY:
-            top = self.ranked[0].display_name if self.ranked else ""
-            return top or "(all subjects)"
+            if self.lead_name:
+                return self.lead_name
+            if self.schema_version < 3:
+                return OUTCOME_UNKNOWN_LABEL
+            if self.band == BAND_INSUFFICIENT:
+                return NOT_ASSESSED_LABEL
+            return NO_LEAD_LABEL
         return self.reference_name or "(unnamed subject)"
+
+    @property
+    def outcome(self) -> str:
+        """What this record concluded, as History and the CSV should show it."""
+        if self.kind != KIND_GALLERY:
+            return self.band
+        if self.lead_name:
+            return f"{OUTCOME_LEAD}: {self.lead_name}"
+        if self.schema_version < 3:
+            # These kept the top entry's band, not the search's decision, and
+            # the decision cannot be rebuilt honestly from what was stored.
+            return "Search outcome not recorded"
+        return self.band
 
     @property
     def recording_label(self) -> str:
@@ -186,7 +224,9 @@ class ComparisonRecord:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "schema_version": SCHEMA_VERSION,
+            # The record's own version, not this build's: a record is never
+            # relabelled as newer than the code that wrote it.
+            "schema_version": self.schema_version,
             "record_id": self.record_id,
             "recorded_utc": self.recorded_utc,
             "kind": self.kind,
@@ -222,6 +262,7 @@ class ComparisonRecord:
             "build_id": self.build_id,
             "git_commit": self.git_commit,
             "warnings": list(self.warnings),
+            "lead_name": self.lead_name,
         }
 
     @classmethod
@@ -276,6 +317,10 @@ class ComparisonRecord:
             build_id=str(data.get("build_id") or ""),
             git_commit=str(data.get("git_commit") or ""),
             warnings=[str(w) for w in warnings] if isinstance(warnings, list) else [],
+            lead_name=str(data.get("lead_name") or ""),
+            # Kept as written. It used to be dropped, so every record loaded as
+            # the current schema and an old one could not be told apart.
+            schema_version=version if isinstance(version, int) else 1,
         )
 
 
@@ -390,8 +435,16 @@ def record_from_gallery(
         questioned_quality=questioned_quality,
         questioned_window_count=questioned_window_count,
         questioned_spans=list(questioned_spans or []),
+        # The top score is a fact and stays; the band is the search's decision,
+        # not the top entry's band, which a search that found no lead would
+        # otherwise record as "High similarity".
         score=ranked[0].score if ranked else 0.0,
-        band=ranked[0].band if ranked else "",
+        band=(
+            BAND_INSUFFICIENT
+            if result.inadequate_reason
+            else (OUTCOME_LEAD if result.accepted_name else OUTCOME_NO_LEAD)
+        ),
+        lead_name=("" if result.inadequate_reason else (result.accepted_name or "")),
         operational_threshold=result.thresholds.recognition_acceptance,
         # A search over a gallery with nothing usable in it is still a record of
         # having looked; "refused" is reserved for a comparison that could not
@@ -556,7 +609,7 @@ def export_csv(records: Sequence[ComparisonRecord], path: PathLike) -> Path:
                     record.reference_updated_utc,
                     f"{record.score:.4f}",
                     f"{record.operational_threshold:.2f}",
-                    record.band,
+                    record.outcome,
                     "" if record.margin is None else f"{record.margin:.4f}",
                     record.runner_up_name,
                     "yes" if record.refused else "no",

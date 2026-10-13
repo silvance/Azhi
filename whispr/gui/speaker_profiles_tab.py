@@ -25,21 +25,32 @@ from ..enrollment import (
     parse_time_ranges,
     prepare_source,
     spans_for_speaker,
-    speaker_totals,
+    speaker_options,
 )
 from ..hashing import short
 from ..speaker_profiles import (
     ProfileError,
     SpeakerProfile,
+    add_samples,
     delete_speaker_profile,
+    find_speaker_profile_by_id,
     list_speaker_profiles,
     load_profile_file,
+    new_subject_id,
+    profile_path,
     save_speaker_profile,
+    update_speaker_profile,
 )
 from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
 from .dialogs import active_window, present
 from .errors import friendly_error
+from .pick_speaker import (
+    PickCancelled,
+    SampleListener,
+    ask_from_worker,
+    ask_pick_speaker,
+)
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, palette
 from .widgets import (
     Card,
@@ -61,6 +72,11 @@ MODE_DIARIZE = "diarize"
 MODE_RANGES = "ranges"
 
 
+# Narrower than this, the subject list goes above the detail instead of beside
+# it. The detail needs about 600 pixels for its sample table and buttons.
+_STACK_BELOW = 900
+
+
 class SpeakerProfilesTab:
     """Builds and drives the Speaker profiles tab inside ``parent``."""
 
@@ -68,15 +84,15 @@ class SpeakerProfilesTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
     ) -> None:
         self.parent = parent
         self.root = root
-        self._cancel_event = cancel_event
         self._profiles: List[SpeakerProfile] = []
         self._selected: Optional[SpeakerProfile] = None
         self._embedder: Optional[SpeakerEmbedder] = None
+        # Set by the application: called when this page changes a subject, so
+        # Compare and History reload rather than working from an old copy.
+        self.on_profiles_changed: Optional[Callable[[], None]] = None
         self.status_var = tk.StringVar(value="Idle")
         self._build()
         self.refresh()
@@ -93,27 +109,64 @@ class SpeakerProfilesTab:
             "already have.",
         ).pack(fill="x", pady=(0, SPACE_LG))
 
+        # At the top, not the foot of the page: below a long sample list the
+        # result of an enrolment, or why it failed, was out of sight.
+        self._status_label = ttk.Label(
+            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
+        )
+        self._status_label.pack(anchor="w", pady=(0, SPACE_MD))
+        self.banner = StatusBanner(container)
+        self.banner.insert_before(self._status_label)
+
         # Master and detail: who exists on the left, everything about the
         # selected person on the right. At 1366 wide both fit; the list is kept
         # narrow so the detail - which is where the work happens - gets the room.
         columns = ttk.Frame(container, style=Style.PAGE)
         columns.pack(fill="both", expand=True)
-        columns.columnconfigure(0, weight=0, minsize=300)
-        columns.columnconfigure(1, weight=1)
-        columns.rowconfigure(0, weight=1)
+        self._columns = columns
+        self._stacked: Optional[bool] = None
 
         self._build_subject_list(columns)
         self._build_detail(columns)
-
-        self.banner = StatusBanner(container)
-        ttk.Label(
-            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
-        ).pack(anchor="w", pady=(SPACE_MD, 0))
+        self._arrange(stacked=False)
+        columns.bind("<Configure>", lambda e: self._arrange(e.width < _STACK_BELOW))
         bind_wheel(canvas, container)
+
+    def _arrange(self, stacked: bool) -> None:
+        """Side by side when there is room; the list above the detail when not.
+
+        In a 940-pixel window the detail beside the list was cut off: Remove
+        sample off the edge, Approve half shown, the sample table truncated,
+        and no way to scroll sideways to them.
+        """
+        if stacked == self._stacked:
+            return
+        self._stacked = stacked
+        columns = self._columns
+        if stacked:
+            columns.columnconfigure(0, weight=1, minsize=0)
+            columns.columnconfigure(1, weight=0, minsize=0)
+            columns.rowconfigure(0, weight=0)
+            columns.rowconfigure(1, weight=1)
+            self._list_card.grid(
+                row=0, column=0, columnspan=2, sticky="nsew", padx=0, pady=(0, SPACE_MD)
+            )
+            self._detail_card.grid(row=1, column=0, columnspan=2, sticky="nsew")
+            self.subject_tree.configure(height=4)
+        else:
+            columns.columnconfigure(0, weight=0, minsize=300)
+            columns.columnconfigure(1, weight=1)
+            columns.rowconfigure(0, weight=1)
+            columns.rowconfigure(1, weight=0)
+            self._list_card.grid(
+                row=0, column=0, columnspan=1, sticky="nsew", padx=(0, SPACE_MD), pady=0
+            )
+            self._detail_card.grid(row=0, column=1, columnspan=1, sticky="nsew")
+            self.subject_tree.configure(height=12)
 
     def _build_subject_list(self, parent: tk.Misc) -> None:
         card = Card(parent, "Subjects")
-        card.grid(row=0, column=0, sticky="nsew", padx=(0, SPACE_MD))
+        self._list_card = card
 
         self.subject_tree = ttk.Treeview(
             card.body,
@@ -147,14 +200,13 @@ class SpeakerProfilesTab:
 
     def _build_detail(self, parent: tk.Misc) -> None:
         card = Card(parent, "")
-        card.grid(row=0, column=1, sticky="nsew")
         self._detail_card = card
 
         # Nothing selected: say what to do rather than showing an empty table.
         self.detail_empty = EmptyState(
             card.body,
             "No subject selected",
-            "Choose someone on the left, or create a profile to begin.",
+            "Choose someone in the Subjects list, or create a profile to begin.",
         )
         self.detail_empty.pack(fill="both", expand=True)
 
@@ -202,7 +254,7 @@ class SpeakerProfilesTab:
                 "tags there, then use Save speaker to profile\u2026 on the "
                 "Transcribe page."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=520,
             justify="left",
         ).pack(anchor="w", pady=(SPACE_SM, 0))
@@ -217,7 +269,7 @@ class SpeakerProfilesTab:
             height=8,
         )
         sample_columns: List[Tuple[str, str, int, bool]] = [
-            ("state", "State", 150, False),
+            ("state", "State", 210, False),
             ("source", "Recording", 150, True),
             ("span", "Where", 90, False),
             ("speech", "Speech", 70, False),
@@ -244,8 +296,19 @@ class SpeakerProfilesTab:
 
     # -- Data --------------------------------------------------------------
 
+    def _announce_change(self) -> None:
+        """Tell the other pages a subject changed, so none works from a stale copy."""
+        notify = self.on_profiles_changed
+        if notify is not None:
+            self.root.after(0, notify)
+
     def refresh(self) -> None:
         """Reload the stored subjects and repaint the list."""
+        # Kept by subject id across the reload. Every approval, removal and
+        # enrolment refreshes this page, and each one used to drop the
+        # selection and put "No subject selected" in place of the subject
+        # being worked on.
+        kept = self.subject_tree.selection()
         self._profiles = list_speaker_profiles()
         self.subject_tree.delete(*self.subject_tree.get_children())
         for profile in self._profiles:
@@ -268,6 +331,8 @@ class SpeakerProfilesTab:
         else:
             self.subject_tree.pack_forget()
             self.subjects_empty.pack(fill="both", expand=True)
+        if kept and self.subject_tree.exists(kept[0]):
+            self.subject_tree.selection_set(kept[0])
         self._on_select()
 
     def _on_select(self) -> None:
@@ -329,7 +394,9 @@ class SpeakerProfilesTab:
             if sample.is_trusted:
                 state, tags = "Trusted", ()
             elif outlier:
-                state, tags = "Needs review — unlike the reference", ("outlier",)
+                # Short enough for the column at 1366 wide; it was cut to
+                # "Needs review — unli…", the one state that most needs reading.
+                state, tags = "Unlike reference — review", ("outlier",)
             else:
                 state, tags = "Needs review", ("pending",)
             self.sample_tree.insert(
@@ -382,8 +449,13 @@ class SpeakerProfilesTab:
             parent=active_window(self.root),
         ):
             return
-        delete_speaker_profile(profile)
+        try:
+            delete_speaker_profile(profile)
+        except ProfileError as exc:
+            self._status(friendly_error(exc))
+            return
         self.refresh()
+        self._announce_change()
         self._status("Subject deleted.")
 
     def _export_profile(self) -> None:
@@ -426,8 +498,34 @@ class SpeakerProfilesTab:
                 for profile in imported
                 for warning in profile.import_warnings
             ]
+            kept: List[SpeakerProfile] = []
             for profile in imported:
-                save_speaker_profile(profile)
+                existing = find_speaker_profile_by_id(profile.subject_id)
+                if existing is None:
+                    save_speaker_profile(profile)
+                    kept.append(profile)
+                    continue
+                # The same subject is already here. Saving over it used to
+                # happen without a word: QA imported an export holding one
+                # trusted sample over a profile that had grown to three, and
+                # two were gone.
+                choice = _ask_import_conflict(self.root, existing, profile)
+                if choice == _SKIP:
+                    continue
+                if choice == _KEEP_BOTH:
+                    profile.subject_id = new_subject_id()
+                    profile.display_name = f"{profile.display_name} (imported)"
+                    save_speaker_profile(profile)
+                else:
+                    old_path = profile_path(existing)
+                    new_path = save_speaker_profile(profile)
+                    if old_path != new_path:
+                        # Renamed since the export: the old file has the same
+                        # id, and two files claiming one subject is its own
+                        # kind of corruption.
+                        delete_speaker_profile(existing)
+                kept.append(profile)
+            imported = kept
         except ProfileError as exc:
             self._status(friendly_error(exc))
             return
@@ -438,6 +536,10 @@ class SpeakerProfilesTab:
             if legacy
             else ""
         )
+        if not imported:
+            self._status("Nothing was imported.")
+            return
+        self._announce_change()
         self._status(f"Imported {len(imported)} subject(s).{note}")
         if issues:
             self._report_import_issues(Path(path).name, issues)
@@ -462,8 +564,8 @@ class SpeakerProfilesTab:
         lines += [
             "",
             "Dropped samples held vectors that could not be compared. Demoted "
-            "samples are kept as pending and can be approved under "
-            "'Selected subject' after review.",
+            "samples are kept as pending: select the sample in the subject's "
+            "Reference samples list and use Approve sample once reviewed.",
         ]
         messagebox.showwarning(
             "Imported with changes", "\n".join(lines), parent=active_window(self.root)
@@ -481,34 +583,89 @@ class SpeakerProfilesTab:
         return selection[0] if selection else None
 
     def _approve(self) -> None:
-        profile, sample_id = self._selected, self._selected_sample_id()
-        if profile is None or sample_id is None:
+        sample_id = self._selected_sample_id()
+        if self._selected is None or sample_id is None:
             self._status("Select a sample to approve.")
             return
-        if profile.approve_sample(sample_id) and self._save(profile):
+        profile = self._current(self._selected)
+        if profile is None:
+            return
+        sample = next((x for x in profile.samples if x.sample_id == sample_id), None)
+        if (
+            sample is not None
+            and "Outlier" in (sample.notes or "")
+            and not messagebox.askyesno(
+                "Approve a sample unlike the reference?",
+                "This sample sounds unlike the rest of "
+                f"{profile.display_name}'s reference. It may be someone else, "
+                "or the same person on a very different channel. Approving it "
+                "makes it part of the reference every later comparison is "
+                "measured against. Approve it only if you have listened and "
+                "are sure it is them.",
+                icon="warning",
+                default="no",
+                parent=active_window(self.root),
+            )
+        ):
+            return
+        if self._change(profile, lambda stored: stored.approve_sample(sample_id)):
             self._render_detail()
             self._status("Sample promoted into the trusted reference.")
 
     def _remove(self) -> None:
-        profile, sample_id = self._selected, self._selected_sample_id()
-        if profile is None or sample_id is None:
+        sample_id = self._selected_sample_id()
+        if self._selected is None or sample_id is None:
             self._status("Select a sample to remove.")
             return
-        if profile.remove_sample(sample_id) and self._save(profile):
+        profile = self._current(self._selected)
+        if profile is None:
+            return
+        if not messagebox.askyesno(
+            "Remove sample",
+            f"Remove this sample from {profile.display_name}'s profile? This "
+            "cannot be undone; the recording itself is not affected.",
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        ):
+            return
+        if self._change(profile, lambda stored: stored.remove_sample(sample_id)):
             self.refresh()
             self._status("Sample removed.")
 
-    def _save(self, profile: SpeakerProfile) -> bool:
+    def _current(self, profile: SpeakerProfile) -> Optional[SpeakerProfile]:
+        """``profile`` as it is stored now, or None (said) if it is gone.
+
+        What this page shows was loaded when the subject was selected. Saving
+        that copy after another page had added samples - a transcript
+        correction proposing them, say - wrote the old copy back and erased
+        them. So every change starts from the stored subject.
+        """
+        current = find_speaker_profile_by_id(profile.subject_id)
+        if current is None:
+            self._status(f"{profile.display_name} is no longer stored.")
+            self.refresh()
+        return current
+
+    def _change(
+        self, profile: SpeakerProfile, change: Callable[[SpeakerProfile], bool]
+    ) -> bool:
+        """Apply ``change`` to the subject as stored, under the update lock."""
         try:
-            save_speaker_profile(profile)
-            return True
+            stored = update_speaker_profile(profile.subject_id, change)
         except ProfileError as exc:
-            # Losing operational work silently is not acceptable; surface it.
             messagebox.showerror(
                 "Could not save", str(exc), parent=active_window(self.root)
             )
             self._status(friendly_error(exc))
             return False
+        if stored is None:
+            self._status(f"{profile.display_name} is no longer stored.")
+            self.refresh()
+            return False
+        self._selected = stored
+        self._announce_change()
+        return True
 
     # -- Enrolment ----------------------------------------------------------
 
@@ -616,13 +773,24 @@ class SpeakerProfilesTab:
         wav = None
         temporary = False
         try:
+            # Enrol into the subject as stored, not the copy this page loaded,
+            # so samples another page added since are kept.
+            stored = find_speaker_profile_by_id(profile.subject_id)
+            if stored is None:
+                self._status(f"{profile.display_name} is no longer stored.")
+                self.root.after(0, self.refresh)
+                return
+            profile = stored
             self._status(f"Preparing {source.name}…")
             embedder = self._get_embedder()
             wav, digest, temporary = prepare_source(source, progress=self._status)
             if mode == MODE_DIARIZE:
-                spans = self._diarize_and_pick(wav)
+                spans = self._diarize_and_pick(wav, profile.display_name)
                 if spans is None:
-                    self._status("Enrolment cancelled.")
+                    self._status(
+                        "No speakers were found in that recording, so nothing "
+                        f"was added to {profile.display_name}."
+                    )
                     return
             if spans is None:
                 spans = [(0.0, _duration(wav))]
@@ -635,19 +803,32 @@ class SpeakerProfilesTab:
                 source_sha256=digest,
                 progress=self._status,
             )
-            if result.added:
-                self._save(profile)
+            added = list(result.added)
+            if added:
+                # Into the subject as stored now: this copy was read before the
+                # conversion, speaker separation and pick, and saving it would
+                # undo any removal or approval made meanwhile.
+                _, added = add_samples(profile, added)
+                self.root.after(0, self._announce_change)
             self.root.after(0, self.refresh)
             quality = result.quality.assessment if result.quality else "n/a"
+            seconds = sum(sample.speech_duration for sample in added)
             message = (
-                f"Enrolled {result.added_count} sample(s), "
-                f"{result.added_seconds:.1f}s of speech (quality: {quality})."
+                f"Enrolled {len(added)} sample(s), "
+                f"{seconds:.1f}s of speech (quality: {quality})."
             )
             if result.skipped:
                 message += f" Skipped {len(result.skipped)}: {result.skipped[0]}"
             self._status(message)
+        except PickCancelled:
+            self._status(
+                "Cancelled. No speaker was chosen, so nothing was added to "
+                f"{profile.display_name}."
+            )
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
-            self._status(friendly_error(exc))
+            self._fail(
+                f"Nothing was added to {profile.display_name}. {friendly_error(exc)}"
+            )
         finally:
             if temporary and wav is not None:
                 try:
@@ -655,85 +836,50 @@ class SpeakerProfilesTab:
                 except OSError:
                     pass
 
-    def _diarize_and_pick(self, wav: Path) -> Optional[List[Tuple[float, float]]]:
-        """Diarize the recording and let the operator choose the subject's cluster."""
+    def _diarize_and_pick(
+        self, wav: Path, subject: str
+    ) -> Optional[List[Tuple[float, float]]]:
+        """Diarize the recording and let the operator choose the subject's speech.
+
+        None when no speaker was found; raises :class:`PickCancelled` when the
+        operator closes the picker.
+        """
         from ..diarization import diarize
 
         self._status("Separating speakers…")
         segments = diarize(wav, progress=self._status)
-        totals = speaker_totals(segments)
-        if not totals:
-            self._status("No speakers were found in that recording.")
+        options = speaker_options(segments)
+        if not options:
             return None
-        picked: dict = {"value": None}
-        done = threading.Event()
-
-        def _ask() -> None:
-            try:
-                picked["value"] = self._choose_cluster(totals)
-            finally:
-                done.set()
-
-        self.root.after(0, _ask)
-        done.wait(timeout=300)
-        speaker = picked["value"]
-        if not speaker:
-            return None
-        return spans_for_speaker(segments, speaker)
-
-    def _choose_cluster(self, totals: Sequence[Tuple[str, float]]) -> Optional[str]:
-        """Modal picker listing each detected speaker by how long they talk."""
-        win = tk.Toplevel(self.root)
-        win.title("Which speaker is the subject?")
-        win.configure(background=palette().surface)
-        win.resizable(False, False)
-        labels = [f"{name} — {seconds:.0f}s of speech" for name, seconds in totals]
-        var = tk.StringVar(value=labels[0])
-        chosen: dict = {"value": None}
-        frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(
-            frame, text="Which speaker is the subject?", style=Style.SECTION_TITLE
-        ).pack(anchor="w")
-        ttk.Label(
-            frame,
-            text=(
-                "Pick the speaker that is the subject. The longest talker is "
-                "usually the subject of a targeted recording, but listen first "
-                "if you are unsure."
+        speaker = ask_from_worker(
+            self.root,
+            lambda: ask_pick_speaker(
+                self.root,
+                title=f"Which speaker is {subject}?",
+                guidance=(
+                    f"The speaker you choose becomes reference audio for "
+                    f"{subject}, which every later comparison is measured "
+                    "against. Listen to each one before choosing: the speaker "
+                    "numbers come from the order they were found, and the "
+                    "longest talker is not always the subject."
+                ),
+                options=options,
+                listener=SampleListener.for_file(wav),
             ),
-            style=Style.MUTED,
-            wraplength=380,
-            justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, SPACE_SM))
-        combo = ttk.Combobox(
-            frame, textvariable=var, values=labels, state="readonly", width=42
         )
-        combo.pack(anchor="w")
-
-        def _ok() -> None:
-            chosen["value"] = totals[labels.index(var.get())][0]
-            win.destroy()
-
-        row = ttk.Frame(frame, style=Style.CARD_INNER)
-        row.pack(fill="x", pady=(SPACE_MD, 0))
-        secondary_button(row, "Cancel", win.destroy).pack(side="right")
-        primary_button(row, "Use this speaker", _ok).pack(
-            side="right", padx=(0, SPACE_SM)
-        )
-        win.bind("<Return>", lambda _e: _ok())
-        present(win, self.root, modal=True)
-        combo.focus_set()
-        win.wait_window()
-        return chosen["value"]
+        if speaker is None:
+            raise PickCancelled()
+        return spans_for_speaker(segments, speaker)
 
     # -- Shared hooks -------------------------------------------------------
 
     def _status(self, message: str) -> None:
         self.root.after(0, lambda: self.status_var.set(message))
 
-    def notify_cancelling(self) -> None:
-        return None
+    def _fail(self, message: str) -> None:
+        """A failure, in the banner as well as the status line (any thread)."""
+        self._status(message)
+        self.root.after(0, lambda: self.banner.show("error", message))
 
     def get_settings(self) -> dict:
         return {}
@@ -747,3 +893,83 @@ def _duration(wav_path: Path) -> float:
 
     with wave.open(str(wav_path), "rb") as wav:
         return wav.getnframes() / float(wav.getframerate() or 1)
+
+
+_REPLACE = "replace"
+_KEEP_BOTH = "keep_both"
+_SKIP = "skip"
+
+
+def _describe_subject(profile: SpeakerProfile) -> str:
+    when = (profile.updated_utc or "")[:10] or "date not recorded"
+    return (
+        f"{len(profile.trusted_samples())} trusted and "
+        f"{len(profile.pending_samples())} pending sample(s), last changed {when}"
+    )
+
+
+def _ask_import_conflict(
+    root: tk.Misc, existing: SpeakerProfile, incoming: SpeakerProfile
+) -> str:
+    """Ask what to do with an imported subject that is already here.
+
+    Keeping both is the safe choice and has the focus: nothing is lost, and
+    the operator can delete whichever copy they decide against. Merging the
+    samples is deliberately not offered - it means settling conflicting
+    trusted and pending states between two histories, and doing that wrongly
+    corrupts a reference voice silently.
+    """
+    win = tk.Toplevel(root)
+    win.title("Subject already here")
+    win.configure(background=palette().surface)
+    win.resizable(False, False)
+    frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(
+        frame,
+        text=f"{existing.display_name} is already here",
+        style=Style.SECTION_TITLE,
+    ).pack(anchor="w")
+    for heading, profile in (
+        ("On this machine", existing),
+        ("In the file being imported", incoming),
+    ):
+        ttk.Label(frame, text=heading, style=Style.FIELD_LABEL).pack(
+            anchor="w", pady=(SPACE_MD, 0)
+        )
+        ttk.Label(
+            frame,
+            text=f"{profile.display_name}: {_describe_subject(profile)}",
+            style=Style.META,
+            wraplength=460,
+            justify="left",
+        ).pack(anchor="w")
+    ttk.Label(
+        frame,
+        text=(
+            "Replacing discards the copy on this machine, and any samples it "
+            "has that the imported file does not."
+        ),
+        style=Style.WARNING,
+        wraplength=460,
+        justify="left",
+    ).pack(anchor="w", pady=(SPACE_LG, SPACE_MD))
+
+    chosen = {"value": _SKIP}
+
+    def choose(value: str) -> None:
+        chosen["value"] = value
+        win.destroy()
+
+    buttons = ttk.Frame(frame, style=Style.CARD_INNER)
+    buttons.pack(fill="x")
+    secondary_button(buttons, "Skip it", lambda: choose(_SKIP)).pack(side="right")
+    secondary_button(buttons, "Replace", lambda: choose(_REPLACE)).pack(
+        side="right", padx=(0, SPACE_SM)
+    )
+    keep = primary_button(buttons, "Keep both", lambda: choose(_KEEP_BOTH))
+    keep.pack(side="left")
+    present(win, root, modal=True)
+    keep.focus_set()
+    win.wait_window()
+    return chosen["value"]

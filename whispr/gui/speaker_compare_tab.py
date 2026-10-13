@@ -38,11 +38,10 @@ from ..enrollment import (
     parse_time_ranges,
     prepare_source,
     spans_for_speaker,
-    speaker_totals,
+    speaker_options,
 )
 from ..matching import (
     ComparisonResult,
-    GalleryResult,
     compare_questioned_to_profile,
     search_gallery_for_questioned,
 )
@@ -53,17 +52,21 @@ from ..questioned import (
     QuestionedSpeaker,
     measure_from_wav,
 )
-from ..reports import write_analysis_report
+from ..reports import GallerySearch, ReportEntry, write_analysis_report
 from ..speaker_profiles import (
     SpeakerProfile,
     bundled_model_identity,
     display_labels,
+    find_speaker_profile_by_id,
     list_speaker_profiles,
 )
 from ..thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
     DISCLAIMER,
+    NO_LEAD_EXPLAINED,
+    OUTCOME_LEAD,
+    OUTCOME_NO_LEAD,
     active,
     describe_active,
 )
@@ -71,6 +74,12 @@ from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
 from .dialogs import active_window, present
 from .errors import friendly_error
+from .pick_speaker import (
+    PickCancelled,
+    SampleListener,
+    ask_from_worker,
+    ask_pick_speaker,
+)
 from .theme import (
     SPACE_LG,
     SPACE_MD,
@@ -91,11 +100,13 @@ from .widgets import (
     StatusBanner,
     bind_wheel,
     primary_button,
+    register_drop,
     scrollable_body,
     secondary_button,
     set_readonly_text,
     style_text_widget,
     subtle_button,
+    wrap_to,
 )
 
 MODE_WHOLE = "whole"
@@ -110,11 +121,11 @@ class SpeakerCompareTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
-        cancel_event: threading.Event,
-        on_cancel: Callable[[], None],
         *,
         get_analysis: Optional[Callable[[], Any]] = None,
+        dnd_ok: bool = False,
     ) -> None:
+        self._dnd_ok = dnd_ok
         self.parent = parent
         self.root = root
         # Supplies (result, speaker_names, provenance) from the Transcribe tab so
@@ -125,14 +136,17 @@ class SpeakerCompareTab:
         self._labels: dict = {}
         # The diarized cluster the operator chose, for the selection record.
         self._picked_speaker: Optional[str] = None
-        # Source hashes of every recording compared here, so a report only
-        # attaches a transcript that is actually of the questioned audio.
-        self._questioned_sources: set = set()
-        self._comparisons: List[ComparisonResult] = []
+        # Every comparison and search made on this page since it opened (or
+        # since "Start a new session report"), for the session report.
+        self._session: List[ReportEntry] = []
+        # The result the card is showing, which is what Export writes. It used
+        # to write the session's one-to-one comparisons instead, so with a
+        # search on screen the report held a different recording's result.
+        self._on_screen: Optional[ReportEntry] = None
         # Set by the app so a new comparison shows up in the history page.
         self.on_history_changed: Optional[Callable[[], None]] = None
+        self._measuring = False
         self._embedder: Optional[SpeakerEmbedder] = None
-        self._last_result: Optional[ComparisonResult] = None
 
         self.reference_var = tk.StringVar(value="")
         self.reference_detail_var = tk.StringVar(value="No reference selected.")
@@ -144,6 +158,8 @@ class SpeakerCompareTab:
 
         self._build()
         self.refresh()
+        self.reference_var.trace_add("write", lambda *_: self._update_action_state())
+        self._update_action_state()
 
     # -- UI ----------------------------------------------------------------
 
@@ -161,14 +177,6 @@ class SpeakerCompareTab:
         self._build_questioned_step(container)
         self._build_action_step(container)
         self._build_result_step(container)
-
-        # A failure has to be visible on the page, not only in the status line.
-        self.banner = StatusBanner(container, wraplength=680)
-        self._status_label = ttk.Label(
-            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
-        )
-        self._status_label.pack(anchor="w", pady=(SPACE_MD, 0))
-        self.banner.insert_before(self._status_label)
         bind_wheel(canvas, container)
 
     # -- Step 1: the known person -----------------------------------------
@@ -214,15 +222,32 @@ class SpeakerCompareTab:
             card.body,
             self.questioned_var,
             self._choose_questioned,
-            prompt="Drop the recording to check here",
+            # Only invite a drop where one works: without drag-and-drop the
+            # invitation did nothing.
+            prompt=(
+                "Drop the recording to check here"
+                if self._dnd_ok
+                else "Choose the recording to check"
+            ),
             button_text="Choose recording",
             change_text="Change recording",
         )
         self._questioned_zone.pack(fill="x")
+        for target in (self._questioned_zone, self._questioned_zone.empty):
+            register_drop(self.root, self._dnd_ok, target, self._on_drop_questioned)
 
-        ttk.Label(
+        whose = ttk.Label(
             card.body, text="Whose voice should be measured?", style=Style.FIELD_LABEL
-        ).pack(anchor="w", pady=(SPACE_MD, SPACE_XS))
+        )
+        whose.pack(anchor="w", pady=(SPACE_MD, SPACE_XS))
+        # Under the file it is about, not in the status line at the foot of the
+        # page, which at 1366x768 is below the fold.
+        self._questioned_banner = StatusBanner(card.body, wraplength=640)
+        self._questioned_banner.insert_before(whose)
+        self._questioned_banner.wrap_to(card.body)
+        # However the file gets chosen - the button, a drop, a project - the
+        # same check runs.
+        self.questioned_var.trace_add("write", lambda *_: self._on_questioned_changed())
         for text, value in (
             ("Only one person is speaking — use the whole recording", MODE_WHOLE),
             ("Several people — separate them and let me pick", MODE_DIARIZE),
@@ -256,6 +281,22 @@ class SpeakerCompareTab:
         )
         self._gallery_button.pack(side="left", padx=(SPACE_SM, 0))
         subtle_button(actions, "Thresholds…", self._show_thresholds).pack(side="right")
+        # What is still missing, beside the buttons it holds back.
+        self._action_hint_var = tk.StringVar(value="")
+        ttk.Label(
+            actions, textvariable=self._action_hint_var, style=Style.PAGE_SUBTITLE
+        ).pack(side="left", padx=(SPACE_MD, 0))
+
+        # Under the buttons that cause them. At the foot of the page, "Select a
+        # reference subject first." and save failures were below the fold.
+        self._status_label = ttk.Label(
+            parent, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
+        )
+        self._status_label.pack(anchor="w", pady=(SPACE_SM, 0))
+        # A failure has to be visible on the page, not only in the status line.
+        self.banner = StatusBanner(parent, wraplength=680)
+        self.banner.insert_before(self._status_label)
+        self.banner.wrap_to(parent)
 
         advanced = Disclosure(parent, "Advanced")
         advanced.pack(fill="x", pady=(SPACE_SM, 0))
@@ -270,7 +311,7 @@ class SpeakerCompareTab:
                 "Only for an older profile that does not record which model made "
                 "it. A profile from a different model is always refused."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", padx=(SPACE_XL, 0))
@@ -312,15 +353,20 @@ class SpeakerCompareTab:
         self.band_label = ttk.Label(
             self._result_body, textvariable=self.band_var, style=Style.SECTION_TITLE
         )
+        # Set on the widget, not the style: _set_band swaps the style for the
+        # colour, and each colour style carries body-size type.
+        self.band_label.configure(font=theme().app_title)
         self.band_label.pack(anchor="w")
         self.lead_var = tk.StringVar(value="")
-        ttk.Label(
+        lead = ttk.Label(
             self._result_body,
             textvariable=self.lead_var,
             style=Style.BODY,
             wraplength=680,
             justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        )
+        lead.pack(anchor="w", pady=(SPACE_XS, 0))
+        wrap_to(card.body, lead)
 
         facts = ttk.Frame(self._result_body, style=Style.CARD_INNER)
         facts.pack(fill="x", pady=(SPACE_MD, 0))
@@ -337,6 +383,7 @@ class SpeakerCompareTab:
             row_widget.pack(fill="x", pady=(0, SPACE_XS))
 
         self.result_warnings = StatusBanner(self._result_body, wraplength=680)
+        self.result_warnings.wrap_to(card.body)
 
         # The full text block stays: it is what an analyst copies into a case
         # file, and it holds the detail the summary above deliberately omits.
@@ -355,38 +402,64 @@ class SpeakerCompareTab:
         self._disclaimer_label = ttk.Label(
             card.body,
             text=DISCLAIMER,
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=680,
             justify="left",
         )
         self._disclaimer_label.pack(anchor="w", pady=(SPACE_MD, 0))
+        wrap_to(card.body, self._disclaimer_label)
 
         result_actions = ttk.Frame(card.body, style=Style.CARD_INNER)
         result_actions.pack(fill="x", pady=(SPACE_MD, 0))
-        export = secondary_button(result_actions, "Export report…", self._export_report)
+        export = secondary_button(
+            result_actions, "Export this result…", self._export_report
+        )
         export.pack(side="left")
         copy = secondary_button(result_actions, "Copy result", self._copy_result)
         copy.pack(side="left", padx=(SPACE_SM, 0))
-        clear = subtle_button(
-            result_actions, "Clear recorded comparisons", self._clear_comparisons
+        session = secondary_button(
+            result_actions, "Export session report…", self._export_session_report
         )
-        clear.pack(side="left", padx=(SPACE_SM, 0))
+        session.pack(side="left", padx=(SPACE_SM, 0))
+        # Not "Clear recorded comparisons", which reads as deleting History.
+        restart = subtle_button(
+            result_actions, "Start a new session report", self._clear_comparisons
+        )
+        restart.pack(side="left", padx=(SPACE_SM, 0))
         # Everything that acts on "the result" is held while a new one is being
         # measured: until it finishes, these still refer to the previous
         # recording, and a copied or exported result about the wrong recording
         # is worse than one you had to wait for.
-        self._result_actions = (export, copy, clear)
+        self._result_actions = (export, copy, session, restart)
 
     # -- Reference ----------------------------------------------------------
 
     def refresh(self) -> None:
+        # The choice is held by subject id across the reload: a label changes
+        # when a subject is renamed, and may then belong to nobody.
+        previous = self._selected_profile()
+        previous_id = previous.subject_id if previous is not None else None
+        previous_name = previous.display_name if previous is not None else ""
         self._profiles = list_speaker_profiles()
         # Two subjects can share a display name; picking by name alone would let
         # an operator compare against one while believing they chose the other.
         self._labels = display_labels(self._profiles)
         labels = [self._labels[p.subject_id] for p in self._profiles]
         self.reference_combo.configure(values=labels)
-        if labels and self.reference_var.get() not in labels:
+        if previous_id is not None:
+            label = self._labels.get(previous_id)
+            if label is not None:
+                self.reference_var.set(label)
+            else:
+                # Deleted on Speaker Profiles. This used to fall through to the
+                # first subject in the list - so the next Compare measured
+                # against someone the operator never chose.
+                self.reference_var.set("")
+                self._status(
+                    f"{previous_name} is no longer stored, so it is no "
+                    "longer selected. Choose a reference subject."
+                )
+        elif labels and self.reference_var.get() not in labels:
             self.reference_var.set(labels[0])
         if not labels:
             self.reference_var.set("")
@@ -448,29 +521,83 @@ class SpeakerCompareTab:
         )
         if path:
             self.questioned_var.set(path)
-            self._warn_if_cleaned(path)
 
-    def _warn_if_cleaned(self, path: str) -> None:
-        """Say so when the chosen file is one this application derived.
-
-        Both kinds of processing alter exactly the spectral detail a voiceprint
-        measures - noise reduction by removing what it takes for noise, a
-        listening copy by deliberately changing the balance of the voice - so a
-        profile built from a recording and a questioned sample that has been
-        through either are not measuring the same thing. The embedding-model
-        check already refuses that class of mismatch; this one cannot refuse,
-        because the only evidence is a file name - so it says why, clearly, and
-        leaves the judgement with the operator.
-        """
-        kind = listening.derived_kind(path)
-        if kind is None:
+    def _on_drop_questioned(self, paths: List[Path]) -> None:
+        """A dropped file is chosen like one picked with the button."""
+        if not paths or self._measuring:
             return
-        self._status(
-            f"That is a {kind}, not the recording. Processing changes the "
-            "detail a voice comparison measures, so a score from it is not "
-            "comparable with a profile built from original audio. Use the "
-            "recording itself."
+        # The variable's trace runs the same processed-audio check as the button.
+        self.questioned_var.set(str(paths[0]))
+
+    def _questioned_refusal(self, path: str) -> Optional[str]:
+        """Why ``path`` must not be compared, or None if it may be.
+
+        Both kinds of processing alter exactly the detail a voiceprint measures
+        - noise reduction by removing what it takes for noise, a listening copy
+        by deliberately changing the balance of the voice - so a score from one
+        is not comparable with a profile built from original audio.
+
+        This used to be a warning in the status line at the foot of the page,
+        with Compare and Search left enabled: the comparison ran and was logged.
+        The evidence is only a file name, and someone who renames the file can
+        still get it in; but that is a deliberate act, and Speaker Profiles
+        already refused on the same evidence.
+        """
+        kind = listening.derived_kind(path) if path else None
+        if kind is None:
+            return None
+        return (
+            f"That is a {kind}, not the recording, so it cannot be compared. "
+            "Processing changes the detail a voice comparison measures, and a "
+            "score from it would not be comparable with a profile built from "
+            "original audio. Choose the original recording."
         )
+
+    def _on_questioned_changed(self) -> None:
+        refusal = self._questioned_refusal(self.questioned_var.get().strip())
+        if refusal is None:
+            self._questioned_banner.hide()
+        else:
+            self._questioned_banner.show("error", refusal)
+        self._update_action_state()
+
+    def _update_action_state(self) -> None:
+        """Compare and Search are on only when they can run.
+
+        Off while a derived copy is chosen, while a comparison is running
+        (choosing another recording mid-run used to switch both back on), and
+        until what each needs is chosen - Compare a reference and a recording,
+        Search only the recording - with the missing piece named beside them.
+        """
+        path = self.questioned_var.get().strip()
+        refused = self._questioned_refusal(path)
+        has_reference = bool(self.reference_var.get())
+        ready = bool(path) and not refused and not self._measuring
+        states = {
+            "_compare_button": ready and has_reference,
+            "_gallery_button": ready,
+        }
+        # The trace is attached in step 2 and the buttons are built in step 3,
+        # so a write during construction arrives before they exist.
+        for name, on in states.items():
+            button = getattr(self, name, None)
+            if button is not None:
+                button.configure(state="normal" if on else "disabled")
+        hint = getattr(self, "_action_hint_var", None)
+        if hint is None:
+            return
+        if self._measuring or refused:
+            hint.set("")
+        elif not path:
+            hint.set(
+                "Choose the recording to check (step 2)."
+                if has_reference
+                else "Choose a reference (step 1) and a recording (step 2)."
+            )
+        elif not has_reference:
+            hint.set("Compare needs a reference (step 1); Search needs none.")
+        else:
+            hint.set("")
 
     def _get_embedder(self) -> SpeakerEmbedder:
         """Load the speaker-embedding model once (sherpa loads on first use)."""
@@ -488,79 +615,50 @@ class SpeakerCompareTab:
 
             self._status("Separating speakers…")
             segments = diarize(wav, progress=self._status)
-            totals = speaker_totals(segments)
-            if not totals:
+            options = speaker_options(segments)
+            if not options:
                 return None
-            picked: dict = {"value": None}
-            done = threading.Event()
-
-            def _ask() -> None:
-                try:
-                    picked["value"] = self._choose_cluster(totals)
-                finally:
-                    done.set()
-
-            self.root.after(0, _ask)
-            done.wait(timeout=300)
-            if not picked["value"]:
-                return None
-            self._picked_speaker = str(picked["value"])
-            return spans_for_speaker(segments, picked["value"])
+            picked = ask_from_worker(
+                self.root,
+                lambda: ask_pick_speaker(
+                    self.root,
+                    title="Which speaker is the questioned speaker?",
+                    guidance=(
+                        "Choose the speaker to compare against the reference "
+                        "profile. Listen to each one first: the speaker numbers "
+                        "come from the order they were found, not from who they "
+                        "are."
+                    ),
+                    options=options,
+                    listener=SampleListener.for_file(wav),
+                ),
+            )
+            if picked is None:
+                raise PickCancelled()
+            self._picked_speaker = picked
+            return spans_for_speaker(segments, picked)
         return [(0.0, _duration(wav))]
-
-    def _choose_cluster(self, totals) -> Optional[str]:
-        win = tk.Toplevel(self.root)
-        win.title("Which speaker is the questioned speaker?")
-        win.configure(background=palette().surface)
-        win.resizable(False, False)
-        labels = [f"{name} — {seconds:.0f}s of speech" for name, seconds in totals]
-        var = tk.StringVar(value=labels[0])
-        chosen: dict = {"value": None}
-        frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(
-            frame,
-            text="Which speaker is the questioned speaker?",
-            style=Style.SECTION_TITLE,
-        ).pack(anchor="w")
-        ttk.Label(
-            frame,
-            text="Pick the speaker to compare against the reference profile.",
-            style=Style.MUTED,
-            wraplength=380,
-            justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, SPACE_SM))
-        combo = ttk.Combobox(
-            frame, textvariable=var, values=labels, state="readonly", width=42
-        )
-        combo.pack(anchor="w")
-
-        def _ok() -> None:
-            chosen["value"] = totals[labels.index(var.get())][0]
-            win.destroy()
-
-        row = ttk.Frame(frame, style=Style.CARD_INNER)
-        row.pack(fill="x", pady=(SPACE_MD, 0))
-        secondary_button(row, "Cancel", win.destroy).pack(side="right")
-        primary_button(row, "Use this speaker", _ok).pack(
-            side="right", padx=(0, SPACE_SM)
-        )
-        win.bind("<Return>", lambda _e: _ok())
-        present(win, self.root, modal=True)
-        combo.focus_set()
-        win.wait_window()
-        return chosen["value"]
-
-    # -- Run ----------------------------------------------------------------
 
     def _compare(self) -> None:
         profile = self._selected_profile()
         if profile is None:
             self._status("Select a reference subject first.")
             return
+        # The list on this page is a snapshot. Compare against the subject as
+        # it is stored now: one deleted on Speaker Profiles was still compared
+        # against, from memory, and logged; samples removed there still counted.
+        fresh = find_speaker_profile_by_id(profile.subject_id)
+        if fresh is None:
+            self.refresh()
+            return
+        profile = fresh
         source = self.questioned_var.get().strip()
         if not source:
             self._status("Choose a questioned recording first.")
+            return
+        refusal = self._questioned_refusal(source)
+        if refusal is not None:
+            self._questioned_banner.show("error", refusal)
             return
         self._start_measuring(Path(source), "Comparing")
         threading.Thread(
@@ -624,9 +722,7 @@ class SpeakerCompareTab:
                 questioned_model=bundled_model_identity(),
                 allow_unverified_model=self.allow_unverified_var.get(),
             )
-            self._last_result = result
-            self._comparisons.append(result)
-            self._questioned_sources.add(measured.source_sha256 or "")
+            self._session.append(result)
             self._log(
                 record_from_comparison(
                     result,
@@ -637,6 +733,8 @@ class SpeakerCompareTab:
             )
             self.root.after(0, lambda: self._show_comparison(result))
             self._status("Comparison complete.")
+        except PickCancelled:
+            self._pick_cancelled("compared")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
         finally:
@@ -646,6 +744,10 @@ class SpeakerCompareTab:
         source = self.questioned_var.get().strip()
         if not source:
             self._status("Choose a questioned recording first.")
+            return
+        refusal = self._questioned_refusal(source)
+        if refusal is not None:
+            self._questioned_banner.show("error", refusal)
             return
         self._start_measuring(Path(source), "Searching all profiles against")
         threading.Thread(
@@ -674,8 +776,17 @@ class SpeakerCompareTab:
                     embedding_model=self._model_description(),
                 )
             )
-            self.root.after(0, lambda: self._show_gallery(measured, result))
+            search = GallerySearch(
+                result,
+                questioned_seconds=measured.speech_seconds,
+                questioned_quality=str(measured.quality),
+                questioned_window_count=measured.window_count,
+            )
+            self._session.append(search)
+            self.root.after(0, lambda: self._show_gallery(measured, search))
             self._status("Search complete.")
+        except PickCancelled:
+            self._pick_cancelled("searched")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
         finally:
@@ -725,6 +836,11 @@ class SpeakerCompareTab:
         status line running underneath - invites reading it as the answer for
         this one.
         """
+        self._measuring = True
+        self._on_screen = None
+        # The file being measured stays the file on screen until it is done;
+        # the busy line names it, and step 2 must not say something else.
+        self._questioned_zone.set_enabled(False)
         self.banner.hide()
         self._result_empty.pack_forget()
         self._result_body.pack_forget()
@@ -735,10 +851,13 @@ class SpeakerCompareTab:
             button.configure(state="disabled")
 
     def _finish_measuring(self) -> None:
+        self._measuring = False
+        self._questioned_zone.set_enabled(True)
         self._busy_bar.stop()
         self._result_busy.pack_forget()
         for button in self._busy_disabled():
             button.configure(state="normal")
+        self._update_action_state()
         # Nothing was produced (an error, or a cancelled speaker picker): show
         # the empty state rather than restoring a result about another
         # recording.
@@ -758,6 +877,7 @@ class SpeakerCompareTab:
         same person, which is not what a cosine similarity is. A result the
         audio cannot support outranks whatever the number happens to be.
         """
+        self._on_screen = result
         self._show(result.format_lines())
 
         if result.refused:
@@ -815,6 +935,15 @@ class SpeakerCompareTab:
         else:
             self.result_warnings.hide()
 
+    def _pick_cancelled(self, what: str) -> None:
+        """Closing the picker is a cancellation, not a finding about the audio."""
+        # It was reported as "No usable speech was found in the questioned
+        # selection", which says something about the recording that nobody
+        # measured.
+        message = f"Cancelled. No speaker was chosen, so nothing was {what}."
+        self._status(message)
+        self.root.after(0, lambda: self.banner.show("info", message))
+
     def _fail(self, exc: Exception) -> None:
         """A failed comparison must not leave the previous one standing."""
         message = friendly_error(exc)
@@ -851,8 +980,10 @@ class SpeakerCompareTab:
         self.band_var.set(text)
         self.band_label.configure(style=style_name)
 
-    def _show_gallery(self, measured: object, result: GalleryResult) -> None:
+    def _show_gallery(self, measured: object, search: GallerySearch) -> None:
         """A ranked search is context, not an identification."""
+        self._on_screen = search
+        result = search.result
         describe = getattr(measured, "describe", None)
         lines = list(describe()) if callable(describe) else []
         self._show(lines + [""] + result.summary_lines())
@@ -863,19 +994,26 @@ class SpeakerCompareTab:
                 "conclusion about any subject."
             )
         elif result.accepted_name:
-            self._set_band("Possible lead", Style.ACCENT)
+            # The same words History uses for the same search.
+            self._set_band(f"{OUTCOME_LEAD}: {result.accepted_name}", Style.ACCENT)
             self.lead_var.set(
                 f"The questioned speaker produced high similarity to the "
                 f"{result.accepted_name} reference profile. Further review is "
                 "warranted."
             )
         else:
-            self._set_band("No sufficiently strong match", Style.BODY)
-            self.lead_var.set("No known profile produced a sufficiently strong match.")
+            self._set_band(OUTCOME_NO_LEAD, Style.BODY)
+            self.lead_var.set(NO_LEAD_EXPLAINED)
         top = result.matches[0] if result.matches else None
-        self._result_rows["score"].set(
-            f"{top.score:.2f} / 1.00 ({top.display_name})" if top else "—"
-        )
+        if top is None:
+            score_text = "—"
+        elif result.inadequate_reason:
+            # A name beside a score is a finding; on audio too poor to assess
+            # there is none to state.
+            score_text = f"{top.score:.2f} / 1.00 (not assessed)"
+        else:
+            score_text = f"{top.score:.2f} / 1.00 ({top.display_name})"
+        self._result_rows["score"].set(score_text)
         self._result_rows["threshold"].set(
             f"{result.thresholds.recognition_acceptance:.2f} to accept, "
             f"{result.thresholds.recognition_margin:.2f} clear of the next"
@@ -924,8 +1062,9 @@ class SpeakerCompareTab:
         self.root.clipboard_append(text)
         self._status("Result copied to clipboard.")
 
-    def _analysis_matches(self, provenance) -> bool:
-        """True when the open analysis is of a recording these comparisons used.
+    @staticmethod
+    def _analysis_matches(provenance, entries: List[ReportEntry]) -> bool:
+        """True when the open analysis is of a recording ``entries`` measured.
 
         Compared by source SHA-256: a matching name proves nothing, and an
         analysis with no recorded hash cannot be shown to be the right one.
@@ -935,13 +1074,26 @@ class SpeakerCompareTab:
             digest = provenance.source.sha256
         if not digest:
             return False
-        return digest in self._questioned_sources
+        return any(entry.questioned_source_sha256 == digest for entry in entries)
 
     def _export_report(self) -> None:
-        """Write a report of the comparisons made, with the transcript if there is one."""
-        if not self._comparisons:
-            self._status("Run a comparison first.")
+        """Write the result on screen, with the transcript if it is of that recording."""
+        entry = self._on_screen
+        if entry is None:
+            self._status("There is no comparison or search result on screen to export.")
             return
+        self._write_report([entry], "speaker-analysis-report.docx")
+
+    def _export_session_report(self) -> None:
+        """Write every comparison and search made since the session report began."""
+        if not self._session:
+            self._status(
+                "No comparison or search has been made since the report began."
+            )
+            return
+        self._write_report(list(self._session), "speaker-analysis-session-report.docx")
+
+    def _write_report(self, entries: List[ReportEntry], initialfile: str) -> None:
         result = names = provenance = None
         if self._get_analysis is not None:
             try:
@@ -949,18 +1101,17 @@ class SpeakerCompareTab:
             except Exception:  # noqa: BLE001 - a report without the transcript is fine
                 result = names = provenance = None
         # A transcript from a *different* recording must not be presented as the
-        # source of these comparisons. Attach it only when its source hash is
-        # one of the recordings actually compared here.
-        if result is not None and not self._analysis_matches(provenance):
+        # source of these results. Attach it only when its source hash is one
+        # of the recordings actually measured for them.
+        left_out = result is not None and not self._analysis_matches(
+            provenance, entries
+        )
+        if left_out:
             result = names = provenance = None
-            self._status(
-                "The open transcript is of a different recording, so it was left "
-                "out of this report."
-            )
         path = filedialog.asksaveasfilename(
             title="Export analysis report",
             defaultextension=".docx",
-            initialfile="speaker-analysis-report.docx",
+            initialfile=initialfile,
             filetypes=[("Word document", "*.docx"), ("Text file", "*.txt")],
             parent=active_window(self.root),
         )
@@ -972,23 +1123,33 @@ class SpeakerCompareTab:
                 result=result,
                 speaker_names=names,
                 provenance=provenance,
-                comparisons=self._comparisons,
+                comparisons=entries,
             )
-            self._status(f"Saved {Path(path).name}")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
-            self._status(friendly_error(exc))
+            self._fail(exc)
+            return
+        count = len(entries)
+        what = "1 result" if count == 1 else f"{count} results"
+        note = (
+            " The open transcript is of a different recording, so it was left out."
+            if left_out
+            else ""
+        )
+        self._status(f"Saved {what} to {path}.{note}")
 
     def _clear_comparisons(self) -> None:
-        self._comparisons = []
-        self._status("Cleared the recorded comparisons.")
+        count = len(self._session)
+        self._session = []
+        self._status(
+            "The session report starts again from the next result"
+            + (f" ({count} earlier result(s) left out)" if count else "")
+            + ". Comparison History keeps every record."
+        )
 
     def _status(self, message: str) -> None:
         self.root.after(0, lambda: self.status_var.set(message))
 
     # -- Shared hooks -------------------------------------------------------
-
-    def notify_cancelling(self) -> None:
-        return None
 
     def get_settings(self) -> dict:
         return {}
