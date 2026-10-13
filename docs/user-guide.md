@@ -115,6 +115,8 @@ Everything most people need is in the **Options** card:
 - **Identify who is speaking** — tick this to label who said what. See the
   next section.
 - **Save a copy to a folder** — where to write the `.txt` (and `.srt`) output.
+  Ticked with no folder chosen, the copy is saved beside the recording; the
+  message at the end of the run says exactly where. Untick it to save nothing.
 
 Then press **Transcribe recording**.
 

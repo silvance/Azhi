@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from .. import enhance, folder_batch, listening, output_names, speaker_count
 from ..acceleration import (
@@ -1509,6 +1509,12 @@ class TranscribeTab:
                 return
 
             outdir = self.output_dir_var.get() if self.write_output_var.get() else None
+            # "Save a copy to a folder" is ticked by default with no folder in
+            # it. A single file in that state used to write nothing and finish
+            # on a green "complete"; it now saves beside the recording, as a
+            # batch already did, and the banner says where.
+            save_beside = bool(self.write_output_var.get())
+            saved_in: Set[Path] = set()
             total = len(jobs)
             done = 0
             saved = 0
@@ -1538,12 +1544,13 @@ class TranscribeTab:
                     append_line(self.status, f"Skipped (file not found): {src}")
                     continue
                 prefix = f"({index}/{total}) " if total > 1 else ""
-                # Where to write: the chosen folder, else beside the source for a
-                # batch (so a multi-file run never silently drops output). A single
-                # file with no output folder keeps the old "don't write" behaviour.
+                # Where to write: the chosen folder; else beside the source when
+                # a copy was asked for, or for any batch (so a multi-file run
+                # never silently drops output). Only a single file with the box
+                # unticked writes nothing - which is what unticking it says.
                 if outdir:
                     save_dir: Optional[Path] = Path(outdir)
-                elif total > 1:
+                elif total > 1 or save_beside:
                     save_dir = src.parent
                 else:
                     save_dir = None
@@ -1579,11 +1586,22 @@ class TranscribeTab:
                 done += 1
                 if written is not False:
                     saved += 1
+                if written and save_dir is not None:
+                    saved_in.add(save_dir)
             if self._missing_files or self._failed_files or self._failed_saves:
                 final_status = f"Finished {done} of {total} — see Status"
             else:
                 final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
             kind, message = self._completion_message(done, total, saved)
+            if kind == "success" and saved_in:
+                # A run that saved should say where: "complete" alone left the
+                # operator to guess, or to assume a folder that held nothing.
+                where = (
+                    str(next(iter(saved_in)))
+                    if len(saved_in) == 1
+                    else f"{len(saved_in)} folders"
+                )
+                message = f"{message} Saved in {where}."
             if kind == "warning":
                 append_line(self.status, message)
             self._announce(kind, message)
