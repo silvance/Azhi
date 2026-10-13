@@ -177,6 +177,19 @@ def gather() -> List[Check]:
             "bundled" if resources.bundled_argos_data_dir() else "not bundled",
         )
     )
+    if resources.bundled_argos_data_dir() is not None:
+        # The packs alone do not make translation work offline: each language
+        # also needs a sentence splitter, which Argos otherwise downloads.
+        splitters = resources.bundled_sentence_splitters()
+        checks.append(
+            Check(
+                "Translation: offline sentence splitters",
+                bool(splitters),
+                ", ".join(splitters)
+                if splitters
+                else "none - translation would need a download this copy refuses",
+            )
+        )
 
     # --- OCR ---
     tesseract = resources.find_tesseract()

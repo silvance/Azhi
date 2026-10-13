@@ -18,6 +18,17 @@ from whispr import diagnostics, diarization, resources, transcription
 from whispr.transcription import ModelUnavailable, resolve_model_choice
 
 _OFFLINE = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
+_ARGOS = ("ARGOS_MODEL_PROVIDER", "ARGOS_CHUNK_TYPE")
+
+
+@pytest.fixture(autouse=True)
+def _contained(monkeypatch):
+    """enforce_offline changes process-wide state; keep it inside each test."""
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "_opener", urllib.request._opener)
+    for flag in _OFFLINE + _ARGOS:
+        monkeypatch.delenv(flag, raising=False)
 
 
 @pytest.fixture
@@ -184,3 +195,76 @@ def test_system_status_states_the_no_download_promise_only_where_it_is_kept(
     assert "refuses any model it does not already hold" in shipped
     assert "downloaded the first time it is used" in from_source
     assert "no model or software downloads" not in from_source
+
+
+# -- Argos Translate cannot reach the network from a bundle either ----------
+#
+# QA traced it, and the pinned source confirms it: MiniSBD downloads its
+# sentence-splitter model from GitHub with urllib.request.urlretrieve whenever
+# the one it wants is not cached, and none of the Hugging Face switches touch
+# that. Argos also reads its model provider from a settings.json under the
+# user's config folder, where LIBRETRANSLATE or OPENAI would send the text out.
+
+
+def test_a_bundle_pins_argos_to_its_local_engine(bundle):
+    resources.enforce_offline()
+    import os
+
+    assert os.environ["ARGOS_MODEL_PROVIDER"] == "OPENNMT"
+    assert os.environ["ARGOS_CHUNK_TYPE"] == "MINISBD"
+
+
+def test_a_bundle_refuses_every_download_plainly(bundle, tmp_path):
+    import urllib.request
+
+    resources.enforce_offline()
+    url = "https://github.com/LibreTranslate/MiniSBD/releases/download/v0.0.1/en.onnx"
+    with pytest.raises(resources.NetworkRefused) as caught:
+        urllib.request.urlretrieve(url, str(tmp_path / "en.onnx"))
+    assert "never uses the network" in str(caught.value)
+    assert not (tmp_path / "en.onnx").exists()
+
+
+def test_a_bundle_can_still_read_local_files(bundle, tmp_path):
+    import urllib.request
+
+    resources.enforce_offline()
+    local = tmp_path / "note.txt"
+    local.write_text("local", encoding="utf-8")
+    assert urllib.request.urlopen(local.as_uri()).read() == b"local"
+
+
+def test_running_from_source_does_not_refuse_downloads(source):
+    import urllib.request
+
+    before = urllib.request._opener
+    resources.enforce_offline()
+    assert urllib.request._opener is before
+
+
+def test_the_refusal_reaches_the_operator_as_written():
+    friendly_error = pytest.importorskip("whispr.gui.errors").friendly_error
+    message = "This copy tried to download https://x and was stopped."
+    assert friendly_error(resources.NetworkRefused(message)) == message
+
+
+def test_system_status_lists_the_offline_sentence_splitters(tmp_path, monkeypatch):
+    data = tmp_path / "argos" / "argos-translate"
+    (data / "minisbd").mkdir(parents=True)
+    (data / "minisbd" / "de.onnx").write_bytes(b"x")
+    pack = data / "packages" / "translate-ru_en" / "minisbd"
+    pack.mkdir(parents=True)
+    (pack / "ru.onnx").write_bytes(b"x")
+    monkeypatch.setattr(resources, "bundled_argos_data_dir", lambda: data)
+    assert resources.bundled_sentence_splitters() == ["de", "ru"]
+
+
+def test_packs_without_any_splitter_are_flagged(tmp_path, monkeypatch):
+    """What a build whose warm-up failed used to ship, saying "bundled"."""
+    data = tmp_path / "argos" / "argos-translate"
+    (data / "packages" / "translate-de_en").mkdir(parents=True)
+    monkeypatch.setattr(resources, "bundled_argos_data_dir", lambda: data)
+    checks = {c.label: c for c in diagnostics.gather()}
+    splitter = checks["Translation: offline sentence splitters"]
+    assert splitter.ok is False
+    assert "refuses" in splitter.detail
