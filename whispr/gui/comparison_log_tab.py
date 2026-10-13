@@ -28,7 +28,7 @@ from ..comparison_log import (
     subjects_in,
 )
 from ..speaker_profiles import ProfileError, list_speaker_profiles
-from ..thresholds import BAND_HIGH, BAND_INSUFFICIENT, DISCLAIMER
+from ..thresholds import BAND_HIGH, BAND_INSUFFICIENT, BAND_NOT_ASSESSED, DISCLAIMER
 from .dialogs import active_window
 from .errors import friendly_error
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette
@@ -390,6 +390,11 @@ class ComparisonLogTab:
         self.summary_var.set(_summary(record))
 
         self._rows["when"].set(_when(record.recorded_utc, full=True))
+        # A gallery search is filed somewhere, not "about" a subject: "Subject:
+        # No lead found" read as a subject called that.
+        self._rows["subject"].set_label(
+            "Filed under" if record.kind == KIND_GALLERY else "Subject"
+        )
         self._rows["subject"].set(self._subject_cell(record))
         self._rows["score"].set(_score(record))
         self._rows["threshold"].set(_threshold_text(record))
@@ -469,7 +474,7 @@ class ComparisonLogTab:
                 values=(
                     ranked.display_name,
                     f"{ranked.score:.2f}",
-                    ranked.band or "—",
+                    _ranked_band(record, ranked.band),
                 ),
             )
         self.ranking_label.pack(
@@ -626,6 +631,24 @@ def _score(record: ComparisonRecord) -> str:
     if record.refused:
         return "—"
     return f"{record.score:.2f}"
+
+
+def _ranked_band(record: ComparisonRecord, stored: str) -> str:
+    """The band to show beside one ranked entry, decided now, not trusted as stored.
+
+    Records written before ranked entries were banded "Not assessed" on
+    inadequate audio still hold "High similarity" beside a name, under a
+    caveat saying there was too little speech. A record that concluded
+    Insufficient data shows "Not assessed" whatever it stored; one older than
+    schema 3, whose conclusion was never recorded, shows nothing.
+    """
+    if record.kind != KIND_GALLERY:
+        return stored or "\u2014"
+    if record.schema_version < 3:
+        return "\u2014"
+    if record.band == BAND_INSUFFICIENT:
+        return BAND_NOT_ASSESSED
+    return stored or "\u2014"
 
 
 def _threshold_text(record: ComparisonRecord) -> str:

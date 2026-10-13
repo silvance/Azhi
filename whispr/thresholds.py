@@ -65,9 +65,14 @@ OUTCOME_NO_LEAD = "No lead"
 # an ordering, not a finding, so it carries no similarity band: a name, a score
 # and "High similarity" side by side is a finding, whatever the line above says.
 BAND_NOT_ASSESSED = "Not assessed"
-# Where a search that found no lead is filed in History. Not "(all subjects)":
-# that sat directly under the filter's own "All subjects" and read as the same.
-NO_LEAD_LABEL = "Searches with no lead"
+# Where a gallery search with no lead is filed in History - by what is actually
+# known about it. Not "(all subjects)", which sat under the filter's own "All
+# subjects" and read as the same; and not one label for all three, which said
+# "no lead" of searches that assessed nothing, and of older searches whose
+# outcome was never recorded - one of which had in fact found a lead.
+NO_LEAD_LABEL = "No lead found"
+NOT_ASSESSED_LABEL = "Not assessed (too little speech)"
+OUTCOME_UNKNOWN_LABEL = "Outcome not recorded (older version)"
 NO_LEAD_EXPLAINED = (
     "No lead \u2014 no profile was similar enough, and clearly enough ahead of "
     "the rest, to be worth following up."

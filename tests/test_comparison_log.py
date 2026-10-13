@@ -19,7 +19,7 @@ from whispr.comparison_log import (
 )
 from whispr.matching import ComparisonResult, GalleryMatch, GalleryResult
 from whispr.speaker_profiles import ProfileError
-from whispr.thresholds import NO_LEAD_LABEL
+from whispr.thresholds import NO_LEAD_LABEL, NOT_ASSESSED_LABEL, OUTCOME_UNKNOWN_LABEL
 
 
 @pytest.fixture(autouse=True)
@@ -428,7 +428,8 @@ def test_a_search_on_too_little_audio_is_insufficient_and_names_nobody():
     )
     assert record.band == "Insufficient data"
     assert record.lead_name == ""
-    assert record.subject_label == NO_LEAD_LABEL
+    # Nothing was assessed, so it is not filed as "no lead found".
+    assert record.subject_label == NOT_ASSESSED_LABEL
 
 
 def test_the_decision_survives_a_round_trip():
@@ -448,7 +449,8 @@ def test_an_older_gallery_record_does_not_claim_an_outcome_it_never_stored():
     old = ComparisonRecord.from_dict(data)
     assert old.schema_version == 2, "a record keeps the version it was written at"
     assert old.outcome == "Search outcome not recorded"
-    assert old.subject_label == NO_LEAD_LABEL
+    # Not "no lead found": an older search may well have found one.
+    assert old.subject_label == OUTCOME_UNKNOWN_LABEL
 
 
 def test_the_csv_carries_the_decision(tmp_path):
@@ -474,3 +476,9 @@ def test_a_search_with_no_lead_is_not_filed_like_the_all_subjects_filter():
     """It sat directly under the filter's own "All subjects" and read as it."""
     assert NO_LEAD_LABEL != "All subjects"
     assert NO_LEAD_LABEL.lower() != "(all subjects)"
+
+
+def test_the_three_ways_a_search_can_have_no_lead_are_filed_apart():
+    labels = {NO_LEAD_LABEL, NOT_ASSESSED_LABEL, OUTCOME_UNKNOWN_LABEL}
+    assert len(labels) == 3
+    assert "All subjects" not in labels

@@ -37,8 +37,10 @@ from .speaker_profiles import ProfileError, SpeakerProfile
 from .thresholds import (
     BAND_INSUFFICIENT,
     NO_LEAD_LABEL,
+    NOT_ASSESSED_LABEL,
     OUTCOME_LEAD,
     OUTCOME_NO_LEAD,
+    OUTCOME_UNKNOWN_LABEL,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -190,10 +192,17 @@ class ComparisonRecord:
         A gallery search is filed under a subject only when it found a lead
         for one. It used to be filed under whoever ranked first, so filtering
         History by a subject listed recordings in which no lead for them was
-        ever found. One that found none is filed under NO_LEAD_LABEL.
+        ever found. One without a lead is filed by what is known about it:
+        no lead found, not assessed, or (before schema 3) not recorded.
         """
         if self.kind == KIND_GALLERY:
-            return self.lead_name or NO_LEAD_LABEL
+            if self.lead_name:
+                return self.lead_name
+            if self.schema_version < 3:
+                return OUTCOME_UNKNOWN_LABEL
+            if self.band == BAND_INSUFFICIENT:
+                return NOT_ASSESSED_LABEL
+            return NO_LEAD_LABEL
         return self.reference_name or "(unnamed subject)"
 
     @property

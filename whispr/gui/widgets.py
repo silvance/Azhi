@@ -489,13 +489,16 @@ class KeyValueRow(ttk.Frame):
         value_style: str = Style.BODY,
     ) -> None:
         super().__init__(parent, style=Style.CARD_INNER)
-        ttk.Label(self, text=label, style=Style.FIELD_LABEL, width=width).pack(
-            side="left", anchor="w"
-        )
+        self.label = ttk.Label(self, text=label, style=Style.FIELD_LABEL, width=width)
+        self.label.pack(side="left", anchor="w")
         self.value = ttk.Label(
             self, text=value, style=value_style, justify="left", wraplength=420
         )
         self.value.pack(side="left", anchor="w")
+
+    def set_label(self, text: str) -> None:
+        """Rename the row - for a record where the usual name would mislead."""
+        self.label.configure(text=text)
 
     def set(self, value: str, *, style_name: Optional[str] = None) -> None:
         self.value.configure(text=value)
