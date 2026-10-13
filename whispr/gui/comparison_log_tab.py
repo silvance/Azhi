@@ -392,9 +392,7 @@ class ComparisonLogTab:
         self._rows["when"].set(_when(record.recorded_utc, full=True))
         self._rows["subject"].set(self._subject_cell(record))
         self._rows["score"].set(_score(record))
-        self._rows["threshold"].set(
-            f"{record.operational_threshold:.2f} for high similarity"
-        )
+        self._rows["threshold"].set(_threshold_text(record))
         windows = (
             f" across {record.questioned_window_count} window(s)"
             if record.questioned_window_count
@@ -628,6 +626,20 @@ def _score(record: ComparisonRecord) -> str:
     if record.refused:
         return "—"
     return f"{record.score:.2f}"
+
+
+def _threshold_text(record: ComparisonRecord) -> str:
+    """The test this record was held to, in the terms that test uses.
+
+    A gallery search is decided by acceptance and a margin over the next
+    profile, not by the high-similarity band edge a one-to-one is reported
+    against; labelling it "for high similarity" described a test it never ran.
+    """
+    if record.kind == KIND_GALLERY:
+        margin = record.thresholds.get("recognition_margin")
+        clear = f", {margin:.2f} clear of the next" if margin is not None else ""
+        return f"{record.operational_threshold:.2f} to accept{clear}"
+    return f"{record.operational_threshold:.2f} for high similarity"
 
 
 def _band(record: ComparisonRecord) -> str:

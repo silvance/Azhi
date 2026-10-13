@@ -81,6 +81,7 @@ from ..transcription import (
     MODEL_PREFERENCE,
     MODEL_SIZES,
     CancelledError,
+    ModelUnavailable,
     Segment,
     TranscriptionResult,
     convert_to_wav,
@@ -1433,6 +1434,18 @@ class TranscribeTab:
         if not self._speaker_count_answered():
             self._ask_for_speaker_count()
             return
+        # The model is the same for every file, so it is checked once, here,
+        # before anything is converted, cleaned or written. It used to be
+        # checked inside each file's run - after the conversion, the noise
+        # reduction and the listening copy - so a batch did all of that for
+        # every file and then refused each one in turn, as a crash.
+        try:
+            resolve_model_choice(self._selected_model(), self._bundled_models)
+        except ModelUnavailable as exc:
+            self._show_settings(True)
+            self._announce("error", str(exc))
+            self.progress_label_var.set("Choose a model this copy has")
+            return
         # Collapse the settings so the transcript and progress get the space.
         self._collapse_all_settings()
         self._cancel_event.clear()
@@ -1544,7 +1557,9 @@ class TranscribeTab:
                     written = self._transcribe_one(
                         src, task, save_dir, prefix, set_view=True
                     )
-                except CancelledError:
+                except (CancelledError, ModelUnavailable):
+                    # A missing model is not one file's problem: every file
+                    # would be refused the same way.
                     raise
                 except Exception as exc:  # noqa: BLE001 - one file, not the run
                     # A batch is often a folder left running unattended. One
@@ -1582,6 +1597,12 @@ class TranscribeTab:
             append_line(self.status, "Cancelled.")
             self._announce("info", "Cancelled before finishing.")
             final_status = "Cancelled"
+        except ModelUnavailable as exc:
+            # An expected refusal, written for the operator - not a crash, so
+            # no traceback and no jump to the Status tab.
+            append_line(self.status, str(exc))
+            self._announce("error", str(exc))
+            final_status = "Not started"
         except Exception as exc:
             friendly = friendly_error(exc)
             append_line(self.status, friendly)

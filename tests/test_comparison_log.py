@@ -19,6 +19,7 @@ from whispr.comparison_log import (
 )
 from whispr.matching import ComparisonResult, GalleryMatch, GalleryResult
 from whispr.speaker_profiles import ProfileError
+from whispr.thresholds import NO_LEAD_LABEL
 
 
 @pytest.fixture(autouse=True)
@@ -113,7 +114,7 @@ def test_gallery_record_keeps_the_whole_ranking():
     # filed under anyone. This used to assert "A. Subject" - the top-ranked
     # name - which is how History came to list recordings under a subject no
     # lead was ever found for.
-    assert record.subject_label == "(all subjects)"
+    assert record.subject_label == NO_LEAD_LABEL
 
 
 def test_gallery_record_carries_the_reason_it_supports_nothing():
@@ -409,7 +410,7 @@ def test_a_search_that_found_no_lead_records_no_lead():
     record = record_from_gallery(_search(accepted=False))
     assert record.band == "No lead"
     assert record.outcome == "No lead"
-    assert record.subject_label == "(all subjects)"
+    assert record.subject_label == NO_LEAD_LABEL
     assert record.lead_name == ""
     assert record.score == pytest.approx(0.71), "the top score is a fact and stays"
 
@@ -427,7 +428,7 @@ def test_a_search_on_too_little_audio_is_insufficient_and_names_nobody():
     )
     assert record.band == "Insufficient data"
     assert record.lead_name == ""
-    assert record.subject_label == "(all subjects)"
+    assert record.subject_label == NO_LEAD_LABEL
 
 
 def test_the_decision_survives_a_round_trip():
@@ -447,7 +448,7 @@ def test_an_older_gallery_record_does_not_claim_an_outcome_it_never_stored():
     old = ComparisonRecord.from_dict(data)
     assert old.schema_version == 2, "a record keeps the version it was written at"
     assert old.outcome == "Search outcome not recorded"
-    assert old.subject_label == "(all subjects)"
+    assert old.subject_label == NO_LEAD_LABEL
 
 
 def test_the_csv_carries_the_decision(tmp_path):
@@ -467,3 +468,9 @@ def test_no_gallery_wording_says_match():
     assert NO_LEAD_EXPLAINED in lines
     for line in lines:
         assert "match" not in line.lower(), line
+
+
+def test_a_search_with_no_lead_is_not_filed_like_the_all_subjects_filter():
+    """It sat directly under the filter's own "All subjects" and read as it."""
+    assert NO_LEAD_LABEL != "All subjects"
+    assert NO_LEAD_LABEL.lower() != "(all subjects)"

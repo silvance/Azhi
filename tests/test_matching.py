@@ -542,3 +542,38 @@ def test_an_adequate_gallery_search_still_explains_its_decision():
     assert gallery.accepted_name is None
     # Ambiguous, and it says why.
     assert any("margin" in line.lower() for line in gallery.summary_lines())
+
+
+def test_a_ranking_on_audio_too_poor_to_assess_carries_no_bands():
+    """A name, a score and "High similarity" together are a finding.
+
+    QA found the ranking of an Insufficient-data search still listing
+    "Viktor Marchenko 0.83 High similarity" in History, in the full result and
+    in the report. On audio too poor to assess, every entry is "Not assessed".
+    """
+    from whispr.comparison_log import record_from_gallery
+    from whispr.thresholds import BAND_NOT_ASSESSED
+
+    result = search_gallery(
+        [1.0, 0.0],
+        [_profile("Viktor Marchenko", (1.0, 0.0)), _profile("Anna", (0.0, 1.0))],
+        questioned_seconds=1.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    assert result.inadequate_reason
+    assert {m.band for m in result.matches} == {BAND_NOT_ASSESSED}
+    assert {r.band for r in record_from_gallery(result).ranked} == {BAND_NOT_ASSESSED}
+    assert "High similarity" not in "\n".join(result.summary_lines())
+
+
+def test_an_adequate_ranking_still_carries_its_bands():
+    result = search_gallery(
+        [1.0, 0.0],
+        [_profile("Viktor Marchenko", (1.0, 0.0))],
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    assert not result.inadequate_reason
+    assert result.matches[0].band == "High similarity"

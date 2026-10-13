@@ -61,6 +61,13 @@ BAND_INSUFFICIENT = "Insufficient data"
 # These name that conclusion, never the top entry's band.
 OUTCOME_LEAD = "Lead"
 OUTCOME_NO_LEAD = "No lead"
+# A ranked entry in a search whose audio was too poor to assess. Its score is
+# an ordering, not a finding, so it carries no similarity band: a name, a score
+# and "High similarity" side by side is a finding, whatever the line above says.
+BAND_NOT_ASSESSED = "Not assessed"
+# Where a search that found no lead is filed in History. Not "(all subjects)":
+# that sat directly under the filter's own "All subjects" and read as the same.
+NO_LEAD_LABEL = "Searches with no lead"
 NO_LEAD_EXPLAINED = (
     "No lead \u2014 no profile was similar enough, and clearly enough ahead of "
     "the rest, to be worth following up."

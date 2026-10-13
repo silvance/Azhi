@@ -34,7 +34,12 @@ from .atomicio import write_json_atomic
 from .buildinfo import UNKNOWN as UNKNOWN_BUILD
 from .settings import settings_path
 from .speaker_profiles import ProfileError, SpeakerProfile
-from .thresholds import BAND_INSUFFICIENT, OUTCOME_LEAD, OUTCOME_NO_LEAD
+from .thresholds import (
+    BAND_INSUFFICIENT,
+    NO_LEAD_LABEL,
+    OUTCOME_LEAD,
+    OUTCOME_NO_LEAD,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .matching import ComparisonResult, GalleryResult
@@ -185,10 +190,10 @@ class ComparisonRecord:
         A gallery search is filed under a subject only when it found a lead
         for one. It used to be filed under whoever ranked first, so filtering
         History by a subject listed recordings in which no lead for them was
-        ever found.
+        ever found. One that found none is filed under NO_LEAD_LABEL.
         """
         if self.kind == KIND_GALLERY:
-            return self.lead_name or "(all subjects)"
+            return self.lead_name or NO_LEAD_LABEL
         return self.reference_name or "(unnamed subject)"
 
     @property

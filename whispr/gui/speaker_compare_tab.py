@@ -65,6 +65,7 @@ from ..thresholds import (
     BAND_INSUFFICIENT,
     DISCLAIMER,
     NO_LEAD_EXPLAINED,
+    OUTCOME_LEAD,
     OUTCOME_NO_LEAD,
     active,
     describe_active,
@@ -902,7 +903,8 @@ class SpeakerCompareTab:
                 "conclusion about any subject."
             )
         elif result.accepted_name:
-            self._set_band("Possible lead", Style.ACCENT)
+            # The same words History uses for the same search.
+            self._set_band(f"{OUTCOME_LEAD}: {result.accepted_name}", Style.ACCENT)
             self.lead_var.set(
                 f"The questioned speaker produced high similarity to the "
                 f"{result.accepted_name} reference profile. Further review is "
@@ -912,9 +914,15 @@ class SpeakerCompareTab:
             self._set_band(OUTCOME_NO_LEAD, Style.BODY)
             self.lead_var.set(NO_LEAD_EXPLAINED)
         top = result.matches[0] if result.matches else None
-        self._result_rows["score"].set(
-            f"{top.score:.2f} / 1.00 ({top.display_name})" if top else "—"
-        )
+        if top is None:
+            score_text = "—"
+        elif result.inadequate_reason:
+            # A name beside a score is a finding; on audio too poor to assess
+            # there is none to state.
+            score_text = f"{top.score:.2f} / 1.00 (not assessed)"
+        else:
+            score_text = f"{top.score:.2f} / 1.00 ({top.display_name})"
+        self._result_rows["score"].set(score_text)
         self._result_rows["threshold"].set(
             f"{result.thresholds.recognition_acceptance:.2f} to accept, "
             f"{result.thresholds.recognition_margin:.2f} clear of the next"

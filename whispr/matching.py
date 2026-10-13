@@ -35,6 +35,7 @@ from .speaker_profiles import (
 )
 from .thresholds import (
     BAND_INSUFFICIENT,
+    BAND_NOT_ASSESSED,
     DISCLAIMER,
     NO_LEAD_EXPLAINED,
     Thresholds,
@@ -481,9 +482,12 @@ def search_gallery(
         )
     for name, score in _ranked(embedding, candidates):
         profile = by_label[name]
-        band, _ = similarity_band(
-            score, thresholds.comparison_high, thresholds.comparison_intermediate
-        )
+        if result.inadequate_reason:
+            band = BAND_NOT_ASSESSED
+        else:
+            band, _ = similarity_band(
+                score, thresholds.comparison_high, thresholds.comparison_intermediate
+            )
         result.matches.append(
             GalleryMatch(
                 subject_id=profile.subject_id,

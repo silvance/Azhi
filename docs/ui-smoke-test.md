@@ -377,13 +377,19 @@ recording containing that person speaking for more than three seconds.
 - [ ] **Low similarity**, and a search that found **No lead**, read plainly.
       Nowhere on the page or in History does a result use the word "match".
 - [ ] Run a **gallery search** that finds no lead, then open **Comparison
-      History**. The row is filed under **(all subjects)**, not under whoever
+      History**. The row is filed under **Searches with no lead**, not under whoever
       ranked first, and its assessment reads **No lead** — not "High
       similarity". Filtering History by that subject does not list it.
 - [ ] A gallery search that *does* find a lead is filed under that subject
       and reads **Lead: <name>**, in the accent colour, never green.
 - [ ] A gallery search on too little audio reads **Insufficient data** in
-      History and is filed under nobody.
+      History and is filed under nobody. Its ranking — on Compare, in History's
+      detail and in the report — says **Not assessed** beside every name, never
+      a similarity band, and the score row shows no name.
+- [ ] The Subject filter's **All subjects** and the **Searches with no lead**
+      entry are plainly different things.
+- [ ] A search that found a lead reads **Lead: <name>** on Compare and in
+      History alike.
 - [ ] **Insufficient data** visually outranks the score: the band says so and
       the sentence says the score is not meaningful, even when the number is
       high.
