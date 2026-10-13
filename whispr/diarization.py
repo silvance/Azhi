@@ -127,9 +127,7 @@ def diarize(
 
     # Not just "is the library installed": in a bundle without the pyannote
     # cache, Pipeline.from_pretrained would go to the Hugging Face Hub for it.
-    use_pyannote = backend == "pyannote" or (
-        backend == "auto" and _pyannote_usable_offline()
-    )
+    use_pyannote = chosen_backend(backend) == "pyannote"
     if use_pyannote:
         return _diarize_pyannote(
             wav_path,
@@ -197,6 +195,20 @@ def _pyannote_available() -> bool:
         # find_spec raises (rather than returning None) when the parent package
         # itself is absent.
         return False
+
+
+def chosen_backend(backend: str = "auto") -> str:
+    """The engine :func:`diarize` will run for ``backend`` - never "auto".
+
+    One answer for two questions: which engine to run, and which engine the
+    analysis record says ran. The record used to store the *setting*, so a
+    report could only ever say "auto", and could not say which engine's
+    models to name.
+    """
+    backend = (backend or "auto").lower()
+    if backend == "auto":
+        return "pyannote" if _pyannote_usable_offline() else "sherpa"
+    return backend
 
 
 def _pyannote_usable_offline() -> bool:

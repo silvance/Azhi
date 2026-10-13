@@ -1781,6 +1781,8 @@ class TranscribeTab:
             # Record what produced this result while the settings are in hand.
             provenance = AnalysisProvenance(
                 source=SourceRecord.from_path(src),
+                # The thresholds this run used, not the shipped defaults.
+                thresholds=active_thresholds(),
                 transcription=TranscriptionProvenance(
                     model_name=model_sel,
                     model_sha256=transcription_model_sha256(model),
@@ -1822,6 +1824,7 @@ class TranscribeTab:
                     engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
                     expected_speaker_count=self._parse_num_speakers(),
                     clustering_threshold=self._parse_threshold(),
+                    voice_leads=list(self._recognized_names.values()),
                 )
             else:
                 undiarized = None
@@ -2141,6 +2144,7 @@ class TranscribeTab:
             engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
             expected_speaker_count=requested,
             clustering_threshold=self._parse_threshold(),
+            voice_leads=list(self._recognized_names.values()),
         )
 
     def _rerender_transcript(self) -> None:
