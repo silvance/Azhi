@@ -376,10 +376,22 @@ def format_report(checks: "List[Check] | None" = None) -> str:
 
     lines += ["Build", "-----"]
     lines += info.describe()
-    lines.append(
-        "Analysis runs entirely on this machine. No cloud service, no "
-        "telemetry, and no model or software downloads at runtime."
-    )
+    if resources.is_bundle():
+        lines.append(
+            "Analysis runs entirely on this machine. No cloud service, no "
+            "telemetry, and no model or software downloads at runtime: this "
+            "copy refuses any model it does not already hold."
+        )
+    else:
+        # Said plainly rather than claimed: from source, a model that is not
+        # bundled is still fetched on first use, and the line above would be
+        # false.
+        lines.append(
+            "Analysis runs entirely on this machine. No cloud service and no "
+            "telemetry. This is running from source, not a shipped copy, so a "
+            "model it does not hold is downloaded the first time it is used. A "
+            "shipped copy never does that."
+        )
     lines.append(
         "The only network path in the application is the Live page, which "
         "connects to a stream address an operator enters. It is idle unless "

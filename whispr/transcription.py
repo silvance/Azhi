@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from .resources import find_ffmpeg
+from .resources import find_ffmpeg, is_bundle
 from .speaker_names import LEAD_LEGEND, any_leads
 
 PathLike = Union[str, Path]
@@ -376,6 +376,49 @@ def convert_to_wav(
 _MODEL_CACHE: Dict[Tuple[str, str, str], Any] = {}
 
 
+class ModelUnavailable(RuntimeError):
+    """The chosen model cannot be used here, in words an operator can act on."""
+
+
+def usable_model_folder(path: PathLike) -> bool:
+    """Whether ``path`` is a folder holding a converted (CTranslate2) model."""
+    folder = Path(path)
+    return folder.is_dir() and (folder / "model.bin").is_file()
+
+
+def resolve_model_choice(name: str, bundled: "Dict[str, Path]") -> str:
+    """What to hand faster-whisper for the model called ``name``.
+
+    The one place that decides whether a model may be used, shared by the
+    Transcribe and Live pages so they cannot disagree. A bundled name resolves
+    to its folder; a folder holding a model is used as it is. Anything else is
+    refused in a bundle - or wherever models are bundled - because the only
+    thing faster-whisper could do with it is download it.
+
+    Raises :class:`ModelUnavailable`. Running from source with nothing bundled,
+    a plain size name is returned as-is and faster-whisper fetches it, which is
+    the developer convenience and never happens in a shipped copy.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ModelUnavailable("Choose a model first.")
+    if name in bundled:
+        return str(bundled[name])
+    if usable_model_folder(name):
+        return str(Path(name))
+    if Path(name).is_dir():
+        raise ModelUnavailable(
+            f"{name} is a folder but not a model: there is no model.bin in it. "
+            "Choose the folder a converted model was copied into."
+        )
+    if bundled or is_bundle():
+        raise ModelUnavailable(
+            f"This copy has no \u2018{name}\u2019 model. System status (top "
+            "right) lists the ones it has; another would need a rebuilt copy."
+        )
+    return name
+
+
 def _load_model(
     model_size: str,
     device: str,
@@ -396,7 +439,14 @@ def _load_model(
         ) from exc
     if report is not None:
         report(f"Loading model '{model_size}' ({device}/{compute_type})...")
-    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    # In a bundle, refuse to download even if something upstream let a bare
+    # name through: resolve_model_choice is the gate, and this is the backstop.
+    model = WhisperModel(
+        model_size,
+        device=device,
+        compute_type=compute_type,
+        local_files_only=is_bundle(),
+    )
     _MODEL_CACHE[key] = model
     return model
 

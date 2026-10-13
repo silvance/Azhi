@@ -55,7 +55,7 @@ from ..provenance import (
     transcription_model_sha256,
 )
 from ..reports import write_analysis_report
-from ..resources import bundled_embedding_model, bundled_models
+from ..resources import bundled_embedding_model, bundled_models, is_bundle
 from ..run_summary import (
     FailedRun,
     SkippedRun,
@@ -83,7 +83,9 @@ from ..transcription import (
     TranscriptionResult,
     convert_to_wav,
     is_video,
+    resolve_model_choice,
     transcribe_audio,
+    usable_model_folder,
 )
 from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
 from . import speaker_compare
@@ -1384,7 +1386,7 @@ class TranscribeTab:
 
     def _model_is_available(self, model: str) -> bool:
         """True if ``model`` is bundled in this build or is a local model folder."""
-        return model in self._bundled_models or (bool(model) and Path(model).is_dir())
+        return model in self._bundled_models or usable_model_folder(model)
 
     def _update_model_status(self, *_args: object) -> None:
         """Reflect whether the chosen model is actually usable in this build."""
@@ -1393,17 +1395,20 @@ class TranscribeTab:
             self.model_status_var.set("")
         elif model in self._bundled_models:
             self.model_status_var.set("✓ in this build (works offline)")
-        elif Path(model).is_dir():
+        elif usable_model_folder(model):
             self.model_status_var.set("✓ local model folder")
-        elif self._bundled_models:
-            # A real bundle, but this size wasn't included - it can't be fetched
-            # on an air-gapped machine, so say so before Run rather than after.
+        elif Path(model).is_dir():
+            self.model_status_var.set("⚠ that folder has no model in it")
+        elif self._bundled_models or is_bundle():
+            # It can't be fetched on an air-gapped machine, so say so before
+            # Run rather than after. A shipped copy with *no* models used to
+            # land in the branch below and promise a download it must not make.
             self.model_status_var.set(
-                "⚠ not in this build — rebuild including it, or pick a ✓ model "
-                "(see Self-test…)"
+                "⚠ not in this copy — pick a ✓ model (System status lists them)"
             )
         else:
-            # Running from source with nothing bundled: faster-whisper will fetch it.
+            # Running from source with nothing bundled: faster-whisper will fetch
+            # it. Never reached in a shipped copy - see is_bundle().
             self.model_status_var.set("will be downloaded on first use")
 
     # -- Run ---------------------------------------------------------------
@@ -1728,17 +1733,10 @@ class TranscribeTab:
             # Resolve a bundled model name to its local directory so we never
             # try to download on an air-gapped machine.
             model_sel = self._selected_model()
-            # This build has models, but the chosen one isn't among them and isn't
-            # a local folder: it can't be fetched offline, so fail with a clear
-            # message instead of a cryptic download error. (When nothing is bundled
-            # - running from source - fall through and let faster-whisper fetch it.)
-            if self._bundled_models and not self._model_is_available(model_sel):
-                raise RuntimeError(
-                    f"The model '{model_sel}' isn't in this build. Open Self-test… "
-                    f"to see the bundled models and pick one of those, or rebuild "
-                    f"the bundle with '{model_sel}' included."
-                )
-            model = str(self._bundled_models.get(model_sel, model_sel))
+            # One policy for every page (see resolve_model_choice): bundled names
+            # and model folders are used; anything else is refused in a shipped
+            # copy rather than handed to faster-whisper to download.
+            model = resolve_model_choice(model_sel, self._bundled_models)
 
             verb = "Translating" if task == "translate" else "Transcribing"
             transcribe_label = f"{prefix}{verb}"

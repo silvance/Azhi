@@ -297,6 +297,41 @@ def pyannote_cache_dir() -> Optional[Path]:
     return None
 
 
+def is_bundle() -> bool:
+    """Whether this is a shipped bundle, which must never fetch anything.
+
+    A PyInstaller build is what goes to an air-gapped machine, so every path in
+    one that could reach the network is closed, rather than each relying on
+    there being no network to reach. QA found three that were not: a model name
+    the bundle lacked went to faster-whisper as a download, the Live page passed
+    any typed name the same way, and "auto" speaker separation reached for the
+    Hugging Face Hub whenever the pyannote cache was missing.
+
+    Running from source keeps the developer conveniences - a model fetched on
+    first use, a pyannote pipeline from the Hub - because that is not deployed.
+    """
+    return bool(getattr(sys, "frozen", False))
+
+
+# Every switch the Hugging Face libraries read to stay off the network.
+_OFFLINE_FLAGS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
+
+
+def enforce_offline() -> bool:
+    """In a bundle, tell every Hugging Face library to stay off the network.
+
+    Set unconditionally, not only when a pyannote cache is bundled: a bundle
+    missing that cache is exactly the one that would otherwise go looking for
+    it. Must run before huggingface_hub is imported - see below. Returns
+    whether it did anything.
+    """
+    if not is_bundle():
+        return False
+    for flag in _OFFLINE_FLAGS:
+        os.environ[flag] = "1"
+    return True
+
+
 def configure_offline_hf_cache() -> Optional[Path]:
     """Point Hugging Face at the bundled pyannote cache, in offline mode.
 
@@ -316,6 +351,7 @@ def configure_offline_hf_cache() -> Optional[Path]:
     / HF_HUB_OFFLINE the operator's machine happens to have set, which would
     otherwise point Hugging Face at the wrong (empty) cache in offline mode.
     """
+    enforce_offline()
     cache = pyannote_cache_dir()
     if cache is None:
         return None

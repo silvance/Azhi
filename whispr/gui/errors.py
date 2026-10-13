@@ -27,7 +27,7 @@ def friendly_error(exc: Exception) -> str:
         )
     # A model chosen in the GUI that this offline build doesn't contain. The
     # message is already written for the operator, so surface it as-is.
-    if "isn't in this build" in low:
+    if name == "ModelUnavailable" or "isn't in this build" in low:
         return msg.splitlines()[0]
     # These name the control the operator has to change, which now lives under
     # Advanced options > Speaker separation > Method.
