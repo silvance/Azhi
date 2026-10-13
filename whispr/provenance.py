@@ -217,11 +217,10 @@ class DiarizationProvenance:
         :func:`whispr.diarization.diarize` resolves it - so the record names the
         engine that ran rather than the option that was picked.
 
-        It used to fill the same fields whichever engine ran: the sherpa
-        segmentation file, and as the embedding model the *Speaker Profiles*
-        model, which neither engine uses for separating speakers. So a pyannote
-        run was described by sherpa's files, and even a sherpa run named the
-        wrong embedding model. Each engine is now described by its own.
+        It used to fill sherpa's fields whichever engine ran, so a pyannote run
+        was described by sherpa's files. Each engine is now described by its
+        own. (For sherpa the old record was right: the Speaker Profiles model
+        and sherpa's diarization embedding are the same file.)
         """
         from .diarization import chosen_backend
 
@@ -238,7 +237,7 @@ class DiarizationProvenance:
         return record
 
     def _describe_sherpa(self) -> None:
-        from .resources import bundled_diarization_models
+        from .resources import bundled_diarization_models, bundled_embedding_model_name
 
         self.engine_version = _installed_version("sherpa-onnx")
         bundled = bundled_diarization_models()
@@ -247,7 +246,9 @@ class DiarizationProvenance:
         segmentation, embedding = bundled
         self.segmentation_model = segmentation.name
         self.segmentation_model_sha256 = sha256_file_or_none(segmentation)
-        self.embedding_model = embedding.name
+        # The name the build recorded for it (embedding_model.txt), which says
+        # what the model is; the file name only says where it is.
+        self.embedding_model = bundled_embedding_model_name() or embedding.name
         self.embedding_model_sha256 = sha256_file_or_none(embedding)
 
     def _describe_pyannote(self) -> None:
@@ -403,10 +404,14 @@ class AnalysisProvenance:
             )
             if diar.pipeline:
                 lines.append(f"Diarization pipeline: {diar.pipeline}")
-            lines += [
-                f"Segmentation model: {diar.segmentation_model or 'not recorded'}",
-                f"Speaker embedding model: {diar.embedding_model or 'not recorded'}",
-            ]
+            lines.append(
+                f"Segmentation model: {diar.segmentation_model or 'not recorded'}"
+            )
+            if diar.segmentation_model_sha256:
+                lines.append(f"Segmentation SHA-256: {diar.segmentation_model_sha256}")
+            lines.append(
+                f"Speaker embedding model: {diar.embedding_model or 'not recorded'}"
+            )
             if diar.embedding_model_sha256:
                 # Always shown when recorded: a report never hides a fact the
                 # record holds.

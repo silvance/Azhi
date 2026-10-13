@@ -19,14 +19,18 @@ from whispr.provenance import AnalysisProvenance, DiarizationProvenance
 
 @pytest.fixture
 def sherpa_files(tmp_path, monkeypatch):
+    # As a real bundle lays them out: one diarization/embedding.onnx serves
+    # both sherpa's speaker split and Speaker Profiles, with its name in
+    # embedding_model.txt beside it.
     seg = tmp_path / "segmentation.onnx"
     emb = tmp_path / "embedding.onnx"
     seg.write_bytes(b"segmentation")
-    emb.write_bytes(b"diarization-embedding")
-    profiles_model = tmp_path / "titanet-large.onnx"
-    profiles_model.write_bytes(b"profiles-embedding")
+    emb.write_bytes(b"embedding")
     monkeypatch.setattr(resources, "bundled_diarization_models", lambda: (seg, emb))
-    monkeypatch.setattr(resources, "bundled_embedding_model", lambda: profiles_model)
+    monkeypatch.setattr(resources, "bundled_embedding_model", lambda: emb)
+    monkeypatch.setattr(
+        resources, "bundled_embedding_model_name", lambda: "3D-Speaker ERes2Net"
+    )
     return seg, emb
 
 
@@ -56,15 +60,20 @@ def test_the_record_never_says_auto(monkeypatch, sherpa_files):
     assert record.engine == "sherpa"
 
 
-def test_a_sherpa_run_names_the_embedding_model_sherpa_used(monkeypatch, sherpa_files):
-    """Not the Speaker Profiles model, which it used to record here."""
+def test_a_sherpa_run_names_its_models_by_what_they_are(monkeypatch, sherpa_files):
+    """The readable name the build recorded, and the hash of the file used."""
+    from whispr.hashing import sha256_file
+
     monkeypatch.setattr(diarization, "_pyannote_usable_offline", lambda: False)
     seg, emb = sherpa_files
     record = DiarizationProvenance.from_bundle(engine="sherpa")
     assert record.segmentation_model == seg.name
-    assert record.embedding_model == emb.name == "embedding.onnx"
-    assert record.embedding_model != "titanet-large.onnx"
+    assert record.segmentation_model_sha256 == sha256_file(seg)
+    assert record.embedding_model == "3D-Speaker ERes2Net"
+    assert record.embedding_model_sha256 == sha256_file(emb)
     assert record.pipeline == ""
+    lines = "\n".join(AnalysisProvenance(diarization=record).describe())
+    assert f"Segmentation SHA-256: {sha256_file(seg)}" in lines
 
 
 def test_a_pyannote_run_is_named_by_its_own_repositories(

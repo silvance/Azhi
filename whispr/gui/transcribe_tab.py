@@ -31,7 +31,7 @@ from ..acceleration import (
     offered_modes,
 )
 from ..acceleration import resolve as resolve_device
-from ..diarization import assign_speakers, diarize
+from ..diarization import assign_speakers, chosen_backend, diarize
 from ..diarization import is_available as diarization_available
 from ..enrollment import enroll_from_media, enroll_from_wav, spans_by_speaker_name
 from ..export import transcript_to_docx
@@ -349,6 +349,8 @@ class TranscribeTab:
         self._profile: Optional[Profile] = None
         # Names recognised from voiceprints on the last diarized run (voice::Name).
         self._recognized_names: Dict[str, str] = {}
+        # The speaker-separation engine the last split actually ran.
+        self._diar_engine_used = "auto"
         # A 16 kHz mono copy of the last diarized audio, kept so corrections can
         # enrol voiceprints after the run; removed on the next run and on close.
         self._session_wav: Optional[Path] = None
@@ -1899,7 +1901,7 @@ class TranscribeTab:
                 undiarized = copy.deepcopy(result.segments) if set_view else None
                 self._diarize_into(result, src, voice_path, voice_is_normalized)
                 provenance.diarization = DiarizationProvenance.from_bundle(
-                    engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                    engine=self._diar_engine_used,
                     expected_speaker_count=self._parse_num_speakers(),
                     clustering_threshold=self._parse_threshold(),
                     voice_leads=list(self._recognized_names.values()),
@@ -1977,10 +1979,17 @@ class TranscribeTab:
             diar_temp = diar_wav
         # The bar is sitting at 100% from the transcription that just finished.
         self._begin_phase("Identifying speakers…")
+        # Settled once, here, and handed to diarize() as a concrete engine: the
+        # record names the same one. Reading the setting again afterwards named
+        # whatever Method said when the run finished - and Method can be
+        # changed while a run is going.
+        self._diar_engine_used = chosen_backend(
+            ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+        )
         try:
             speaker_segments = diarize(
                 diar_wav,
-                backend=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                backend=self._diar_engine_used,
                 num_speakers=self._parse_num_speakers(),
                 threshold=self._parse_threshold(),
                 progress=self._step,
@@ -2165,9 +2174,12 @@ class TranscribeTab:
                 + " — the recording is not being transcribed again.",
             )
             self._begin_phase("Identifying speakers…")
+            self._diar_engine_used = chosen_backend(
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+            )
             speaker_segments = diarize(
                 wav,
-                backend=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                backend=self._diar_engine_used,
                 num_speakers=requested,
                 threshold=self._parse_threshold(),
                 progress=self._step,
@@ -2221,7 +2233,7 @@ class TranscribeTab:
         if provenance is None:
             return
         provenance.diarization = DiarizationProvenance.from_bundle(
-            engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+            engine=self._diar_engine_used,
             expected_speaker_count=requested,
             clustering_threshold=self._parse_threshold(),
             voice_leads=list(self._recognized_names.values()),
