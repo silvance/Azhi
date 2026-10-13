@@ -10,12 +10,13 @@ from __future__ import annotations
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Set
 
 from ..export import text_to_docx
 from ..ocr import OCR_EXTENSIONS, extract_text, is_ocr_file, tesseract_lang
+from ..textfiles import UnreadableText, read_text
 from ..transcription import CancelledError
 from ..translation import detect_language
 from .dialogs import active_window
@@ -474,9 +475,27 @@ class TranslateTab:
         if not self._translate_files:
             self.translate_status_var.set("Add files first.")
             return
-        self._start(self._translate_files_worker, list(self._translate_files))
+        files = list(self._translate_files)
+        # Existing translations were overwritten without a word.
+        existing = [out for src in files for out in _outputs(src) if out.exists()]
+        keep: Set[Path] = set()
+        if existing:
+            replace = messagebox.askyesnocancel(
+                "Replace existing translations?",
+                f"{len(existing)} file(s) this would write already exist, for "
+                f"example {existing[0].name}.\n\nYes replaces them. No leaves "
+                "them and skips those recordings. Cancel stops here.",
+                icon="warning",
+                default="no",
+                parent=active_window(self.root),
+            )
+            if replace is None:
+                return
+            if not replace:
+                keep = {src for src in files if any(o.exists() for o in _outputs(src))}
+        self._start(self._translate_files_worker, files, keep)
 
-    def _translate_files_worker(self, files: List[Path]) -> None:
+    def _translate_files_worker(self, files: List[Path], keep: Set[Path]) -> None:
         from ..translation import translate_text
 
         self._set_translate_busy(True, "Translating files…")
@@ -484,11 +503,17 @@ class TranslateTab:
         translated_count = 0
         extracted_count = 0
         skipped = 0
+        reasons: List[str] = []
         try:
             total = max(1, len(files))
             for index, src in enumerate(files):
                 if self._cancel_event.is_set():
                     raise CancelledError("Translation cancelled.")
+                if src in keep:
+                    skipped += 1
+                    reasons.append(f"{src.name}: already translated; left as it was.")
+                    self._set_translate_progress((index + 1) / total)
+                    continue
                 # Get the foreign text: read text files directly, OCR images/PDFs.
                 is_ocr = is_ocr_file(src)
                 if is_ocr:
@@ -506,7 +531,13 @@ class TranslateTab:
                     self._set_translate_status(f"Extracted {ocr_dest.name}")
                     dest = src.with_name(f"{src.stem}.en.txt")
                 else:
-                    text = src.read_text(encoding="utf-8", errors="replace")
+                    try:
+                        text = read_text(src)
+                    except UnreadableText as exc:
+                        skipped += 1
+                        reasons.append(str(exc))
+                        self._set_translate_progress((index + 1) / total)
+                        continue
                     dest = src.with_name(f"{src.stem}.en{src.suffix}")
 
                 from_code = self._resolve_from_code(text)
@@ -543,6 +574,11 @@ class TranslateTab:
             if skipped:
                 parts.append(f"skipped {skipped}")
             final = "Done — " + (", ".join(parts) if parts else "nothing to do")
+            if reasons:
+                # The status line holds one sentence; why each was skipped
+                # goes where it can be read.
+                self._set_translate_output("Skipped:\n\n" + "\n\n".join(reasons))
+                final += " (see Result for why)"
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
@@ -630,9 +666,10 @@ class TranslateTab:
             self._start(self._extract_to_paste_worker, path, lang)
         else:
             try:
-                self._set_translate_input(
-                    path.read_text(encoding="utf-8", errors="replace")
-                )
+                self._set_translate_input(read_text(path))
+            except UnreadableText as exc:
+                self._set_translate_output(str(exc))
+                self.translate_status_var.set("Not loaded — see Result")
             except OSError as exc:
                 self.translate_status_var.set(friendly_error(exc))
 
@@ -640,3 +677,13 @@ class TranslateTab:
         """Files dropped on the batch box: add them to the queue."""
         self._add_translate_paths(paths)
         self.translate_status_var.set(f"Added {len(paths)} file(s) to the batch.")
+
+
+def _outputs(src: Path) -> List[Path]:
+    """The files translating ``src`` writes beside it."""
+    if is_ocr_file(src):
+        return [
+            src.with_name(f"{src.stem}.ocr.txt"),
+            src.with_name(f"{src.stem}.en.txt"),
+        ]
+    return [src.with_name(f"{src.stem}.en{src.suffix}")]
