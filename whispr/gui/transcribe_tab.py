@@ -1346,7 +1346,27 @@ class TranscribeTab:
             parent=active_window(self.root),
         )
         if path:
-            self.input_file_var.set(path)
+            self._use_single_file(Path(path))
+
+    def _use_single_file(self, path: Path) -> None:
+        """One chosen or dropped file: the input, or the next in the queue.
+
+        With a folder queued, a single file used to go into the Recording box
+        in large type while Transcribe recording ran the queue and ignored it.
+        It now joins the queue, which is what the guide promises ("add it with
+        Choose file and it will be used"), and the box never shows a file that
+        will not run.
+        """
+        if self._batch_files:
+            if path not in self._batch_files:
+                self._batch_files.append(path)
+            self._update_batch_label()
+            self.progress_label_var.set(
+                f"Added {path.name} to the queue of {len(self._batch_files)}"
+            )
+            return
+        self.input_file_var.set(str(path))
+        self.progress_label_var.set(f"Loaded {path.name}")
 
     def choose_output_dir(self) -> None:
         path = filedialog.askdirectory(parent=active_window(self.root))
@@ -2424,8 +2444,7 @@ class TranscribeTab:
         if not paths:
             return
         if len(paths) == 1 and not paths[0].is_dir():
-            self.input_file_var.set(str(paths[0]))
-            self.progress_label_var.set(f"Loaded {paths[0].name}")
+            self._use_single_file(paths[0])
         else:
             self._add_batch_paths(paths)
 
@@ -2452,6 +2471,16 @@ class TranscribeTab:
         """Add files, and the recordings inside any folders, to the queue."""
         found = folder_batch.expand(paths)
         added = 0
+        # A file already chosen as the single input goes into the queue first:
+        # once a queue exists it is all that runs, and leaving the file in the
+        # Recording box would show something that is never transcribed.
+        single = self.input_file_var.get().strip()
+        if single and found.recordings:
+            chosen = Path(single)
+            if chosen not in self._batch_files:
+                self._batch_files.append(chosen)
+                added += 1
+            self.input_file_var.set("")
         for path in found.recordings:
             if path not in self._batch_files:
                 self._batch_files.append(path)

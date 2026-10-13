@@ -408,6 +408,10 @@ hour again. If one of those is genuinely a separate recording, add it with
 written to the output folder, or beside the source if you have not set one,
 and each transcript appears as it finishes.
 
+While recordings are queued, a file you choose or drop **joins the queue**, and
+the queue is what runs. A file you had already chosen before adding a folder
+joins it too. **Clear** empties the queue and returns to single files.
+
 **Two recordings with the same name do not overwrite each other.** A case
 folder often holds `2026-09-01/interview.wav` and `2026-09-02/interview.wav`;
 their transcripts are written as `2026-09-01 - interview.wav.txt` and
