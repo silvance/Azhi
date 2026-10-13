@@ -40,6 +40,7 @@ from ..profiles import (
     PROFILE_SUFFIX,
     Profile,
     ProfileSaveError,
+    add_learned_voice,
     delete_profile,
     existing_profile_name,
     export_profile,
@@ -47,6 +48,7 @@ from ..profiles import (
     load_profile,
     read_profile_file,
     save_profile,
+    store_profile_settings,
 )
 from ..project import PROJECT_SUFFIX, load_project_record, save_project
 from ..provenance import (
@@ -90,7 +92,7 @@ from ..transcription import (
     transcribe_audio,
     usable_model_folder,
 )
-from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
+from ..voiceprints import SpeakerEmbedder, Voiceprint, enroll_spans, recognize
 from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
@@ -2711,12 +2713,19 @@ class TranscribeTab:
 
         def _worker() -> None:
             try:
-                voiceprint = profile.voiceprint_for(name)
-                added = enroll_spans(voiceprint, wav, spans, embedder)
+                learned = Voiceprint(name=name)
+                added = enroll_spans(learned, wav, spans, embedder)
                 if added:
-                    save_profile(profile)
-                    self.progress_label_var.set(
-                        f"Learned {name}'s voice (+{added} sample(s))."
+                    # Added to the profile as stored now, not to the copy held
+                    # when this started: saving that copy wrote over anything
+                    # stored in the seconds between, such as an import.
+                    stored = add_learned_voice(profile.name, name, learned.vectors)
+                    self.root.after(0, lambda: self._adopt_profile(profile, stored))
+                    self.root.after(
+                        0,
+                        lambda: self.progress_label_var.set(
+                            f"Learned {name}'s voice (+{added} sample(s))."
+                        ),
                     )
             except ProfileSaveError as exc:
                 # Learned in memory but not kept: say so, rather than
@@ -2996,6 +3005,16 @@ class TranscribeTab:
             parent=active_window(self.root),
         )
 
+    def _adopt_profile(self, held: Profile, stored: Profile) -> None:
+        """Take ``stored`` as the active profile if ``held`` still is.
+
+        Recognition reads the active profile's voices, so a voice just learned
+        has to reach it. If the operator has chosen another profile since,
+        that one stays.
+        """
+        if self._profile is held:
+            self._profile = stored
+
     def _store_profile(self, profile: Profile) -> bool:
         """Save ``profile``; on failure say so where it will be seen."""
         try:
@@ -3031,9 +3050,15 @@ class TranscribeTab:
         if profile is None:
             self.progress_label_var.set("Pick or create a profile first.")
             return
-        profile.settings = self._profile_settings()
-        if self._store_profile(profile):
-            self.progress_label_var.set(f"Saved profile '{profile.name}'.")
+        try:
+            # Into the profile as stored, so voices it has learned since it was
+            # loaded - in this window or another - are kept.
+            stored = store_profile_settings(profile.name, self._profile_settings())
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return
+        self._profile = stored
+        self.progress_label_var.set(f"Saved profile '{profile.name}'.")
 
     def _delete_profile(self) -> None:
         profile = self._profile

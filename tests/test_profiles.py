@@ -4,6 +4,7 @@ import whispr.profiles as profiles
 from whispr.profiles import (
     Profile,
     ProfileSaveError,
+    add_learned_voice,
     delete_profile,
     existing_profile_name,
     export_profile,
@@ -12,6 +13,7 @@ from whispr.profiles import (
     profile_path,
     read_profile_file,
     save_profile,
+    store_profile_settings,
 )
 from whispr.voiceprints import Voiceprint
 
@@ -185,3 +187,115 @@ def test_a_delete_that_fails_says_so(tmp_path, monkeypatch):
     with pytest.raises(ProfileSaveError) as caught:
         delete_profile("Op Alpha")
     assert "could not be deleted" in str(caught.value)
+
+
+# -- Changes applied to the stored copy (QA-35) ------------------------------
+# Learning takes seconds; saving the copy held when it started wrote over
+# anything stored in between.
+
+
+def test_a_learned_voice_is_added_to_the_copy_on_disk(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    held = Profile(name="Op Alpha", settings={"model": "small"})
+    held.voiceprint_for("Alpha").add([1.0, 0.0])
+    save_profile(held)
+    # While learning runs, the profile is replaced on disk (an import).
+    imported = Profile(name="Op Alpha", settings={"model": "medium"})
+    imported.voiceprint_for("Bravo").add([0.0, 1.0])
+    save_profile(imported)
+
+    stored = add_learned_voice("Op Alpha", "Charlie", [[0.6, 0.8]])
+
+    on_disk = load_profile("Op Alpha")
+    assert on_disk.settings == {"model": "medium"}
+    assert set(on_disk.voiceprints) == {"Bravo", "Charlie"}
+    assert on_disk.voiceprints["Charlie"].vectors == [[0.6, 0.8]]
+    assert stored.to_dict() == on_disk.to_dict()
+
+
+def test_learned_vectors_join_an_existing_voice(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    prof = Profile(name="Op")
+    prof.voiceprint_for("Alpha").add([1.0, 0.0])
+    save_profile(prof)
+    add_learned_voice("Op", "Alpha", [[0.0, 1.0]])
+    assert load_profile("Op").voiceprints["Alpha"].vectors == [[1.0, 0.0], [0.0, 1.0]]
+
+
+def test_a_voice_is_not_kept_in_a_deleted_profile(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    save_profile(Profile(name="Op"))
+    delete_profile("Op")
+    with pytest.raises(ProfileSaveError, match="no longer on this computer"):
+        add_learned_voice("Op", "Alpha", [[1.0, 0.0]])
+    # Not recreated by the learning run.
+    assert list_profiles() == []
+
+
+def test_a_voice_is_not_kept_in_a_profile_replaced_under_another_name(
+    tmp_path, monkeypatch
+):
+    _isolate(tmp_path, monkeypatch)
+    save_profile(Profile(name="Op Alpha"))
+    save_profile(Profile(name="op alpha"))  # same file, confirmed by the operator
+    with pytest.raises(ProfileSaveError, match="replaced by \u2018op alpha\u2019"):
+        add_learned_voice("Op Alpha", "Alpha", [[1.0, 0.0]])
+    assert load_profile("op alpha").voiceprints == {}
+
+
+def test_an_unreadable_profile_is_left_as_it_is(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    path = profile_path("Op")
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ProfileSaveError, match="could not be read"):
+        add_learned_voice("Op", "Alpha", [[1.0, 0.0]])
+    with pytest.raises(ProfileSaveError, match="could not be read"):
+        store_profile_settings("Op", {"model": "small"})
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_saving_settings_keeps_voices_learned_elsewhere(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    save_profile(Profile(name="Op", settings={"model": "small"}))
+    # Another window learns a voice after this one loaded the profile.
+    add_learned_voice("Op", "Alpha", [[1.0, 0.0]])
+
+    stored = store_profile_settings("Op", {"model": "medium"})
+
+    on_disk = load_profile("Op")
+    assert on_disk.settings == {"model": "medium"}
+    assert set(on_disk.voiceprints) == {"Alpha"}
+    assert stored.to_dict() == on_disk.to_dict()
+
+
+def test_two_learning_runs_finishing_together_both_keep_their_voices(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    _isolate(tmp_path, monkeypatch)
+    save_profile(Profile(name="Op"))
+    real_load = profiles.load_profile
+    both_loaded = threading.Barrier(2, timeout=0.5)
+
+    def slow_load(name):
+        loaded = real_load(name)
+        try:
+            # Without the lock both runs read the same copy here, and the
+            # second save drops the first run's voice.
+            both_loaded.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return loaded
+
+    monkeypatch.setattr(profiles, "load_profile", slow_load)
+    runs = [
+        threading.Thread(target=add_learned_voice, args=("Op", speaker, [[1.0, 0.0]]))
+        for speaker in ("Alpha", "Bravo")
+    ]
+    for run in runs:
+        run.start()
+    for run in runs:
+        run.join()
+    assert set(real_load("Op").voiceprints) == {"Alpha", "Bravo"}

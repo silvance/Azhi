@@ -17,9 +17,10 @@ read-only config dir just means profiles can't be saved, never a crash.
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from .atomicio import write_json_atomic
 from .settings import settings_path
@@ -147,6 +148,69 @@ def save_profile(profile: Profile) -> Path:
             f"The profile \u2018{profile.name}\u2019 could not be saved to "
             f"{path}: {exc.strerror or exc}."
         ) from exc
+
+
+# One read-change-write at a time, so two learning runs finishing together
+# cannot each re-read the same copy and keep only the last one's voices.
+_UPDATE_LOCK = threading.Lock()
+
+
+def _stored_for_update(name: str) -> Profile:
+    """The stored profile ``name``, re-read now, for a change to be applied to.
+
+    Raises :class:`ProfileSaveError` when there is nothing safe to change: the
+    file has gone, cannot be read (it is left as it is), or now holds a
+    different profile because it was replaced under another name.
+    """
+    path = profile_path(name)
+    stored = load_profile(name)
+    if stored is None:
+        if path.exists():
+            raise ProfileSaveError(
+                f"The profile \u2018{name}\u2019 could not be read, so it was "
+                "left as it is."
+            )
+        raise ProfileSaveError(
+            f"The profile \u2018{name}\u2019 is no longer on this computer."
+        )
+    if stored.name != name:
+        raise ProfileSaveError(
+            f"The profile \u2018{name}\u2019 has been replaced by "
+            f"\u2018{stored.name}\u2019. Choose that profile to go on."
+        )
+    return stored
+
+
+def add_learned_voice(
+    name: str, speaker: str, vectors: Sequence[Sequence[float]]
+) -> Profile:
+    """Add newly learned ``vectors`` for ``speaker`` to the stored profile ``name``.
+
+    The profile is re-read first and only that speaker's voice changes. Learning
+    takes a few seconds, and saving the copy held when it started wrote over
+    whatever was stored in between - an import, a replacement, another window's
+    learning - without a word. Returns the profile as saved.
+    """
+    with _UPDATE_LOCK:
+        stored = _stored_for_update(name)
+        voiceprint = stored.voiceprint_for(speaker)
+        for vector in vectors:
+            voiceprint.add(vector)
+        save_profile(stored)
+    return stored
+
+
+def store_profile_settings(name: str, settings: Dict[str, object]) -> Profile:
+    """Replace the stored profile's settings, keeping the voices it has learned.
+
+    The voices are the ones on disk now, not the ones in memory, for the same
+    reason as :func:`add_learned_voice`. Returns the profile as saved.
+    """
+    with _UPDATE_LOCK:
+        stored = _stored_for_update(name)
+        stored.settings = dict(settings)
+        save_profile(stored)
+    return stored
 
 
 def delete_profile(name: str) -> None:
