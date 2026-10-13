@@ -16,7 +16,7 @@ import os
 import threading
 import tkinter as tk
 from functools import partial
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Dict
 
@@ -30,9 +30,9 @@ from ..resources import (
     configure_offline_translation,
     find_ffmpeg,
 )
-from ..settings import load_settings, save_settings
+from ..settings import SettingsError, load_settings, update_settings
 from .comparison_log_tab import ComparisonLogTab
-from .dialogs import present
+from .dialogs import active_window, present
 from .live_tab import LiveTab
 from .speaker_compare_tab import SpeakerCompareTab
 from .speaker_profiles_tab import SpeakerProfilesTab
@@ -396,8 +396,14 @@ class WhisprApp:
     def _on_close(self) -> None:
         """Persist preferences, then close the window."""
         try:
-            save_settings({"transcribe": self.transcribe.get_settings()})
-        except Exception:  # noqa: BLE001 - never block closing on a save failure
+            update_settings("transcribe", self.transcribe.get_settings())
+        except SettingsError as exc:
+            # Said, not swallowed - but closing still goes ahead: losing the
+            # remembered options is not worth keeping someone in the app.
+            messagebox.showwarning(
+                "Settings not saved", str(exc), parent=active_window(self.root)
+            )
+        except Exception:  # noqa: BLE001 - never block closing on anything else
             pass
         # Release any tab resources (e.g. a running live ffmpeg session).
         for tab in self._tabs:

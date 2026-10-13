@@ -3,6 +3,7 @@ import json
 import pytest
 
 import whispr.speaker_profiles as sp
+from whispr import atomicio
 from whispr.speaker_profiles import (
     SAMPLE_LEARNED,
     SAMPLE_REFERENCE,
@@ -80,7 +81,8 @@ def test_save_is_atomic_no_partial_file_on_failure(tmp_path, monkeypatch):
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
-    monkeypatch.setattr(sp.os, "replace", _boom)
+    # The atomic writer lives in whispr.atomicio; fail its replace step.
+    monkeypatch.setattr(atomicio.os, "replace", _boom)
     with pytest.raises(ProfileError):
         save_speaker_profile(profile, path)
     assert path.read_text(encoding="utf-8") == original

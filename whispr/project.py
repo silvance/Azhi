@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
+from .atomicio import write_json_atomic
 from .provenance import AnalysisProvenance
-from .speaker_profiles import write_json_atomic
 from .transcription import Segment, TranscriptionResult, Word
 
 PathLike = Union[str, Path]

@@ -1,9 +1,16 @@
-"""Persist a few GUI preferences between launches (best-effort, never fatal).
+"""Persist GUI preferences, and administrator settings, between launches.
 
-Stores a small JSON file in the user's config location so the last-used model,
-output folder and options are remembered. All operations swallow errors: a
-read-only or missing config dir just means settings aren't remembered, never a
-crash.
+One small JSON file in the user's config location holds the last-used model,
+output folder and options *and* anything an administrator configured there -
+the comparison thresholds, which the Thresholds dialog tells them to set in
+this file. So the file is shared, and writing it means changing one section and
+keeping the rest.
+
+Reading stays forgiving: a missing or unreadable file means nothing is
+remembered, never a crash at startup. Writing does not: a save that fails is
+reported to the caller, so the operator can be told, and a file that cannot be
+read is left alone rather than replaced - it may hold an administrator's
+thresholds that a corrupt byte has made unreadable.
 """
 
 from __future__ import annotations
@@ -12,6 +19,12 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict
+
+from .atomicio import write_json_atomic
+
+
+class SettingsError(OSError):
+    """Settings could not be saved, in words an operator can act on."""
 
 
 def settings_path() -> Path:
@@ -32,13 +45,35 @@ def load_settings() -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def save_settings(data: Dict[str, Any]) -> None:
-    """Write ``data`` as JSON to the settings file (best-effort)."""
+def update_settings(section: str, value: Any) -> Path:
+    """Replace one section of the settings file and keep every other.
+
+    Closing the application used to write ``{"transcribe": ...}`` over the
+    whole file, which erased the comparison thresholds an administrator had
+    configured in it: the next session quietly went back to the defaults. It
+    also wrote in place, and swallowed any error.
+
+    Raises :class:`SettingsError` when the file cannot be written, or when it
+    exists but cannot be read - overwriting that would destroy whatever it held.
+    """
+    path = settings_path()
+    data: Dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise SettingsError(
+                f"The settings file {path} could not be read, so it was left as "
+                "it is rather than replaced. Your choices from this session were "
+                f"not saved. ({exc})"
+            ) from exc
+        if isinstance(loaded, dict):
+            data = loaded
+    data[section] = value
     try:
-        path = settings_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    except OSError:
-        pass
+        return write_json_atomic(path, data)
+    except OSError as exc:
+        raise SettingsError(
+            f"Your settings could not be saved to {path}: "
+            f"{exc.strerror or exc}. They will not be remembered next time."
+        ) from exc

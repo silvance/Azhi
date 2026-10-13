@@ -30,9 +30,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from .atomicio import write_json_atomic
 from .buildinfo import UNKNOWN as UNKNOWN_BUILD
 from .settings import settings_path
-from .speaker_profiles import ProfileError, SpeakerProfile, write_json_atomic
+from .speaker_profiles import ProfileError, SpeakerProfile
 from .thresholds import BAND_INSUFFICIENT, OUTCOME_LEAD, OUTCOME_NO_LEAD
 
 if TYPE_CHECKING:  # pragma: no cover - typing only

@@ -1,5 +1,6 @@
 import json
 
+from whispr import atomicio
 from whispr.buildinfo import UNKNOWN, BuildInfo, build_info
 from whispr.hashing import sha256_bytes, sha256_file, sha256_file_or_none, short
 from whispr.project import (
@@ -256,7 +257,6 @@ def test_project_without_provenance_saves_cleanly(tmp_path):
 
 
 def test_project_save_is_atomic(tmp_path, monkeypatch):
-    import whispr.speaker_profiles as sp
 
     path = tmp_path / "case.whispr.json"
     save_project(path, _result(), None, "op.wav")
@@ -265,7 +265,8 @@ def test_project_save_is_atomic(tmp_path, monkeypatch):
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
-    monkeypatch.setattr(sp.os, "replace", _boom)
+    # The atomic writer lives in whispr.atomicio; fail its replace step.
+    monkeypatch.setattr(atomicio.os, "replace", _boom)
     try:
         save_project(path, _result(), None, "changed.wav")
     except OSError:
