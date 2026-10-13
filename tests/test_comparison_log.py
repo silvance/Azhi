@@ -109,7 +109,11 @@ def test_gallery_record_keeps_the_whole_ranking():
     # The runner-up matters: a thin margin should still read as thin later.
     assert record.ranked[1].score == pytest.approx(0.41)
     assert record.subjects_searched == 2
-    assert record.subject_label == "A. Subject"
+    # No decision accepted A. Subject, so the search found no lead and is not
+    # filed under anyone. This used to assert "A. Subject" - the top-ranked
+    # name - which is how History came to list recordings under a subject no
+    # lead was ever found for.
+    assert record.subject_label == "(all subjects)"
 
 
 def test_gallery_record_carries_the_reason_it_supports_nothing():
@@ -372,3 +376,94 @@ def test_the_exported_csv_names_the_build():
         rows = list(csv.reader(out.read_text(encoding="utf-8").splitlines()))
     assert "build_id" in rows[0] and "git_commit" in rows[0]
     assert "4242-1" in rows[1] and "abc1234" in rows[1]
+
+
+# -- A gallery search records its decision, not its top entry's band --------
+#
+# QA found a search the Compare page reported as "no lead" listed in History as
+# "Viktor Marchenko | 0.71 | High similarity", filed under him, with the same
+# band in the CSV. A search on too little audio was listed the same way.
+
+
+def _search(*, accepted, inadequate="", top=0.71):
+    from whispr.voiceprints import MatchDecision
+
+    return GalleryResult(
+        matches=[
+            GalleryMatch("subj_1", "Viktor Marchenko", top, "High similarity"),
+            GalleryMatch("subj_2", "Anna Petrova", 0.67, "High similarity"),
+        ],
+        searched=2,
+        inadequate_reason=inadequate,
+        decision=MatchDecision(
+            best_name="Viktor Marchenko",
+            best_score=top,
+            second_name="Anna Petrova",
+            second_score=0.67,
+            accepted=accepted,
+        ),
+    )
+
+
+def test_a_search_that_found_no_lead_records_no_lead():
+    record = record_from_gallery(_search(accepted=False))
+    assert record.band == "No lead"
+    assert record.outcome == "No lead"
+    assert record.subject_label == "(all subjects)"
+    assert record.lead_name == ""
+    assert record.score == pytest.approx(0.71), "the top score is a fact and stays"
+
+
+def test_a_search_that_found_a_lead_is_filed_under_it():
+    record = record_from_gallery(_search(accepted=True))
+    assert record.lead_name == "Viktor Marchenko"
+    assert record.subject_label == "Viktor Marchenko"
+    assert record.outcome == "Lead: Viktor Marchenko"
+
+
+def test_a_search_on_too_little_audio_is_insufficient_and_names_nobody():
+    record = record_from_gallery(
+        _search(accepted=True, inadequate="Only 1.8s of usable speech.", top=0.83)
+    )
+    assert record.band == "Insufficient data"
+    assert record.lead_name == ""
+    assert record.subject_label == "(all subjects)"
+
+
+def test_the_decision_survives_a_round_trip():
+    record = record_from_gallery(_search(accepted=True))
+    again = ComparisonRecord.from_dict(record.to_dict())
+    assert again.lead_name == "Viktor Marchenko"
+    assert again.outcome == "Lead: Viktor Marchenko"
+    assert again.schema_version == record.schema_version
+
+
+def test_an_older_gallery_record_does_not_claim_an_outcome_it_never_stored():
+    """Schema 2 kept the top entry's band, which cannot be turned into a decision."""
+    data = record_from_gallery(_search(accepted=False)).to_dict()
+    data["schema_version"] = 2
+    data["band"] = "High similarity"
+    data.pop("lead_name")
+    old = ComparisonRecord.from_dict(data)
+    assert old.schema_version == 2, "a record keeps the version it was written at"
+    assert old.outcome == "Search outcome not recorded"
+    assert old.subject_label == "(all subjects)"
+
+
+def test_the_csv_carries_the_decision(tmp_path):
+    import csv
+
+    record = record_from_gallery(_search(accepted=False))
+    path = export_csv([record], tmp_path / "history.csv")
+    with path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["assessment"] == "No lead"
+
+
+def test_no_gallery_wording_says_match():
+    from whispr.thresholds import NO_LEAD_EXPLAINED
+
+    lines = _search(accepted=False).summary_lines()
+    assert NO_LEAD_EXPLAINED in lines
+    for line in lines:
+        assert "match" not in line.lower(), line

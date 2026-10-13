@@ -342,7 +342,16 @@ properly and expect to find something.
 - [ ] With no reference selected, stage 1 says where to create one.
 - [ ] **High similarity:** the band is the largest thing on the result, the
       sentence reads as a lead, and the score reads `0.78 / 1.00`.
-- [ ] **Low similarity** and **no sufficiently strong match** read plainly.
+- [ ] **Low similarity**, and a search that found **No lead**, read plainly.
+      Nowhere on the page or in History does a result use the word "match".
+- [ ] Run a **gallery search** that finds no lead, then open **Comparison
+      History**. The row is filed under **(all subjects)**, not under whoever
+      ranked first, and its assessment reads **No lead** — not "High
+      similarity". Filtering History by that subject does not list it.
+- [ ] A gallery search that *does* find a lead is filed under that subject
+      and reads **Lead: <name>**, in the accent colour, never green.
+- [ ] A gallery search on too little audio reads **Insufficient data** in
+      History and is filed under nobody.
 - [ ] **Insufficient data** visually outranks the score: the band says so and
       the sentence says the score is not meaningful, even when the number is
       high.

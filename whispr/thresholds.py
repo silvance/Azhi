@@ -55,6 +55,17 @@ BAND_INTERMEDIATE = "Intermediate similarity"
 BAND_LOW = "Low similarity"
 BAND_INSUFFICIENT = "Insufficient data"
 
+# What a gallery search concluded. A search ranks every profile, so the top
+# entry always has *some* band - but the conclusion is whether one profile was
+# similar enough and clearly enough ahead of the rest to be worth following up.
+# These name that conclusion, never the top entry's band.
+OUTCOME_LEAD = "Lead"
+OUTCOME_NO_LEAD = "No lead"
+NO_LEAD_EXPLAINED = (
+    "No lead \u2014 no profile was similar enough, and clearly enough ahead of "
+    "the rest, to be worth following up."
+)
+
 DISCLAIMER = (
     "Speaker similarity results produced by Whispers are investigative "
     "indicators intended to support lead development and analyst review. They "

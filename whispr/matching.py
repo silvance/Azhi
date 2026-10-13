@@ -36,6 +36,7 @@ from .speaker_profiles import (
 from .thresholds import (
     BAND_INSUFFICIENT,
     DISCLAIMER,
+    NO_LEAD_EXPLAINED,
     Thresholds,
     active,
 )
@@ -386,7 +387,7 @@ class GalleryResult:
                 f"{self.accepted_name} reference profile. Further review is warranted."
             )
         else:
-            lines.append("No known profile produced a sufficiently strong match.")
+            lines.append(NO_LEAD_EXPLAINED)
         if self.decision is not None and self.decision.reason:
             lines.append(self.decision.reason)
         for reason in self.skipped:

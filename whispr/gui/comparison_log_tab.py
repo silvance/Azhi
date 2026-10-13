@@ -633,7 +633,16 @@ def _score(record: ComparisonRecord) -> str:
 def _band(record: ComparisonRecord) -> str:
     if record.refused:
         return "Not compared"
-    return record.band or BAND_INSUFFICIENT
+    # The record's conclusion. For a gallery search that is the decision -
+    # Lead, No lead, Insufficient data - and never the top entry's band.
+    return record.outcome or BAND_INSUFFICIENT
+
+
+def _is_lead(record: ComparisonRecord) -> bool:
+    """A one-to-one at High similarity, or a gallery search that found a lead."""
+    if record.kind == KIND_GALLERY:
+        return bool(record.lead_name)
+    return record.band == BAND_HIGH
 
 
 def _tags(record: ComparisonRecord) -> "Tuple[str, ...]":
@@ -641,7 +650,7 @@ def _tags(record: ComparisonRecord) -> "Tuple[str, ...]":
         return ("refused",)
     if record.band == BAND_INSUFFICIENT:
         return ("insufficient",)
-    if record.band == BAND_HIGH:
+    if _is_lead(record):
         return ("high",)
     return ()
 
@@ -651,9 +660,9 @@ def _headline_style(record: ComparisonRecord) -> str:
         return Style.DANGER
     if record.band == BAND_INSUFFICIENT:
         return Style.WARNING
-    # High similarity is deliberately not green: green reads as "confirmed",
-    # and a similarity score is never a confirmation of identity.
-    if record.band == BAND_HIGH:
+    # A lead is deliberately not green: green reads as "confirmed", and a
+    # similarity score is never a confirmation of identity.
+    if _is_lead(record):
         return Style.ACCENT
     return Style.SECTION_TITLE
 

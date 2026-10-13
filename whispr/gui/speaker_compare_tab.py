@@ -64,6 +64,8 @@ from ..thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
     DISCLAIMER,
+    NO_LEAD_EXPLAINED,
+    OUTCOME_NO_LEAD,
     active,
     describe_active,
 )
@@ -870,8 +872,8 @@ class SpeakerCompareTab:
                 "warranted."
             )
         else:
-            self._set_band("No sufficiently strong match", Style.BODY)
-            self.lead_var.set("No known profile produced a sufficiently strong match.")
+            self._set_band(OUTCOME_NO_LEAD, Style.BODY)
+            self.lead_var.set(NO_LEAD_EXPLAINED)
         top = result.matches[0] if result.matches else None
         self._result_rows["score"].set(
             f"{top.score:.2f} / 1.00 ({top.display_name})" if top else "—"

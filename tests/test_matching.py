@@ -19,6 +19,7 @@ from whispr.thresholds import (
     BAND_INTERMEDIATE,
     BAND_LOW,
     DISCLAIMER,
+    NO_LEAD_EXPLAINED,
 )
 
 MODEL = EmbeddingModelIdentity(
@@ -283,9 +284,7 @@ def test_gallery_refuses_ambiguous_top_two():
         questioned_model=MODEL,
     )
     assert result.accepted_name is None
-    assert "No known profile produced a sufficiently strong match." in "\n".join(
-        result.summary_lines()
-    )
+    assert NO_LEAD_EXPLAINED in "\n".join(result.summary_lines())
 
 
 def test_gallery_reports_nothing_when_all_below_threshold():
