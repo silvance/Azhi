@@ -2403,8 +2403,20 @@ class TranscribeTab:
         self._update_redo_state()
         # That caveat was about the run this transcript did not come from.
         self._set_result_caveat("")
+        # So were the output names, the summary line above the transcript and
+        # the banner. Left standing, the page described the previous recording
+        # - its name, language and length, and a green "complete" - over a
+        # transcript of a different one.
+        self._output_names = {}
         self.transcript_view.set_result(result, self._speaker_names)
         self._refresh_lead_legend()
+        self._describe_result()
+        recording = self._result_source.name if self._result_source else None
+        self.banner.show(
+            "info",
+            f"Opened {Path(path).name}"
+            + (f" \u2014 the transcript of {recording}." if recording else "."),
+        )
         self.progress_label_var.set(f"Opened {Path(path).name}")
 
     def _on_drop_media(self, paths: List[Path]) -> None:
