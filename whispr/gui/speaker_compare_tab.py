@@ -171,14 +171,6 @@ class SpeakerCompareTab:
         self._build_questioned_step(container)
         self._build_action_step(container)
         self._build_result_step(container)
-
-        # A failure has to be visible on the page, not only in the status line.
-        self.banner = StatusBanner(container, wraplength=680)
-        self._status_label = ttk.Label(
-            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
-        )
-        self._status_label.pack(anchor="w", pady=(SPACE_MD, 0))
-        self.banner.insert_before(self._status_label)
         bind_wheel(canvas, container)
 
     # -- Step 1: the known person -----------------------------------------
@@ -274,6 +266,16 @@ class SpeakerCompareTab:
         )
         self._gallery_button.pack(side="left", padx=(SPACE_SM, 0))
         subtle_button(actions, "Thresholds…", self._show_thresholds).pack(side="right")
+
+        # Under the buttons that cause them. At the foot of the page, "Select a
+        # reference subject first." and save failures were below the fold.
+        self._status_label = ttk.Label(
+            parent, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
+        )
+        self._status_label.pack(anchor="w", pady=(SPACE_SM, 0))
+        # A failure has to be visible on the page, not only in the status line.
+        self.banner = StatusBanner(parent, wraplength=680)
+        self.banner.insert_before(self._status_label)
 
         advanced = Disclosure(parent, "Advanced")
         advanced.pack(fill="x", pady=(SPACE_SM, 0))
@@ -1064,7 +1066,7 @@ class SpeakerCompareTab:
                 comparisons=entries,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
-            self._status(friendly_error(exc))
+            self._fail(exc)
             return
         count = len(entries)
         what = "1 result" if count == 1 else f"{count} results"

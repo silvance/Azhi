@@ -119,6 +119,7 @@ from .widgets import (
     danger_button,
     primary_button,
     register_drop,
+    scroll_into_view,
     scrollable_body,
     secondary_button,
     style_text_widget,
@@ -378,6 +379,7 @@ class TranscribeTab:
 
     def _build(self) -> None:
         transcribe_canvas, container = scrollable_body(self.parent)
+        self._page_canvas = transcribe_canvas
         self._page = container
 
         PageHeader(
@@ -1237,7 +1239,30 @@ class TranscribeTab:
 
     def _announce(self, kind: str, message: str) -> None:
         """Put a result or a failure where it cannot be scrolled past."""
-        self.root.after(0, lambda: self.banner.show(kind, message))
+
+        def _do() -> None:
+            self.banner.show(kind, message)
+            scroll_into_view(self._page_canvas, self.banner)
+
+        self.root.after(0, _do)
+
+    def _report_saved(self, path: str) -> None:
+        """A save the operator asked for: say where it went, in the banner."""
+        target = Path(path)
+        self._announce("success", f"Saved {target.name} in {target.parent}.")
+        self.progress_label_var.set(f"Saved {target.name}")
+
+    def _report_not_saved(self, what: str, exc: Exception) -> None:
+        """A save or open that failed, where it will be seen.
+
+        These went only to the small line under the progress bar, which is not
+        on screen with the transcript popped out or the page scrolled down to
+        the export buttons.
+        """
+        message = f"{what}. {friendly_error(exc)}"
+        append_line(self.status, message)
+        self._announce("error", message)
+        self.progress_label_var.set(what)
 
     def _set_result_caveat(self, message: str) -> None:
         """Carry a completion warning into the transcript card itself."""
@@ -2126,7 +2151,25 @@ class TranscribeTab:
         self._speaker_edits += 1
         self._update_redo_state()
         if self._result is not None and self._result_source and self._result_outdir:
-            self._save_outputs(self._result, self._result_source, self._result_outdir)
+            self._resave_outputs()
+
+    def _resave_outputs(self) -> None:
+        """Write the transcript again after a correction or a redo.
+
+        A failure here went only to the Status tab: the correction stayed on
+        screen and the file on disk silently kept the old version.
+        """
+        result, source, outdir = self._result, self._result_source, self._result_outdir
+        if result is None or source is None or outdir is None:
+            return
+        if self._save_outputs(result, source, outdir) is False:
+            reason = self._failed_saves[-1].reason if self._failed_saves else ""
+            self._announce(
+                "error",
+                f"The change is on screen, but the saved transcript in {outdir} "
+                f"still has the old version ({reason.rstrip('.')}). Use Save as "
+                "Word… or Save project… to keep it somewhere else.",
+            )
 
     # -- Redoing the speaker split -----------------------------------------
 
@@ -2260,8 +2303,7 @@ class TranscribeTab:
             self.transcript_view.set_result(result, names)
             self._refresh_lead_legend()
             self._record_redo_provenance(requested)
-            if self._result_source and self._result_outdir:
-                self._save_outputs(result, self._result_source, self._result_outdir)
+            self._resave_outputs()
             people = "speaker" if found == 1 else "speakers"
             message = f"Split again into {found} {people}."
             append_line(self.status, message)
@@ -2370,9 +2412,9 @@ class TranscribeTab:
                 self._speaker_names,
                 blank_lines=self.blank_lines_var.get(),
             )
-            self.progress_label_var.set(f"Saved {Path(path).name}")
+            self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The Word document was not saved", exc)
 
     def current_analysis(
         self,
@@ -2410,9 +2452,9 @@ class TranscribeTab:
                 speaker_names=self._speaker_names,
                 provenance=self._result_provenance,
             )
-            self.progress_label_var.set(f"Saved {Path(path).name}")
+            self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The analysis report was not saved", exc)
 
     def _save_project(self) -> None:
         """Save the result + speaker edits to a reloadable project file."""
@@ -2441,9 +2483,9 @@ class TranscribeTab:
                 self._result_source,
                 self._result_provenance,
             )
-            self.progress_label_var.set(f"Saved {Path(path).name}")
+            self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The project was not saved", exc)
 
     def _open_project(self) -> None:
         """Load a saved project so its transcript can be reviewed/edited again."""
@@ -2466,7 +2508,7 @@ class TranscribeTab:
             source = record.source
             self._result_provenance = record.provenance
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The project could not be opened", exc)
             return
         self._result = result
         self._speaker_names = speaker_names
@@ -3188,11 +3230,9 @@ class TranscribeTab:
             return
         try:
             export_profile(profile, path)
-            self.progress_label_var.set(
-                f"Exported '{profile.name}' to {Path(path).name}"
-            )
+            self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The profile was not exported", exc)
 
     def _import_profile(self) -> None:
         """Load a profile exported from another instance and add it here."""
@@ -3209,7 +3249,7 @@ class TranscribeTab:
         try:
             profile = read_profile_file(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.progress_label_var.set(friendly_error(exc))
+            self._report_not_saved("The profile could not be imported", exc)
             return
         # Don't silently clobber a profile already on this machine - including
         # one stored under the same file name with different capitals, or one

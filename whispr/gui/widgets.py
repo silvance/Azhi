@@ -39,6 +39,29 @@ _SYNC_INTERVAL_MS = 150
 _WHEEL_REBINDERS: "Dict[str, Callable[[], None]]" = {}
 
 
+def scroll_into_view(canvas: tk.Canvas, widget: tk.Misc) -> None:
+    """Scroll a :func:`scrollable_body` canvas until ``widget`` is on screen.
+
+    A banner announcing a failed save was packed in the right place and still
+    unseen: with the settings open, the page was scrolled to show them.
+    """
+    try:
+        canvas.update_idletasks()
+        box = canvas.bbox("all")
+        if not box or not widget.winfo_ismapped():
+            return
+        content = box[3] - box[1]
+        top = widget.winfo_rooty() - canvas.winfo_rooty()
+        if content <= 0 or (
+            top >= 0 and top + widget.winfo_height() <= canvas.winfo_height()
+        ):
+            return
+        target = canvas.canvasy(0) + top - SPACE_MD
+        canvas.yview_moveto(max(0.0, target / content))
+    except tk.TclError:  # pragma: no cover - the window is closing
+        return
+
+
 def scrollable_body(parent: tk.Misc) -> "tuple[tk.Canvas, ttk.Frame]":
     """Wrap a scrollable region in ``parent`` and return ``(canvas, inner)``.
 

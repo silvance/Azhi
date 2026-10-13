@@ -102,6 +102,15 @@ class SpeakerProfilesTab:
             "already have.",
         ).pack(fill="x", pady=(0, SPACE_LG))
 
+        # At the top, not the foot of the page: below a long sample list the
+        # result of an enrolment, or why it failed, was out of sight.
+        self._status_label = ttk.Label(
+            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
+        )
+        self._status_label.pack(anchor="w", pady=(0, SPACE_MD))
+        self.banner = StatusBanner(container)
+        self.banner.insert_before(self._status_label)
+
         # Master and detail: who exists on the left, everything about the
         # selected person on the right. At 1366 wide both fit; the list is kept
         # narrow so the detail - which is where the work happens - gets the room.
@@ -113,11 +122,6 @@ class SpeakerProfilesTab:
 
         self._build_subject_list(columns)
         self._build_detail(columns)
-
-        self.banner = StatusBanner(container)
-        ttk.Label(
-            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
-        ).pack(anchor="w", pady=(SPACE_MD, 0))
         bind_wheel(canvas, container)
 
     def _build_subject_list(self, parent: tk.Misc) -> None:
@@ -720,7 +724,10 @@ class SpeakerProfilesTab:
                 progress=self._status,
             )
             if result.added:
-                self._save(profile)
+                # Not self._save(): that puts up a message box, and this is a
+                # worker thread. A ProfileError lands in the handler below.
+                save_speaker_profile(profile)
+                self.root.after(0, self._announce_change)
             self.root.after(0, self.refresh)
             quality = result.quality.assessment if result.quality else "n/a"
             message = (
@@ -736,7 +743,9 @@ class SpeakerProfilesTab:
                 f"{profile.display_name}."
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
-            self._status(friendly_error(exc))
+            self._fail(
+                f"Nothing was added to {profile.display_name}. {friendly_error(exc)}"
+            )
         finally:
             if temporary and wav is not None:
                 try:
@@ -783,6 +792,11 @@ class SpeakerProfilesTab:
 
     def _status(self, message: str) -> None:
         self.root.after(0, lambda: self.status_var.set(message))
+
+    def _fail(self, message: str) -> None:
+        """A failure, in the banner as well as the status line (any thread)."""
+        self._status(message)
+        self.root.after(0, lambda: self.banner.show("error", message))
 
     def get_settings(self) -> dict:
         return {}
