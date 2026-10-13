@@ -223,6 +223,9 @@ class TranslateTab:
 
     # -- Cancellation ------------------------------------------------------
 
+    def is_busy(self) -> bool:
+        return self._busy
+
     def _cancel(self) -> None:
         """Ask this page's job to stop at its next checkpoint."""
         if not self._busy:

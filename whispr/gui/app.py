@@ -384,6 +384,21 @@ class WhisprApp:
 
     def _on_close(self) -> None:
         """Persist preferences, then close the window."""
+        # Closing used to end a ninety-minute run, or discard corrections never
+        # saved as a project, without a word.
+        losses = [self.transcribe.busy_description()]
+        translate = getattr(self, "translate", None)
+        if translate is not None and translate.is_busy():
+            losses.append("A translation is still running and will be lost.")
+        losses = [loss for loss in losses if loss]
+        if losses and not messagebox.askyesno(
+            "Close Whispers?",
+            "\n\n".join(losses) + "\n\nClose anyway?",
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        ):
+            return
         try:
             saved = update_settings("transcribe", self.transcribe.get_settings())
             if saved.set_aside is not None:

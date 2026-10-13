@@ -324,6 +324,9 @@ class TranscribeTab:
         self._diarized_count = 0
         # Speaker tags changed by hand since that run - what redoing it spends.
         self._speaker_edits = 0
+        # Corrections not yet kept anywhere (a project, a Word file or the
+        # output folder), so closing the window can ask first.
+        self._unsaved_edits = 0
         # Recordings this run's silence filter mostly passed over, in order.
         self._skipped_much: "List[SkippedRun]" = []
         # Queued recordings that were not there when the run reached them.
@@ -1246,6 +1249,17 @@ class TranscribeTab:
 
         self.root.after(0, _do)
 
+    def busy_description(self) -> Optional[str]:
+        """What closing the window now would lose, in words, or None."""
+        if self._busy:
+            return "A transcription is still running and will be lost."
+        if self._unsaved_edits:
+            return (
+                f"{self._unsaved_edits} speaker correction(s) have not been saved. "
+                "Save project… keeps them."
+            )
+        return None
+
     def _report_saved(self, path: str) -> None:
         """A save the operator asked for: say where it went, in the banner."""
         target = Path(path)
@@ -1576,6 +1590,7 @@ class TranscribeTab:
         self._failed_files = []
         self._failed_saves = []
         self._output_names = {}
+        self._unsaved_edits = 0
         self._set_result_caveat("")
         try:
             # The names belonged to the transcript being cleared; left in
@@ -2152,6 +2167,8 @@ class TranscribeTab:
         self._update_redo_state()
         if self._result is not None and self._result_source and self._result_outdir:
             self._resave_outputs()
+        else:
+            self._unsaved_edits += 1
 
     def _resave_outputs(self) -> None:
         """Write the transcript again after a correction or a redo.
@@ -2298,6 +2315,7 @@ class TranscribeTab:
             # The hand corrections were made against the old split and are gone
             # with it; the operator was told so before this started.
             self._speaker_edits = 0
+            self._unsaved_edits = 0
             names = self._preset_names_for(result, typed_names=False)
             self._speaker_names = names
             self.transcript_view.set_result(result, names)
@@ -2412,6 +2430,7 @@ class TranscribeTab:
                 self._speaker_names,
                 blank_lines=self.blank_lines_var.get(),
             )
+            self._unsaved_edits = 0
             self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self._report_not_saved("The Word document was not saved", exc)
@@ -2483,6 +2502,7 @@ class TranscribeTab:
                 self._result_source,
                 self._result_provenance,
             )
+            self._unsaved_edits = 0
             self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self._report_not_saved("The project was not saved", exc)
@@ -2527,6 +2547,7 @@ class TranscribeTab:
         self._undiarized_segments = None
         self._diarized_count = 0
         self._speaker_edits = 0
+        self._unsaved_edits = 0
         self._speaker_choice_used = SPEAKERS_UNSET
         self._update_redo_state()
         # That caveat was about the run this transcript did not come from.
