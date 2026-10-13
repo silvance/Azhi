@@ -158,6 +158,8 @@ class SpeakerCompareTab:
 
         self._build()
         self.refresh()
+        self.reference_var.trace_add("write", lambda *_: self._update_action_state())
+        self._update_action_state()
 
     # -- UI ----------------------------------------------------------------
 
@@ -279,6 +281,11 @@ class SpeakerCompareTab:
         )
         self._gallery_button.pack(side="left", padx=(SPACE_SM, 0))
         subtle_button(actions, "Thresholds…", self._show_thresholds).pack(side="right")
+        # What is still missing, beside the buttons it holds back.
+        self._action_hint_var = tk.StringVar(value="")
+        ttk.Label(actions, textvariable=self._action_hint_var, style=Style.META).pack(
+            side="left", padx=(SPACE_MD, 0)
+        )
 
         # Under the buttons that cause them. At the foot of the page, "Select a
         # reference subject first." and save failures were below the fold.
@@ -554,18 +561,42 @@ class SpeakerCompareTab:
         self._update_action_state()
 
     def _update_action_state(self) -> None:
-        """Compare and Search stay off while a derived copy is chosen."""
-        refused = self._questioned_refusal(self.questioned_var.get().strip())
-        # Not while a comparison is running. Choosing another recording
-        # mid-run used to switch both back on, so a second comparison could
-        # start on top of the first.
-        state = "disabled" if refused or self._measuring else "normal"
+        """Compare and Search are on only when they can run.
+
+        Off while a derived copy is chosen, while a comparison is running
+        (choosing another recording mid-run used to switch both back on), and
+        until what each needs is chosen - Compare a reference and a recording,
+        Search only the recording - with the missing piece named beside them.
+        """
+        path = self.questioned_var.get().strip()
+        refused = self._questioned_refusal(path)
+        has_reference = bool(self.reference_var.get())
+        ready = bool(path) and not refused and not self._measuring
+        states = {
+            "_compare_button": ready and has_reference,
+            "_gallery_button": ready,
+        }
         # The trace is attached in step 2 and the buttons are built in step 3,
         # so a write during construction arrives before they exist.
-        for name in ("_compare_button", "_gallery_button"):
+        for name, on in states.items():
             button = getattr(self, name, None)
             if button is not None:
-                button.configure(state=state)
+                button.configure(state="normal" if on else "disabled")
+        hint = getattr(self, "_action_hint_var", None)
+        if hint is None:
+            return
+        if self._measuring or refused:
+            hint.set("")
+        elif not path:
+            hint.set(
+                "Choose the recording to check (step 2)."
+                if has_reference
+                else "Choose a reference (step 1) and a recording (step 2)."
+            )
+        elif not has_reference:
+            hint.set("Compare needs a reference (step 1); Search needs none.")
+        else:
+            hint.set("")
 
     def _get_embedder(self) -> SpeakerEmbedder:
         """Load the speaker-embedding model once (sherpa loads on first use)."""

@@ -402,6 +402,9 @@ recording containing that person speaking for more than three seconds.
       high.
 - [ ] **Refused** (a profile from another voice model) says so in the same
       place and gives the reason.
+- [ ] **Compare speakers** is off until a reference and a recording are both
+      chosen, and **Search all profiles** until a recording is; the line beside
+      them names what is missing.
 - [ ] **Search all profiles** on poor audio shows the ranking but states that
       it supports no conclusion.
 - [ ] Nowhere does the screen show a percentage, "match", "confirmed" or
