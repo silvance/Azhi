@@ -25,7 +25,7 @@ from ..enrollment import (
     parse_time_ranges,
     prepare_source,
     spans_for_speaker,
-    speaker_totals,
+    speaker_options,
 )
 from ..hashing import short
 from ..speaker_profiles import (
@@ -43,6 +43,12 @@ from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
 from .dialogs import active_window, present
 from .errors import friendly_error
+from .pick_speaker import (
+    PickCancelled,
+    SampleListener,
+    ask_from_worker,
+    ask_pick_speaker,
+)
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, palette
 from .widgets import (
     Card,
@@ -695,9 +701,12 @@ class SpeakerProfilesTab:
             embedder = self._get_embedder()
             wav, digest, temporary = prepare_source(source, progress=self._status)
             if mode == MODE_DIARIZE:
-                spans = self._diarize_and_pick(wav)
+                spans = self._diarize_and_pick(wav, profile.display_name)
                 if spans is None:
-                    self._status("Enrolment cancelled.")
+                    self._status(
+                        "No speakers were found in that recording, so nothing "
+                        f"was added to {profile.display_name}."
+                    )
                     return
             if spans is None:
                 spans = [(0.0, _duration(wav))]
@@ -721,6 +730,11 @@ class SpeakerProfilesTab:
             if result.skipped:
                 message += f" Skipped {len(result.skipped)}: {result.skipped[0]}"
             self._status(message)
+        except PickCancelled:
+            self._status(
+                "Cancelled. No speaker was chosen, so nothing was added to "
+                f"{profile.display_name}."
+            )
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._status(friendly_error(exc))
         finally:
@@ -730,77 +744,40 @@ class SpeakerProfilesTab:
                 except OSError:
                     pass
 
-    def _diarize_and_pick(self, wav: Path) -> Optional[List[Tuple[float, float]]]:
-        """Diarize the recording and let the operator choose the subject's cluster."""
+    def _diarize_and_pick(
+        self, wav: Path, subject: str
+    ) -> Optional[List[Tuple[float, float]]]:
+        """Diarize the recording and let the operator choose the subject's speech.
+
+        None when no speaker was found; raises :class:`PickCancelled` when the
+        operator closes the picker.
+        """
         from ..diarization import diarize
 
         self._status("Separating speakers…")
         segments = diarize(wav, progress=self._status)
-        totals = speaker_totals(segments)
-        if not totals:
-            self._status("No speakers were found in that recording.")
+        options = speaker_options(segments)
+        if not options:
             return None
-        picked: dict = {"value": None}
-        done = threading.Event()
-
-        def _ask() -> None:
-            try:
-                picked["value"] = self._choose_cluster(totals)
-            finally:
-                done.set()
-
-        self.root.after(0, _ask)
-        done.wait(timeout=300)
-        speaker = picked["value"]
-        if not speaker:
-            return None
-        return spans_for_speaker(segments, speaker)
-
-    def _choose_cluster(self, totals: Sequence[Tuple[str, float]]) -> Optional[str]:
-        """Modal picker listing each detected speaker by how long they talk."""
-        win = tk.Toplevel(self.root)
-        win.title("Which speaker is the subject?")
-        win.configure(background=palette().surface)
-        win.resizable(False, False)
-        labels = [f"{name} — {seconds:.0f}s of speech" for name, seconds in totals]
-        var = tk.StringVar(value=labels[0])
-        chosen: dict = {"value": None}
-        frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(
-            frame, text="Which speaker is the subject?", style=Style.SECTION_TITLE
-        ).pack(anchor="w")
-        ttk.Label(
-            frame,
-            text=(
-                "Pick the speaker that is the subject. The longest talker is "
-                "usually the subject of a targeted recording, but listen first "
-                "if you are unsure."
+        speaker = ask_from_worker(
+            self.root,
+            lambda: ask_pick_speaker(
+                self.root,
+                title=f"Which speaker is {subject}?",
+                guidance=(
+                    f"The speaker you choose becomes reference audio for "
+                    f"{subject}, which every later comparison is measured "
+                    "against. Listen to each one before choosing: the speaker "
+                    "numbers come from the order they were found, and the "
+                    "longest talker is not always the subject."
+                ),
+                options=options,
+                listener=SampleListener.for_file(wav),
             ),
-            style=Style.MUTED,
-            wraplength=380,
-            justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, SPACE_SM))
-        combo = ttk.Combobox(
-            frame, textvariable=var, values=labels, state="readonly", width=42
         )
-        combo.pack(anchor="w")
-
-        def _ok() -> None:
-            chosen["value"] = totals[labels.index(var.get())][0]
-            win.destroy()
-
-        row = ttk.Frame(frame, style=Style.CARD_INNER)
-        row.pack(fill="x", pady=(SPACE_MD, 0))
-        secondary_button(row, "Cancel", win.destroy).pack(side="right")
-        primary_button(row, "Use this speaker", _ok).pack(
-            side="right", padx=(0, SPACE_SM)
-        )
-        win.bind("<Return>", lambda _e: _ok())
-        present(win, self.root, modal=True)
-        combo.focus_set()
-        win.wait_window()
-        return chosen["value"]
+        if speaker is None:
+            raise PickCancelled()
+        return spans_for_speaker(segments, speaker)
 
     # -- Shared hooks -------------------------------------------------------
 

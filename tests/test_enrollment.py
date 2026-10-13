@@ -12,6 +12,7 @@ from whispr.enrollment import (
     normalize_spans,
     spans_by_speaker_name,
     spans_for_speaker,
+    speaker_options,
     speaker_totals,
     subtract_spans,
     windows,
@@ -249,6 +250,21 @@ def test_spans_and_totals_for_diarized_clusters():
     ]
     assert spans_for_speaker(segments, "SPEAKER_00") == [(0.0, 10.0), (14.0, 30.0)]
     assert speaker_totals(segments) == [("SPEAKER_00", 26.0), ("SPEAKER_01", 4.0)]
+
+
+def test_speaker_options_offer_each_speaker_with_their_longest_turn():
+    segments = [
+        _Seg(0.0, 10.0, "SPEAKER_00"),
+        _Seg(10.0, 14.0, "SPEAKER_01"),
+        _Seg(14.0, 30.0, "SPEAKER_00"),
+        _Seg(30.0, 30.0, "SPEAKER_02"),  # empty: nothing to listen to
+    ]
+    options = speaker_options(segments)
+    assert [o.speaker for o in options] == ["SPEAKER_00", "SPEAKER_01"]
+    assert options[0].seconds == 26.0
+    assert options[0].turns == 2
+    assert options[0].sample == (14.0, 30.0)
+    assert options[1].sample == (10.0, 14.0)
 
 
 def test_spans_by_speaker_name_follows_the_corrected_labels():

@@ -444,8 +444,10 @@ comparison is worth.
 3. Answer **Which speech is the subject?**
    - *The whole recording is this subject* — for a recording of them alone.
    - *Several people — separate speakers and let me pick* — for a conversation.
-     You then pick which speaker is them from a list showing how long each
-     talked.
+     You then pick which speaker is them. Each speaker has **▶ Play sample**
+     (their longest turn); listen before choosing, because the speaker numbers
+     only reflect the order they were found. Nothing is chosen for you, and
+     Cancel adds nothing.
    - *I'll give the time ranges* — type the spans yourself, e.g.
      `0:10-0:45, 1:20-2:00`.
 4. Repeat with more recordings. More speech, from more occasions, in more

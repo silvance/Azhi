@@ -38,7 +38,7 @@ from ..enrollment import (
     parse_time_ranges,
     prepare_source,
     spans_for_speaker,
-    speaker_totals,
+    speaker_options,
 )
 from ..matching import (
     ComparisonResult,
@@ -74,6 +74,12 @@ from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
 from .dialogs import active_window, present
 from .errors import friendly_error
+from .pick_speaker import (
+    PickCancelled,
+    SampleListener,
+    ask_from_worker,
+    ask_pick_speaker,
+)
 from .theme import (
     SPACE_LG,
     SPACE_MD,
@@ -547,70 +553,29 @@ class SpeakerCompareTab:
 
             self._status("Separating speakers…")
             segments = diarize(wav, progress=self._status)
-            totals = speaker_totals(segments)
-            if not totals:
+            options = speaker_options(segments)
+            if not options:
                 return None
-            picked: dict = {"value": None}
-            done = threading.Event()
-
-            def _ask() -> None:
-                try:
-                    picked["value"] = self._choose_cluster(totals)
-                finally:
-                    done.set()
-
-            self.root.after(0, _ask)
-            done.wait(timeout=300)
-            if not picked["value"]:
-                return None
-            self._picked_speaker = str(picked["value"])
-            return spans_for_speaker(segments, picked["value"])
+            picked = ask_from_worker(
+                self.root,
+                lambda: ask_pick_speaker(
+                    self.root,
+                    title="Which speaker is the questioned speaker?",
+                    guidance=(
+                        "Choose the speaker to compare against the reference "
+                        "profile. Listen to each one first: the speaker numbers "
+                        "come from the order they were found, not from who they "
+                        "are."
+                    ),
+                    options=options,
+                    listener=SampleListener.for_file(wav),
+                ),
+            )
+            if picked is None:
+                raise PickCancelled()
+            self._picked_speaker = picked
+            return spans_for_speaker(segments, picked)
         return [(0.0, _duration(wav))]
-
-    def _choose_cluster(self, totals) -> Optional[str]:
-        win = tk.Toplevel(self.root)
-        win.title("Which speaker is the questioned speaker?")
-        win.configure(background=palette().surface)
-        win.resizable(False, False)
-        labels = [f"{name} — {seconds:.0f}s of speech" for name, seconds in totals]
-        var = tk.StringVar(value=labels[0])
-        chosen: dict = {"value": None}
-        frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(
-            frame,
-            text="Which speaker is the questioned speaker?",
-            style=Style.SECTION_TITLE,
-        ).pack(anchor="w")
-        ttk.Label(
-            frame,
-            text="Pick the speaker to compare against the reference profile.",
-            style=Style.MUTED,
-            wraplength=380,
-            justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, SPACE_SM))
-        combo = ttk.Combobox(
-            frame, textvariable=var, values=labels, state="readonly", width=42
-        )
-        combo.pack(anchor="w")
-
-        def _ok() -> None:
-            chosen["value"] = totals[labels.index(var.get())][0]
-            win.destroy()
-
-        row = ttk.Frame(frame, style=Style.CARD_INNER)
-        row.pack(fill="x", pady=(SPACE_MD, 0))
-        secondary_button(row, "Cancel", win.destroy).pack(side="right")
-        primary_button(row, "Use this speaker", _ok).pack(
-            side="right", padx=(0, SPACE_SM)
-        )
-        win.bind("<Return>", lambda _e: _ok())
-        present(win, self.root, modal=True)
-        combo.focus_set()
-        win.wait_window()
-        return chosen["value"]
-
-    # -- Run ----------------------------------------------------------------
 
     def _compare(self) -> None:
         profile = self._selected_profile()
@@ -706,6 +671,8 @@ class SpeakerCompareTab:
             )
             self.root.after(0, lambda: self._show_comparison(result))
             self._status("Comparison complete.")
+        except PickCancelled:
+            self._pick_cancelled("compared")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
         finally:
@@ -756,6 +723,8 @@ class SpeakerCompareTab:
             self._session.append(search)
             self.root.after(0, lambda: self._show_gallery(measured, search))
             self._status("Search complete.")
+        except PickCancelled:
+            self._pick_cancelled("searched")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
         finally:
@@ -903,6 +872,15 @@ class SpeakerCompareTab:
             self.result_warnings.show("warning", "  ".join(result.warnings))
         else:
             self.result_warnings.hide()
+
+    def _pick_cancelled(self, what: str) -> None:
+        """Closing the picker is a cancellation, not a finding about the audio."""
+        # It was reported as "No usable speech was found in the questioned
+        # selection", which says something about the recording that nobody
+        # measured.
+        message = f"Cancelled. No speaker was chosen, so nothing was {what}."
+        self._status(message)
+        self.root.after(0, lambda: self.banner.show("info", message))
 
     def _fail(self, exc: Exception) -> None:
         """A failed comparison must not leave the previous one standing."""

@@ -474,6 +474,11 @@ the primary one if the office has such a setup.
       Speaker Profiles page: **Which speech is the subject?** opens on that
       screen, over the window — not on the primary screen, and not behind
       whatever else is open there.
+- [ ] **Which speaker is …?** (Speaker Profiles and Compare): no speaker is
+      preselected and Use this speaker is off until one is chosen; Play sample
+      plays that speaker's longest turn; closing the dialog stops playback.
+      Cancel says "Cancelled. No speaker was chosen" — never "No usable
+      speech". With no audio player, the dialog says where to listen instead.
 - [ ] The same for every other question: **Which speaker is the subject?**,
       **Which speaker is the questioned speaker?**, **Redo speaker
       separation**, **Save speaker to profile**, Help and System status.
