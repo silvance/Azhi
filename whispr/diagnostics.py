@@ -381,7 +381,7 @@ def format_report(checks: "List[Check] | None" = None) -> str:
     ready, blockers = readiness(items)
     info = build_info()
 
-    lines = ["Whispers build self-test", "=" * 24, ""]
+    lines = ["Whispers system status", "=" * 23, ""]
     lines.append("READY" if ready else "NOT READY")
     if blockers:
         lines.append("Missing: " + ", ".join(blockers))

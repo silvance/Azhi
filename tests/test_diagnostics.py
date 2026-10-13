@@ -20,7 +20,7 @@ def test_format_report_marks_ok_and_missing():
         Check("Thing B", False, "MISSING"),
     ]
     report = format_report(checks)
-    assert "Whispers build self-test" in report
+    assert "Whispers system status" in report
     assert "[OK ] Thing A" in report
     assert "[-- ] Thing B" in report
     assert "MISSING" in report
@@ -29,7 +29,7 @@ def test_format_report_marks_ok_and_missing():
 def test_format_report_defaults_to_gather():
     # Should run end-to-end with no argument.
     report = format_report()
-    assert "build self-test" in report
+    assert "system status" in report
 
 
 def test_tessdata_languages_lists_stems(tmp_path, monkeypatch):
@@ -253,7 +253,7 @@ def test_self_test_prints_the_report_and_succeeds(capsys, monkeypatch):
     # No window was opened: this has to run on a build machine with no display.
     assert launched == []
     out = capsys.readouterr().out
-    assert "Whispers build self-test" in out
+    assert "Whispers system status" in out
 
 
 def test_without_the_flag_the_gui_still_launches(monkeypatch):

@@ -703,7 +703,7 @@ class TranscribeTab:
         ).pack(anchor="w", pady=(SPACE_XS, 0))
         ttk.Checkbutton(
             audio.body,
-            text="Highlight low-confidence words (verify these)",
+            text="Highlight low-confidence words (red, underlined: verify these)",
             variable=self.highlight_conf_var,
             command=self._rerender_transcript,
             style=Style.CHECK,
@@ -915,7 +915,9 @@ class TranscribeTab:
 
         progress = ttk.Frame(parent, style=Style.PAGE)
         progress.pack(fill="x", pady=(SPACE_SM, 0))
-        self.progress_bar = ttk.Progressbar(progress, mode="indeterminate")
+        # Determinate and empty until a run starts: created indeterminate and
+        # never started, it showed a stuck block at Idle.
+        self.progress_bar = ttk.Progressbar(progress, mode="determinate", value=0)
         self.progress_bar.pack(fill="x")
         ttk.Label(
             progress, textvariable=self.progress_label_var, style=Style.PAGE_SUBTITLE

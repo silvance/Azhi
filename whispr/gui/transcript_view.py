@@ -181,7 +181,11 @@ class TranscriptView:
             result = self._result
             self.widget.configure(state="normal")
             self.widget.delete("1.0", "end")
-            self.widget.tag_config("lowconf", foreground=_LOW_CONFIDENCE_COLOR)
+            # Underlined as well as coloured: the red alone is the red used
+            # for errors, and colour alone is lost on some screens and eyes.
+            self.widget.tag_config(
+                "lowconf", foreground=_LOW_CONFIDENCE_COLOR, underline=True
+            )
             if result is None:
                 if self._placeholder:
                     self.widget.tag_config(

@@ -323,7 +323,9 @@ class WhisprApp:
         self._text_window(
             "Whispers — system status",
             report,
-            wrap="none",
+            # Wrapped: with "none" and no sideways scrollbar, the "Missing:"
+            # line and the network statement - the longest lines - were cut.
+            wrap="word",
             width=78,
             monospace=True,
             copyable=True,
