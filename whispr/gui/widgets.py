@@ -40,7 +40,7 @@ _SYNC_INTERVAL_MS = 150
 _WHEEL_REBINDERS: "Dict[str, Callable[[], None]]" = {}
 
 
-def wrap_to(container: tk.Misc, label: tk.Misc, *, slack: int = 0) -> None:
+def wrap_to(container: tk.Misc, label: ttk.Label, *, slack: int = 0) -> None:
     """Wrap ``label`` to ``container``'s width as it changes.
 
     A fixed wraplength is wider than the card in a 940-pixel window, so text

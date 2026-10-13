@@ -22,7 +22,7 @@ import os
 import sys
 from pathlib import Path
 from shutil import which
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 ASSETS_DIRNAME = "whispr_assets"
 ENV_ASSETS = "WHISPR_ASSETS"
@@ -437,7 +437,7 @@ def bundled_sentence_splitters() -> List[str]:
     data = bundled_argos_data_dir()
     if data is None:
         return []
-    found = set()
+    found: Set[str] = set()
     for folder in [data / "minisbd", *sorted((data / "packages").glob("*/minisbd"))]:
         if folder.is_dir():
             found.update(path.stem for path in folder.glob("*.onnx"))

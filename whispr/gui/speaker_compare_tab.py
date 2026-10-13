@@ -439,6 +439,7 @@ class SpeakerCompareTab:
         # when a subject is renamed, and may then belong to nobody.
         previous = self._selected_profile()
         previous_id = previous.subject_id if previous is not None else None
+        previous_name = previous.display_name if previous is not None else ""
         self._profiles = list_speaker_profiles()
         # Two subjects can share a display name; picking by name alone would let
         # an operator compare against one while believing they chose the other.
@@ -455,7 +456,7 @@ class SpeakerCompareTab:
                 # against someone the operator never chose.
                 self.reference_var.set("")
                 self._status(
-                    f"{previous.display_name} is no longer stored, so it is no "
+                    f"{previous_name} is no longer stored, so it is no "
                     "longer selected. Choose a reference subject."
                 )
         elif labels and self.reference_var.get() not in labels:

@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+from functools import partial
 from pathlib import Path
 from tkinter import ttk
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
 from ..enrollment import SpeakerOption
 from ..playback import PlaybackError, SegmentPlayer, playback_available
@@ -80,6 +81,12 @@ def ask_pick_speaker(
     win.resizable(False, False)
     chosen = tk.StringVar(value="")
     answer: dict = {"value": None}
+    # The Use button is built after the speakers (so Tab reaches them first),
+    # and choosing one switches it on.
+    built: Dict[str, ttk.Button] = {}
+
+    def _enable_use() -> None:
+        built["use"].configure(state="normal")
 
     frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
     frame.pack(fill="both", expand=True)
@@ -114,7 +121,7 @@ def ask_pick_speaker(
             variable=chosen,
             value=option.speaker,
             style=Style.RADIO,
-            command=lambda: use.configure(state="normal"),
+            command=_enable_use,
         ).pack(anchor="w")
         ttk.Label(
             text,
@@ -122,7 +129,7 @@ def ask_pick_speaker(
             style=Style.META,
         ).pack(anchor="w", padx=(SPACE_XL, 0))
         if listener is not None:
-            secondary_button(row, "▶ Play sample", lambda o=option: _play(o)).pack(
+            secondary_button(row, "▶ Play sample", partial(_play, option)).pack(
                 side="right", padx=(SPACE_SM, 0)
             )
 
@@ -151,6 +158,7 @@ def ask_pick_speaker(
     # Off until a speaker is chosen: nothing is picked on the operator's behalf.
     use = primary_button(buttons, "Use this speaker", _use)
     use.configure(state="disabled")
+    built["use"] = use
     use.pack(side="right", padx=(0, SPACE_SM))
     win.bind("<Return>", lambda _e: _use())
     present(win, root, modal=True, on_close=_close)

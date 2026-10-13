@@ -798,14 +798,11 @@ _UPDATE_LOCK = threading.Lock()
 def _overlaps(sample: EnrollmentSample, other: EnrollmentSample) -> bool:
     if not sample.source_sha256 or sample.source_sha256 != other.source_sha256:
         return False
-    if None in (sample.source_start, sample.source_end):
+    start, end = sample.source_start, sample.source_end
+    other_start, other_end = other.source_start, other.source_end
+    if start is None or end is None or other_start is None or other_end is None:
         return False
-    if None in (other.source_start, other.source_end):
-        return False
-    return (
-        sample.source_start < other.source_end
-        and other.source_start < sample.source_end
-    )
+    return start < other_end and other_start < end
 
 
 def add_samples(

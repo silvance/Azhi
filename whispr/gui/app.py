@@ -16,7 +16,7 @@ import tkinter as tk
 from functools import partial
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Dict
+from typing import Dict, List
 
 from ..diagnostics import format_report
 from ..ocr import ocr_available
@@ -389,11 +389,13 @@ class WhisprApp:
         """Persist preferences, then close the window."""
         # Closing used to end a ninety-minute run, or discard corrections never
         # saved as a project, without a word.
-        losses = [self.transcribe.busy_description()]
+        losses: List[str] = []
+        transcribing = self.transcribe.busy_description()
+        if transcribing:
+            losses.append(transcribing)
         translate = getattr(self, "translate", None)
         if translate is not None and translate.is_busy():
             losses.append("A translation is still running and will be lost.")
-        losses = [loss for loss in losses if loss]
         if losses and not messagebox.askyesno(
             "Close Whispers?",
             "\n\n".join(losses) + "\n\nClose anyway?",

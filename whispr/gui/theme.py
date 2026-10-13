@@ -22,7 +22,7 @@ import tkinter as tk
 from dataclasses import dataclass
 from tkinter import font as tkfont
 from tkinter import ttk
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 # -- Spacing ---------------------------------------------------------------
 # One scale, used everywhere. Mixed ad-hoc padding is what makes an interface
@@ -210,7 +210,7 @@ def init_theme(root: tk.Misc, *, bootstrap: bool = False) -> Theme:
     return built
 
 
-def plain_tk(**options: object) -> Dict[str, object]:
+def plain_tk(**options: Any) -> Dict[str, Any]:
     """Options for a plain ``tk`` widget whose colours are set here.
 
     ttkbootstrap repaints every plain tk widget in its own theme colour after
