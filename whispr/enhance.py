@@ -140,7 +140,8 @@ def looks_cleaned(path: PathLike) -> bool:
     still get it in, which is why the wording where it is used explains the
     reason rather than just refusing.
     """
-    return Path(path).name.endswith(SUFFIX)
+    # Case-insensitive: on Windows "X.CLEANED.WAV" is the same file name.
+    return Path(path).name.lower().endswith(SUFFIX)
 
 
 def model_path() -> "Optional[Path]":

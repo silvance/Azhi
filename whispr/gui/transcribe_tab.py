@@ -187,6 +187,27 @@ def _device_label(mode: str) -> str:
     return offered_modes()[0][1]
 
 
+def _derived_voice_refusal(source: "Optional[Path]") -> Optional[str]:
+    """Why a voice must not be measured from ``source``, or None if it may.
+
+    A transcript can be made from a cleaned or listening copy on purpose -
+    they are for reading and listening - but nothing measured from one can go
+    into a voiceprint or a subject's reference audio. Speaker Profiles already
+    refused such a file; the Transcribe page's own routes to enrolment did not.
+    """
+    if source is None:
+        return None
+    kind = listening.derived_kind(source)
+    if kind is None:
+        return None
+    return (
+        f"This transcript was made from a {kind}, not the recording. Voices are "
+        "never measured from processed audio, because processing changes the "
+        "detail a voiceprint measures. Transcribe the original recording to "
+        "save or learn a voice."
+    )
+
+
 class _SkipWrite(Exception):
     """The output folder is already known to be gone; do not try to write."""
 
@@ -1618,6 +1639,12 @@ class TranscribeTab:
                     temp_wav = media_path
                 append_line(self.status, f"Converted to {media_path}")
 
+            # What speaker separation, recognition and enrolment read. It starts
+            # as whatever is being transcribed and is pinned to the original by
+            # the noise-reduction step below, so a voice is never measured from
+            # cleaned audio.
+            voice_path, voice_is_normalized = media_path, media_is_normalized
+
             # Noise reduction, when it was asked for. The recording itself is
             # never touched: this works on a normalised copy and writes another
             # one, and what the run then transcribes is that copy - recorded in
@@ -1631,6 +1658,9 @@ class TranscribeTab:
                     )
                     media_is_normalized = True
                     temp_wav = media_path
+                # Voices are measured from this - the normalised original -
+                # and never from the cleaned copy made next. See _diarize_into.
+                voice_path, voice_is_normalized = media_path, True
                 if save_dir is not None and save_dir.is_dir():
                     clean_dest: Optional[Path] = save_dir / (
                         self._output_base(src) + enhance.SUFFIX
@@ -1790,7 +1820,7 @@ class TranscribeTab:
                 # screen, which in a batch is the one that finished most
                 # recently.
                 undiarized = copy.deepcopy(result.segments) if set_view else None
-                self._diarize_into(result, src, media_path, media_is_normalized)
+                self._diarize_into(result, src, voice_path, voice_is_normalized)
                 provenance.diarization = DiarizationProvenance.from_bundle(
                     engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
                     expected_speaker_count=self._parse_num_speakers(),
@@ -1849,6 +1879,13 @@ class TranscribeTab:
         media_path: Path,
         media_is_normalized: bool,
     ) -> None:
+        # ``media_path`` here is the audio voices may be measured from: the
+        # original, normalised, and never the cleaned copy even when the words
+        # came from one. Everything below - the speaker split, recognising
+        # learned voices, and the copy kept for later enrolment - reads it.
+        # It used to be the cleaned copy, which put cleaned audio into
+        # voiceprints under the original recording's hash.
+        #
         # Diarization needs a 16 kHz mono WAV; convert to a temp file unless the
         # media we already have is one we normalized.
         diar_wav = media_path
@@ -1877,7 +1914,13 @@ class TranscribeTab:
             # Recognise enrolled voices (relabel turns to known speakers).
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
-                speaker_segments = self._recognize_speakers(speaker_segments, diar_wav)
+                refusal = _derived_voice_refusal(source)
+                if refusal is not None:
+                    append_line(self.status, f"Voice recognition skipped. {refusal}")
+                else:
+                    speaker_segments = self._recognize_speakers(
+                        speaker_segments, diar_wav
+                    )
             # Keep a 16 kHz copy of the audio for the rest of the session, so a
             # post-run correction can teach a voice - and so the speaker split
             # can be redone without transcribing the recording a second time.
@@ -2488,6 +2531,10 @@ class TranscribeTab:
         profile = self._profile
         if profile is None or not self.learn_var.get():
             return
+        refusal = _derived_voice_refusal(self._result_source)
+        if refusal is not None:
+            self.progress_label_var.set(f"Voice not learned. {refusal}")
+            return
         wav = self._session_wav
         if wav is None or not wav.exists():
             return
@@ -2570,6 +2617,10 @@ class TranscribeTab:
         """
         if self._result is None:
             self._announce("warning", "Transcribe a recording first.")
+            return
+        refusal = _derived_voice_refusal(self._result_source)
+        if refusal is not None:
+            self._announce("warning", refusal)
             return
         spans = self._speaker_spans()
         if not spans:
