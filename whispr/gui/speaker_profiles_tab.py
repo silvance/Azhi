@@ -204,7 +204,7 @@ class SpeakerProfilesTab:
         self.detail_empty = EmptyState(
             card.body,
             "No subject selected",
-            "Choose someone on the left, or create a profile to begin.",
+            "Choose someone in the Subjects list, or create a profile to begin.",
         )
         self.detail_empty.pack(fill="both", expand=True)
 
@@ -252,7 +252,7 @@ class SpeakerProfilesTab:
                 "tags there, then use Save speaker to profile\u2026 on the "
                 "Transcribe page."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=520,
             justify="left",
         ).pack(anchor="w", pady=(SPACE_SM, 0))

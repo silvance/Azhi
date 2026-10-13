@@ -568,7 +568,7 @@ class TranscribeTab:
                 "lets the tool decide, which on a long or muffled recording can "
                 "split one person into several."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         )
@@ -602,7 +602,7 @@ class TranscribeTab:
                 "quiet or distant speech it can still cut a little; turn it off "
                 "if a recording matters more than the time it takes."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -616,7 +616,7 @@ class TranscribeTab:
             ttk.Label(
                 audio.body,
                 text=f"{enhance.HELPS_WITH} {enhance.DOES_NOT}",
-                style=Style.META,
+                style=Style.MUTED,
                 wraplength=560,
                 justify="left",
             ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -626,7 +626,7 @@ class TranscribeTab:
                     "The recording itself is never changed — a cleaned copy is "
                     f"written beside the output. {enhance.NOT_FOR_COMPARISON}"
                 ),
-                style=Style.META,
+                style=Style.MUTED,
                 wraplength=560,
                 justify="left",
             ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -639,7 +639,7 @@ class TranscribeTab:
         ttk.Label(
             audio.body,
             text=f"{listening.HELPS_WITH} {listening.DOES_NOT}",
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -659,7 +659,7 @@ class TranscribeTab:
                 "The recording itself is never changed — a separate listening "
                 f"copy is written beside the output. {listening.NOT_FOR_COMPARISON}"
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
@@ -889,7 +889,7 @@ class TranscribeTab:
                 "confirm. Confirming or correcting a name teaches it that voice "
                 "for next time; it does not change the words themselves."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))

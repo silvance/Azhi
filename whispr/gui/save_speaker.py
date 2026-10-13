@@ -146,7 +146,7 @@ def ask_save_speaker(
             "material — a corrected label can still be wrong, and a wrong "
             "sample would quietly distort every later comparison."
         ),
-        style=Style.META,
+        style=Style.MUTED,
         wraplength=460,
         justify="left",
     ).pack(anchor="w", pady=(0, SPACE_XS))

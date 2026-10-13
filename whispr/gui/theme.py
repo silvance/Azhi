@@ -56,7 +56,9 @@ class Palette:
     border: str = "#343941"  # hairlines, used sparingly
     text: str = "#e9ebee"
     text_muted: str = "#9aa2ad"  # explanatory copy
-    text_faint: str = "#6e7681"  # metadata, timestamps, hashes
+    # Metadata, timestamps, hashes. 4.9:1 on surface: #6e7681 was 3.3:1, below
+    # the 4.5:1 floor for text this small. Caveats and disclaimers use MUTED.
+    text_faint: str = "#8b949e"
     accent: str = "#2f6feb"  # the primary action
     accent_active: str = "#4884f2"
     accent_text: str = "#ffffff"

@@ -283,9 +283,9 @@ class SpeakerCompareTab:
         subtle_button(actions, "Thresholds…", self._show_thresholds).pack(side="right")
         # What is still missing, beside the buttons it holds back.
         self._action_hint_var = tk.StringVar(value="")
-        ttk.Label(actions, textvariable=self._action_hint_var, style=Style.META).pack(
-            side="left", padx=(SPACE_MD, 0)
-        )
+        ttk.Label(
+            actions, textvariable=self._action_hint_var, style=Style.PAGE_SUBTITLE
+        ).pack(side="left", padx=(SPACE_MD, 0))
 
         # Under the buttons that cause them. At the foot of the page, "Select a
         # reference subject first." and save failures were below the fold.
@@ -311,7 +311,7 @@ class SpeakerCompareTab:
                 "Only for an older profile that does not record which model made "
                 "it. A profile from a different model is always refused."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=560,
             justify="left",
         ).pack(anchor="w", padx=(SPACE_XL, 0))
@@ -402,7 +402,7 @@ class SpeakerCompareTab:
         self._disclaimer_label = ttk.Label(
             card.body,
             text=DISCLAIMER,
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=680,
             justify="left",
         )

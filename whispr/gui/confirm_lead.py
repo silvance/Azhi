@@ -83,7 +83,7 @@ def ask_confirm_lead(
                 "lines in the recording, at the times shown in the transcript, "
                 "before you confirm."
             ),
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=_WRAP,
             justify="left",
         ).pack(anchor="w", pady=(SPACE_SM, 0))

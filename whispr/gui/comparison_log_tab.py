@@ -283,7 +283,7 @@ class ComparisonLogTab:
         self._disclaimer = ttk.Label(
             self.detail_body,
             text=DISCLAIMER,
-            style=Style.META,
+            style=Style.MUTED,
             wraplength=780,
             justify="left",
         )

@@ -129,7 +129,7 @@ def ask_pick_speaker(
     ttk.Label(
         frame,
         textvariable=message,
-        style=Style.META,
+        style=Style.MUTED,
         wraplength=_WRAP,
         justify="left",
     ).pack(anchor="w", pady=(SPACE_XS, 0))
