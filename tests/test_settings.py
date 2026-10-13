@@ -66,15 +66,35 @@ def test_configured_thresholds_survive_a_close(config, monkeypatch):
     assert before == after == pytest.approx(0.7)
 
 
-def test_an_unreadable_file_is_left_alone_rather_than_replaced(config):
+def test_an_unreadable_file_is_moved_aside_with_its_contents_kept(config):
     """It may hold an administrator's thresholds that one bad byte hid."""
     config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text('{"thresholds": {"comparison_high": 0.7}', encoding="utf-8")
-    original = config.read_bytes()
-    with pytest.raises(SettingsError) as caught:
-        update_settings("transcribe", {"a": 1})
-    assert config.read_bytes() == original
-    assert "left as it is" in str(caught.value)
+    broken = '{"thresholds": {"comparison_high": 0.7}'
+    config.write_text(broken, encoding="utf-8")
+    saved = update_settings("transcribe", {"a": 1})
+    assert saved.set_aside is not None
+    assert saved.set_aside.read_text(encoding="utf-8") == broken
+    assert saved.set_aside.name.startswith("settings.json.unreadable-")
+    assert load_settings() == {"transcribe": {"a": 1}}
+
+
+def test_one_unreadable_file_does_not_mean_a_warning_on_every_close(config):
+    """QA-33: it used to be left in the way, so every close failed again."""
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("{broken", encoding="utf-8")
+    assert update_settings("transcribe", {"a": 1}).set_aside is not None
+    again = update_settings("transcribe", {"a": 2})
+    assert again.set_aside is None
+    assert load_settings() == {"transcribe": {"a": 2}}
+
+
+def test_an_empty_file_is_simply_empty(config):
+    """What the old in-place writer left after a crash: nothing to rescue."""
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("", encoding="utf-8")
+    saved = update_settings("transcribe", {"a": 1})
+    assert saved.set_aside is None
+    assert load_settings() == {"transcribe": {"a": 1}}
 
 
 def test_a_failed_save_is_reported_not_swallowed(config, monkeypatch):
@@ -86,6 +106,7 @@ def test_a_failed_save_is_reported_not_swallowed(config, monkeypatch):
         update_settings("transcribe", {"a": 1})
     assert "could not be saved" in str(caught.value)
     assert "Access is denied" in str(caught.value)
+    assert "Expecting value" not in str(caught.value), "no parser jargon"
 
 
 def test_saving_is_atomic(config, monkeypatch):

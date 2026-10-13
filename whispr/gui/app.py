@@ -407,7 +407,19 @@ class WhisprApp:
     def _on_close(self) -> None:
         """Persist preferences, then close the window."""
         try:
-            update_settings("transcribe", self.transcribe.get_settings())
+            saved = update_settings("transcribe", self.transcribe.get_settings())
+            if saved.set_aside is not None:
+                # Said once: the file is gone from the way, so the next close
+                # is quiet.
+                messagebox.showinfo(
+                    "Settings file replaced",
+                    f"The settings file could not be read, so it was kept as "
+                    f"{saved.set_aside.name} beside the new one. Anything an "
+                    "administrator had set in it - comparison thresholds, for "
+                    "example - is in that copy, and is not in use until it is "
+                    "restored.",
+                    parent=active_window(self.root),
+                )
         except SettingsError as exc:
             # Said, not swallowed - but closing still goes ahead: losing the
             # remembered options is not worth keeping someone in the app.
