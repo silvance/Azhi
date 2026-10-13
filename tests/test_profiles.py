@@ -3,10 +3,13 @@ import pytest
 import whispr.profiles as profiles
 from whispr.profiles import (
     Profile,
+    ProfileSaveError,
     delete_profile,
+    existing_profile_name,
     export_profile,
     list_profiles,
     load_profile,
+    profile_path,
     read_profile_file,
     save_profile,
 )
@@ -104,3 +107,81 @@ def test_read_profile_file_rejects_garbage(tmp_path):
     bad.write_text("not json at all", encoding="utf-8")
     with pytest.raises(ValueError):
         read_profile_file(bad)
+
+
+# -- Operation profiles never disappear without the operator knowing -------
+#
+# QA found that creating "op alpha" while "Op Alpha" existed replaced it - its
+# learned voice "Viktor", five vectors, became {} - because both names are kept
+# in the same op_alpha.json. Delete asked nothing, and a failed save was
+# swallowed while the page said "Saved".
+
+
+def test_a_name_that_shares_a_file_is_reported_with_the_stored_name(
+    tmp_path, monkeypatch
+):
+    _isolate(tmp_path, monkeypatch)
+    alpha = Profile(name="Op Alpha")
+    alpha.voiceprint_for("Viktor").add([1.0, 0.0])
+    save_profile(alpha)
+    for other in ("op alpha", "OP ALPHA", "op_alpha", "Op Alpha!"):
+        assert existing_profile_name(other) == "Op Alpha", other
+    assert existing_profile_name("Op Bravo") is None
+
+
+def test_an_unreadable_profile_file_still_counts_as_taken(tmp_path, monkeypatch):
+    """Replacing it would destroy it as surely as replacing a readable one."""
+    _isolate(tmp_path, monkeypatch)
+    path = profile_path("Op Alpha")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{broken", encoding="utf-8")
+    assert existing_profile_name("op alpha") == path.name
+
+
+def test_a_failed_save_raises_instead_of_reporting_success(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr("whispr.profiles.write_json_atomic", refuse)
+    with pytest.raises(ProfileSaveError) as caught:
+        save_profile(Profile(name="Op Alpha"))
+    assert "could not be saved" in str(caught.value)
+    assert "Access is denied" in str(caught.value)
+
+
+def test_a_save_that_dies_part_way_leaves_the_old_profile(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    alpha = Profile(name="Op Alpha")
+    alpha.voiceprint_for("Viktor").add([1.0, 0.0])
+    save_profile(alpha)
+
+    def crash(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("whispr.atomicio.os.replace", crash)
+    with pytest.raises(ProfileSaveError):
+        save_profile(Profile(name="Op Alpha"))
+    monkeypatch.undo()
+    _isolate(tmp_path, monkeypatch)
+    kept = load_profile("Op Alpha")
+    assert kept is not None and "Viktor" in kept.voiceprints
+
+
+def test_deleting_a_missing_profile_is_not_an_error(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    delete_profile("never existed")
+
+
+def test_a_delete_that_fails_says_so(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    save_profile(Profile(name="Op Alpha"))
+
+    def refuse(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr("pathlib.Path.unlink", refuse)
+    with pytest.raises(ProfileSaveError) as caught:
+        delete_profile("Op Alpha")
+    assert "could not be deleted" in str(caught.value)

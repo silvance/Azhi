@@ -39,7 +39,9 @@ from ..playback import PlaybackError, SegmentPlayer, playback_available
 from ..profiles import (
     PROFILE_SUFFIX,
     Profile,
+    ProfileSaveError,
     delete_profile,
+    existing_profile_name,
     export_profile,
     list_profiles,
     load_profile,
@@ -853,7 +855,9 @@ class TranscribeTab:
             ("Import…", self._import_profile),
         ):
             subtle_button(buttons, text, command).pack(side="left", padx=(0, SPACE_SM))
-        danger_button(buttons, "Delete", self._delete_profile).pack(side="left")
+        danger_button(buttons, "Delete profile…", self._delete_profile).pack(
+            side="left"
+        )
 
         ttk.Checkbutton(
             frame,
@@ -2564,6 +2568,10 @@ class TranscribeTab:
                     self.progress_label_var.set(
                         f"Learned {name}'s voice (+{added} sample(s))."
                     )
+            except ProfileSaveError as exc:
+                # Learned in memory but not kept: say so, rather than
+                # "Learned", which the next session would contradict.
+                self._announce("error", f"Voice not kept. {exc}")
             except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
                 self.progress_label_var.set(friendly_error(exc))
             self._propose_to_speaker_profile(name, wav, spans, embedder)
@@ -2799,6 +2807,35 @@ class TranscribeTab:
             f"Profile '{profile.name}' loaded ({vp_count} learned voice(s))."
         )
 
+    def _confirm_replace_profile(self, name: str, taken: str) -> bool:
+        """Ask before ``name`` replaces the stored profile ``taken``."""
+        same = taken == name
+        return messagebox.askyesno(
+            "Replace profile?",
+            (
+                f"A profile called \u2018{taken}\u2019 already exists"
+                + (
+                    ""
+                    if same
+                    else f", and \u2018{name}\u2019 would be stored in its place"
+                )
+                + ". Replacing it loses its settings and every voice it has "
+                "learned. Replace it?"
+            ),
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        )
+
+    def _store_profile(self, profile: Profile) -> bool:
+        """Save ``profile``; on failure say so where it will be seen."""
+        try:
+            save_profile(profile)
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return False
+        return True
+
     def _new_profile(self) -> None:
         name = simpledialog.askstring(
             "New profile",
@@ -2807,8 +2844,13 @@ class TranscribeTab:
         )
         if not name or not name.strip():
             return
-        profile = Profile(name=name.strip(), settings=self._profile_settings())
-        save_profile(profile)
+        name = name.strip()
+        taken = existing_profile_name(name)
+        if taken is not None and not self._confirm_replace_profile(name, taken):
+            return
+        profile = Profile(name=name, settings=self._profile_settings())
+        if not self._store_profile(profile):
+            return
         self._profile = profile
         self._refresh_profiles()
         self.profile_var.set(profile.name)
@@ -2821,15 +2863,30 @@ class TranscribeTab:
             self.progress_label_var.set("Pick or create a profile first.")
             return
         profile.settings = self._profile_settings()
-        save_profile(profile)
-        self.progress_label_var.set(f"Saved profile '{profile.name}'.")
+        if self._store_profile(profile):
+            self.progress_label_var.set(f"Saved profile '{profile.name}'.")
 
     def _delete_profile(self) -> None:
         profile = self._profile
         if profile is None:
             self.progress_label_var.set("No profile selected.")
             return
-        delete_profile(profile.name)
+        voices = len(profile.voiceprints)
+        if not messagebox.askyesno(
+            "Delete profile",
+            f"Delete the profile \u2018{profile.name}\u2019"
+            + (f" and the {voices} voice(s) it has learned" if voices else "")
+            + "? This cannot be undone.",
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        ):
+            return
+        try:
+            delete_profile(profile.name)
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return
         self._profile = None
         self.profile_var.set("")
         self._refresh_profiles()
@@ -2878,15 +2935,14 @@ class TranscribeTab:
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.progress_label_var.set(friendly_error(exc))
             return
-        # Don't silently clobber a same-named profile already on this machine.
-        if load_profile(profile.name) is not None and not messagebox.askyesno(
-            "Import profile",
-            f"A profile named '{profile.name}' already exists here. Overwrite it "
-            "with the imported one?",
-            parent=active_window(self.root),
-        ):
+        # Don't silently clobber a profile already on this machine - including
+        # one stored under the same file name with different capitals, or one
+        # whose file cannot be read.
+        taken = existing_profile_name(profile.name)
+        if taken is not None and not self._confirm_replace_profile(profile.name, taken):
             return
-        save_profile(profile)
+        if not self._store_profile(profile):
+            return
         self._profile = profile
         self._refresh_profiles()
         self.profile_var.set(profile.name)

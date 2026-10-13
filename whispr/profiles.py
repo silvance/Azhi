@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .atomicio import write_json_atomic
 from .settings import settings_path
 from .voiceprints import Voiceprint
 
@@ -94,9 +95,18 @@ def list_profiles() -> List[str]:
     return sorted(names)
 
 
+class ProfileSaveError(OSError):
+    """An operation profile could not be saved or removed, in plain words."""
+
+
+def profile_path(name: str) -> Path:
+    """The file the profile called ``name`` is kept in."""
+    return profiles_dir() / f"{_slug(name)}.json"
+
+
 def load_profile(name: str) -> Optional[Profile]:
     """Load the profile called ``name``, or ``None`` if missing/unreadable."""
-    path = profiles_dir() / f"{_slug(name)}.json"
+    path = profile_path(name)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - missing/corrupt -> no profile
@@ -106,26 +116,51 @@ def load_profile(name: str) -> Optional[Profile]:
     return Profile.from_dict(data)
 
 
-def save_profile(profile: Profile) -> None:
-    """Write ``profile`` to its JSON file (best-effort; never raises on OSError)."""
+def existing_profile_name(name: str) -> Optional[str]:
+    """The profile that saving under ``name`` would replace, or None.
+
+    Profiles are stored by a simplified file name, so different names can share
+    one file: "Op Alpha" and "op alpha" both become ``op_alpha.json``. Creating
+    the second used to replace the first without a word, learned voices and
+    all. This answers with the *stored* profile's own name, so the question put
+    to the operator names the thing they would lose. A file that exists but
+    cannot be read still counts as taken - replacing it would destroy it too.
+    """
+    path = profile_path(name)
+    if not path.exists():
+        return None
+    existing = load_profile(name)
+    return existing.name if existing is not None else path.name
+
+
+def save_profile(profile: Profile) -> Path:
+    """Write ``profile`` atomically. Raises :class:`ProfileSaveError` on failure.
+
+    It used to write in place and swallow every error, while the page went on
+    to say "Saved", "Created" or "Learned".
+    """
+    path = profile_path(profile.name)
     try:
-        directory = profiles_dir()
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{_slug(profile.name)}.json"
-        path.write_text(
-            json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
+        return write_json_atomic(path, profile.to_dict())
+    except OSError as exc:
+        raise ProfileSaveError(
+            f"The profile \u2018{profile.name}\u2019 could not be saved to "
+            f"{path}: {exc.strerror or exc}."
+        ) from exc
 
 
 def delete_profile(name: str) -> None:
-    """Remove the profile called ``name`` (best-effort)."""
+    """Remove the profile called ``name``. Raises if it is there and cannot go."""
+    path = profile_path(name)
     try:
-        (profiles_dir() / f"{_slug(name)}.json").unlink()
-    except OSError:
-        pass
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ProfileSaveError(
+            f"The profile \u2018{name}\u2019 could not be deleted: "
+            f"{exc.strerror or exc}."
+        ) from exc
 
 
 # Suffix for exported/shared profile files (a single self-contained JSON that
