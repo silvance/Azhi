@@ -40,6 +40,22 @@ _SYNC_INTERVAL_MS = 150
 _WHEEL_REBINDERS: "Dict[str, Callable[[], None]]" = {}
 
 
+def wrap_to(container: tk.Misc, label: tk.Misc, *, slack: int = 0) -> None:
+    """Wrap ``label`` to ``container``'s width as it changes.
+
+    A fixed wraplength is wider than the card in a 940-pixel window, so text
+    ran off the right edge - the mandatory Compare disclaimer among it, cut
+    off mid-sentence.
+    """
+
+    def _fit(_event: object = None) -> None:
+        width = container.winfo_width() - slack
+        if width > 120 and int(str(label.cget("wraplength")) or 0) != width:
+            label.configure(wraplength=width)
+
+    container.bind("<Configure>", _fit, add="+")
+
+
 def scroll_into_view(canvas: tk.Canvas, widget: tk.Misc) -> None:
     """Scroll a :func:`scrollable_body` canvas until ``widget`` is on screen.
 
@@ -370,6 +386,10 @@ class StatusBanner(ttk.Frame):
         )
         self._text.pack(side="left", fill="x", expand=True)
         self._visible = False
+
+    def wrap_to(self, container: tk.Misc, *, slack: int = 48) -> None:
+        """Wrap the message to ``container``'s width (see :func:`wrap_to`)."""
+        wrap_to(container, self._text, slack=slack)
 
     def insert_before(self, widget: tk.Misc) -> None:
         """Appear immediately above ``widget`` when shown."""

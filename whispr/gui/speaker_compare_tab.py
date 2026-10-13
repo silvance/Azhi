@@ -105,6 +105,7 @@ from .widgets import (
     set_readonly_text,
     style_text_widget,
     subtle_button,
+    wrap_to,
 )
 
 MODE_WHOLE = "whole"
@@ -230,6 +231,7 @@ class SpeakerCompareTab:
         # page, which at 1366x768 is below the fold.
         self._questioned_banner = StatusBanner(card.body, wraplength=640)
         self._questioned_banner.insert_before(whose)
+        self._questioned_banner.wrap_to(card.body)
         # However the file gets chosen - the button, a drop, a project - the
         # same check runs.
         self.questioned_var.trace_add("write", lambda *_: self._on_questioned_changed())
@@ -276,6 +278,7 @@ class SpeakerCompareTab:
         # A failure has to be visible on the page, not only in the status line.
         self.banner = StatusBanner(parent, wraplength=680)
         self.banner.insert_before(self._status_label)
+        self.banner.wrap_to(parent)
 
         advanced = Disclosure(parent, "Advanced")
         advanced.pack(fill="x", pady=(SPACE_SM, 0))
@@ -337,13 +340,15 @@ class SpeakerCompareTab:
         self.band_label.configure(font=theme().app_title)
         self.band_label.pack(anchor="w")
         self.lead_var = tk.StringVar(value="")
-        ttk.Label(
+        lead = ttk.Label(
             self._result_body,
             textvariable=self.lead_var,
             style=Style.BODY,
             wraplength=680,
             justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        )
+        lead.pack(anchor="w", pady=(SPACE_XS, 0))
+        wrap_to(card.body, lead)
 
         facts = ttk.Frame(self._result_body, style=Style.CARD_INNER)
         facts.pack(fill="x", pady=(SPACE_MD, 0))
@@ -360,6 +365,7 @@ class SpeakerCompareTab:
             row_widget.pack(fill="x", pady=(0, SPACE_XS))
 
         self.result_warnings = StatusBanner(self._result_body, wraplength=680)
+        self.result_warnings.wrap_to(card.body)
 
         # The full text block stays: it is what an analyst copies into a case
         # file, and it holds the detail the summary above deliberately omits.
@@ -383,6 +389,7 @@ class SpeakerCompareTab:
             justify="left",
         )
         self._disclaimer_label.pack(anchor="w", pady=(SPACE_MD, 0))
+        wrap_to(card.body, self._disclaimer_label)
 
         result_actions = ttk.Frame(card.body, style=Style.CARD_INNER)
         result_actions.pack(fill="x", pady=(SPACE_MD, 0))

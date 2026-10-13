@@ -42,6 +42,7 @@ from .widgets import (
     scrollable_body,
     secondary_button,
     subtle_button,
+    wrap_to,
 )
 
 ALL_SUBJECTS = "All subjects"
@@ -146,15 +147,20 @@ class ComparisonLogTab:
             # 1:1 and a gallery search answer different questions, so a row must
             # not be mistaken for the other kind.
             ("kind", "Type", 110, False),
-            ("subject", "Subject", 200, True),
+            ("subject", "Subject", 170, True),
             ("recording", "Recording", 180, True),
             ("score", "Score", 65, False),
-            ("band", "Assessment", 170, False),
+            ("band", "Assessment", 200, False),
         ]
         for column, heading, width, stretch in headings:
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=width, stretch=stretch, anchor="w")
         self.tree.column("score", anchor="e")
+        # The finding first: in a 940-pixel window the last columns run off the
+        # right edge, and that used to be the score and the assessment.
+        self.tree.configure(
+            displaycolumns=("when", "band", "score", "subject", "recording", "kind")
+        )
         self.tree.pack(side="left", fill="both", expand=True)
         self._table.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._on_select())
@@ -207,13 +213,14 @@ class ComparisonLogTab:
         self.headline.configure(font=theme().section)
         self.headline.pack(anchor="w")
         self.summary_var = tk.StringVar(value="")
-        ttk.Label(
+        summary = ttk.Label(
             self.detail_body,
             textvariable=self.summary_var,
             style=Style.MUTED,
             wraplength=780,
             justify="left",
-        ).pack(anchor="w", pady=(SPACE_XS, SPACE_MD))
+        )
+        summary.pack(anchor="w", pady=(SPACE_XS, SPACE_MD))
 
         facts = ttk.Frame(self.detail_body, style=Style.CARD_INNER)
         facts.pack(fill="x")
@@ -281,6 +288,8 @@ class ComparisonLogTab:
             justify="left",
         )
         self._disclaimer.pack(anchor="w", pady=(SPACE_MD, 0))
+        for label in (self.headline, summary, self.caveats, self._disclaimer):
+            wrap_to(card.body, label)
 
     # -- Data --------------------------------------------------------------
 

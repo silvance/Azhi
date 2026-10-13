@@ -70,6 +70,11 @@ MODE_DIARIZE = "diarize"
 MODE_RANGES = "ranges"
 
 
+# Narrower than this, the subject list goes above the detail instead of beside
+# it. The detail needs about 600 pixels for its sample table and buttons.
+_STACK_BELOW = 900
+
+
 class SpeakerProfilesTab:
     """Builds and drives the Speaker profiles tab inside ``parent``."""
 
@@ -116,17 +121,50 @@ class SpeakerProfilesTab:
         # narrow so the detail - which is where the work happens - gets the room.
         columns = ttk.Frame(container, style=Style.PAGE)
         columns.pack(fill="both", expand=True)
-        columns.columnconfigure(0, weight=0, minsize=300)
-        columns.columnconfigure(1, weight=1)
-        columns.rowconfigure(0, weight=1)
+        self._columns = columns
+        self._stacked: Optional[bool] = None
 
         self._build_subject_list(columns)
         self._build_detail(columns)
+        self._arrange(stacked=False)
+        columns.bind("<Configure>", lambda e: self._arrange(e.width < _STACK_BELOW))
         bind_wheel(canvas, container)
+
+    def _arrange(self, stacked: bool) -> None:
+        """Side by side when there is room; the list above the detail when not.
+
+        In a 940-pixel window the detail beside the list was cut off: Remove
+        sample off the edge, Approve half shown, the sample table truncated,
+        and no way to scroll sideways to them.
+        """
+        if stacked == self._stacked:
+            return
+        self._stacked = stacked
+        columns = self._columns
+        if stacked:
+            columns.columnconfigure(0, weight=1, minsize=0)
+            columns.columnconfigure(1, weight=0, minsize=0)
+            columns.rowconfigure(0, weight=0)
+            columns.rowconfigure(1, weight=1)
+            self._list_card.grid(
+                row=0, column=0, columnspan=2, sticky="nsew", padx=0, pady=(0, SPACE_MD)
+            )
+            self._detail_card.grid(row=1, column=0, columnspan=2, sticky="nsew")
+            self.subject_tree.configure(height=4)
+        else:
+            columns.columnconfigure(0, weight=0, minsize=300)
+            columns.columnconfigure(1, weight=1)
+            columns.rowconfigure(0, weight=1)
+            columns.rowconfigure(1, weight=0)
+            self._list_card.grid(
+                row=0, column=0, columnspan=1, sticky="nsew", padx=(0, SPACE_MD), pady=0
+            )
+            self._detail_card.grid(row=0, column=1, columnspan=1, sticky="nsew")
+            self.subject_tree.configure(height=12)
 
     def _build_subject_list(self, parent: tk.Misc) -> None:
         card = Card(parent, "Subjects")
-        card.grid(row=0, column=0, sticky="nsew", padx=(0, SPACE_MD))
+        self._list_card = card
 
         self.subject_tree = ttk.Treeview(
             card.body,
@@ -160,7 +198,6 @@ class SpeakerProfilesTab:
 
     def _build_detail(self, parent: tk.Misc) -> None:
         card = Card(parent, "")
-        card.grid(row=0, column=1, sticky="nsew")
         self._detail_card = card
 
         # Nothing selected: say what to do rather than showing an empty table.
@@ -230,7 +267,7 @@ class SpeakerProfilesTab:
             height=8,
         )
         sample_columns: List[Tuple[str, str, int, bool]] = [
-            ("state", "State", 150, False),
+            ("state", "State", 210, False),
             ("source", "Recording", 150, True),
             ("span", "Where", 90, False),
             ("speech", "Speech", 70, False),
@@ -348,7 +385,9 @@ class SpeakerProfilesTab:
             if sample.is_trusted:
                 state, tags = "Trusted", ()
             elif outlier:
-                state, tags = "Needs review — unlike the reference", ("outlier",)
+                # Short enough for the column at 1366 wide; it was cut to
+                # "Needs review — unli…", the one state that most needs reading.
+                state, tags = "Unlike reference — review", ("outlier",)
             else:
                 state, tags = "Needs review", ("pending",)
             self.sample_tree.insert(
