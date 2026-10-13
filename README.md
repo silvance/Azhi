@@ -180,7 +180,7 @@ run takes, never the transcript. Asking for *NVIDIA GPU (CUDA)* on a machine
 without one falls back to the CPU **and says so** rather than failing the run,
 and a GPU that fails mid-load (VRAM, driver, a busy card) is retried on the CPU.
 The detection is a local query to the bundled inference library — no driver
-install, no download, no network. **Self-test…** reports what this machine has.
+install, no download, no network. **System status** reports what this machine has.
 
 Install the optional GUI extras and launch it:
 
@@ -612,7 +612,7 @@ between the reference and questioned recordings. None of these models is
 validated for a particular operational setting — measure yours with the
 validation harness (below) before relying on a threshold.
 
-**Self-test…** shows which embedding model a build carries, what it was trained
+**System status** shows which embedding model a build carries, what it was trained
 on and its SHA-256; speaker profiles and comparisons are only valid between
 builds that share that exact model.
 
@@ -656,7 +656,7 @@ single-purpose transcriber. (Even on a full bundle, set the `WHISPR_MODE=transcr
 environment variable to force the transcriber-only view — e.g. on a locked-down
 shortcut.)
 
-**Verify a bundle before handing it out.** The **Self-test…** button (top-right of
+**Verify a bundle before handing it out.** The **System status** button (top-right of
 the window) leads with **READY** or **NOT READY** (naming anything missing), then
 reports the build identity, the offline posture, exactly which engines, models and
 assets the build contains — transcription, both diarizers, translation packs, OCR

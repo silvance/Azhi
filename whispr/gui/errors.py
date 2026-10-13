@@ -28,8 +28,8 @@ def friendly_error(exc: Exception) -> str:
         )
     if "faster-whisper is not installed" in low or "faster_whisper" in low:
         return (
-            "The transcription engine isn't installed "
-            "(pip install 'silvance-whisper[gui]')."
+            "The transcription engine is not in this copy, so it has to be "
+            "rebuilt. System status (top right) shows what this copy includes."
         )
     # A model chosen in the GUI that this offline build doesn't contain. The
     # message is already written for the operator, so surface it as-is.
@@ -72,8 +72,8 @@ def friendly_error(exc: Exception) -> str:
     ):
         detail = msg.splitlines()[0] if msg else name
         return (
-            "OCR couldn't run in this build (it must be built with OCR bundled — "
-            f"'ocr_langs' set). Details: {detail}"
+            "Reading text from images and PDFs is not available in this copy; "
+            f"it has to be rebuilt with OCR included. ({detail})"
         )
     short = msg.splitlines()[0] if msg else name
     return f"Something went wrong ({name}): {short}"

@@ -210,10 +210,11 @@ def describe_active() -> List[str]:
     lines.append("")
     lines += _wrap(
         "These thresholds are conservative starting points, not values "
-        "calibrated against operational recordings. Change them only from a "
-        "validation run over a representative corpus (python -m whispr.validation), "
-        "and note that a change alters how every subsequent result should be "
-        "read. The values in force are recorded in exported reports."
+        "calibrated against operational recordings. Change them only on the "
+        "strength of a validation run over representative recordings - an "
+        "administrator's task, described in the README - and note that a "
+        "change alters how every subsequent result should be read. The values "
+        "in force are recorded in exported reports."
     )
     return lines
 

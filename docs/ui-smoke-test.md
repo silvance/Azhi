@@ -175,7 +175,7 @@ deployment machine:**
 - [ ] The line underneath says GPU support is not included in this build, and
       does **not** say a GPU was "not detected" — that would send someone off
       to fit a card for nothing.
-- [ ] **Self-test…** says the same thing about the hardware, in the same terms.
+- [ ] **System status** says the same thing about the hardware, in the same terms.
 - [ ] Open a settings file or operation profile saved by a source copy with the
       GPU selected, then run: it transcribes on the CPU and the Status tab says
       the build has no GPU support. It must not fail the run.

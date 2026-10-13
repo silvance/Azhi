@@ -20,7 +20,8 @@ def test_model_not_in_build_surfaces_message_verbatim():
 
 def test_faster_whisper_missing_is_friendly():
     out = friendly_error(RuntimeError("faster-whisper is not installed"))
-    assert "transcription engine isn't installed" in out
+    assert "transcription engine is not in this copy" in out
+    assert "pip install" not in out
 
 
 def test_unknown_error_falls_back():

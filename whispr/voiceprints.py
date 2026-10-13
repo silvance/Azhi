@@ -352,9 +352,9 @@ class SpeakerEmbedder:
             # Plain language, and no attempt to fetch anything: on an air-gapped
             # machine a missing component is a fact to report, not to fix.
             raise RuntimeError(
-                "Speaker features need sherpa-onnx, which is not installed in "
-                "this build. Use a bundle that includes it (see the Self-test), "
-                "or install it with:  pip install 'silvance-whisper[gui]'"
+                "Speaker features need sherpa-onnx, which is not in this copy. "
+                "System status (top right) shows what this copy includes; a "
+                "copy without it has to be rebuilt with speaker features."
             ) from exc
 
         if model_path is None:
