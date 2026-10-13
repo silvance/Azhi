@@ -75,14 +75,26 @@ def ask_confirm_lead(
         secondary_button(frame, "Play a line", on_play).pack(
             anchor="w", pady=(SPACE_SM, 0)
         )
+    else:
+        ttk.Label(
+            frame,
+            text=(
+                "This machine cannot play audio here. Listen to this speaker's "
+                "lines in the recording, at the times shown in the transcript, "
+                "before you confirm."
+            ),
+            style=Style.META,
+            wraplength=_WRAP,
+            justify="left",
+        ).pack(anchor="w", pady=(SPACE_SM, 0))
 
     ttk.Label(
         frame,
         text=(
-            "Confirming teaches this profile the voice from all of this "
-            f"speaker's lines, and proposes them to {name}'s reference profile "
-            "for review. Confirm only if you have listened and are satisfied it "
-            "is them."
+            "Confirming, or using a name you type, teaches this profile the "
+            "voice from all of this speaker's lines and proposes them to that "
+            "person's reference profile for review. Confirm only if you have "
+            "listened and are satisfied it is them."
         ),
         style=Style.WARNING,
         wraplength=_WRAP,
@@ -110,21 +122,40 @@ def ask_confirm_lead(
 
     buttons = ttk.Frame(frame, style=Style.CARD_INNER)
     buttons.pack(fill="x", pady=(SPACE_SM, 0))
+    # Created in the order Tab should visit them - after the name box, "Use
+    # the name I typed", then Confirm, then "Leave as a suggestion" - and
+    # placed separately. Tab from "Leave" used to land on Confirm first, so a
+    # keyboard user heading for the name box passed through it, and Enter one
+    # stop early confirmed the lead.
+    use_typed = secondary_button(buttons, "Use the name I typed", _correct)
+    confirm = secondary_button(buttons, "Confirm \u2013 I have listened", _confirm)
     cancel = secondary_button(buttons, "Leave as a suggestion", win.destroy)
     cancel.pack(side="right")
-    use_typed = secondary_button(buttons, "Use the name I typed", _correct)
     use_typed.pack(side="right", padx=(0, SPACE_SM))
+    confirm.pack(side="left")
     use_typed.configure(state="disabled")
-    secondary_button(buttons, "Confirm – I have listened", _confirm).pack(side="left")
+    # Enter never confirms; a click or Space does. Both are bound here rather
+    # than left to the theme, because the themes disagree: ttkbootstrap - what
+    # ships - presses a focused button on Enter and does nothing on Space,
+    # while stock Tk does the reverse. Left to ttkbootstrap, Confirm was
+    # either one Enter away or, with Enter blocked, out of reach of the
+    # keyboard altogether.
+    for key in ("<Return>", "<KP_Enter>"):
+        confirm.bind(key, lambda _e: "break")
+
+    def _space(_event: object) -> str:
+        confirm.invoke()
+        return "break"
+
+    confirm.bind("<KeyPress-space>", _space)
 
     def _typed_changed(*_args: object) -> None:
         use_typed.configure(state="normal" if typed.get().strip() else "disabled")
 
     typed.trace_add("write", _typed_changed)
     # Enter in the name box uses that name. Anywhere else, Enter presses the
-    # focused button - which starts as "Leave as a suggestion" - so no single
-    # keystroke can confirm the suggestion; reaching Confirm takes a click or
-    # a deliberate Tab.
+    # focused button - which starts as "Leave as a suggestion" - except on
+    # Confirm, where it does nothing. No run of Tab and Enter confirms.
     entry.bind("<Return>", lambda _e: _correct())
 
     present(win, root, modal=True)
