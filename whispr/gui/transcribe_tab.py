@@ -2690,6 +2690,11 @@ class TranscribeTab:
             if not result.added:
                 return
             save_speaker_profile(subject)
+            # Speaker Profiles may be showing this subject: without this it
+            # could later save its older copy over these proposed samples.
+            notify = self.on_profiles_changed
+            if notify is not None:
+                self.root.after(0, notify)
             self.progress_label_var.set(
                 f"{result.added_count} sample(s) proposed for {subject.display_name} - "
                 "approve them in Speaker profiles before they are used."

@@ -139,9 +139,6 @@ class WhisprApp:
                 profiles_root, self.root, self.cancel_event, self.cancel
             )
             self._tabs.append(self.speaker_profiles)
-            # Saving a corrected speaker from a transcript writes a subject
-            # profile, so this page has to pick the new samples up.
-            self.transcribe.on_profiles_changed = self.speaker_profiles.refresh
 
             compare_root = self._add_page("compare", "Compare Speakers")
             self.speaker_compare = SpeakerCompareTab(
@@ -163,6 +160,13 @@ class WhisprApp:
             )
             self._tabs.append(self.comparison_log)
             self.speaker_compare.on_history_changed = self.comparison_log.refresh
+            # Any page that changes a subject tells all of them. Only
+            # Transcribe -> Speaker Profiles was wired, so Compare went on
+            # listing a subject deleted elsewhere and comparing against it from
+            # memory, and Speaker Profiles could save an old copy over samples
+            # a transcript correction had just proposed.
+            self.transcribe.on_profiles_changed = self._profiles_changed
+            self.speaker_profiles.on_profiles_changed = self._profiles_changed
 
         if show_live:
             live_root = self._add_page("live", "Live")
@@ -392,6 +396,13 @@ class WhisprApp:
             )
         present(window, self.root)
         close.focus_set()
+
+    def _profiles_changed(self) -> None:
+        """Reload every page that shows subject profiles."""
+        for name in ("speaker_profiles", "speaker_compare", "comparison_log"):
+            page = getattr(self, name, None)
+            if page is not None:
+                page.refresh()
 
     def _on_close(self) -> None:
         """Persist preferences, then close the window."""

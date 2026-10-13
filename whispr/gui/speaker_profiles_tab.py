@@ -80,6 +80,9 @@ class SpeakerProfilesTab:
         self._profiles: List[SpeakerProfile] = []
         self._selected: Optional[SpeakerProfile] = None
         self._embedder: Optional[SpeakerEmbedder] = None
+        # Set by the application: called when this page changes a subject, so
+        # Compare and History reload rather than working from an old copy.
+        self.on_profiles_changed: Optional[Callable[[], None]] = None
         self.status_var = tk.StringVar(value="Idle")
         self._build()
         self.refresh()
@@ -247,6 +250,12 @@ class SpeakerProfilesTab:
 
     # -- Data --------------------------------------------------------------
 
+    def _announce_change(self) -> None:
+        """Tell the other pages a subject changed, so none works from a stale copy."""
+        notify = self.on_profiles_changed
+        if notify is not None:
+            self.root.after(0, notify)
+
     def refresh(self) -> None:
         """Reload the stored subjects and repaint the list."""
         self._profiles = list_speaker_profiles()
@@ -391,6 +400,7 @@ class SpeakerProfilesTab:
             self._status(friendly_error(exc))
             return
         self.refresh()
+        self._announce_change()
         self._status("Subject deleted.")
 
     def _export_profile(self) -> None:
@@ -474,6 +484,7 @@ class SpeakerProfilesTab:
         if not imported:
             self._status("Nothing was imported.")
             return
+        self._announce_change()
         self._status(f"Imported {len(imported)} subject(s).{note}")
         if issues:
             self._report_import_issues(Path(path).name, issues)
@@ -517,26 +528,49 @@ class SpeakerProfilesTab:
         return selection[0] if selection else None
 
     def _approve(self) -> None:
-        profile, sample_id = self._selected, self._selected_sample_id()
-        if profile is None or sample_id is None:
+        sample_id = self._selected_sample_id()
+        if self._selected is None or sample_id is None:
             self._status("Select a sample to approve.")
             return
+        profile = self._current(self._selected)
+        if profile is None:
+            return
         if profile.approve_sample(sample_id) and self._save(profile):
+            self._selected = profile
             self._render_detail()
             self._status("Sample promoted into the trusted reference.")
 
     def _remove(self) -> None:
-        profile, sample_id = self._selected, self._selected_sample_id()
-        if profile is None or sample_id is None:
+        sample_id = self._selected_sample_id()
+        if self._selected is None or sample_id is None:
             self._status("Select a sample to remove.")
             return
+        profile = self._current(self._selected)
+        if profile is None:
+            return
         if profile.remove_sample(sample_id) and self._save(profile):
+            self._selected = profile
             self.refresh()
             self._status("Sample removed.")
+
+    def _current(self, profile: SpeakerProfile) -> Optional[SpeakerProfile]:
+        """``profile`` as it is stored now, or None (said) if it is gone.
+
+        What this page shows was loaded when the subject was selected. Saving
+        that copy after another page had added samples - a transcript
+        correction proposing them, say - wrote the old copy back and erased
+        them. So every change starts from the stored subject.
+        """
+        current = find_speaker_profile_by_id(profile.subject_id)
+        if current is None:
+            self._status(f"{profile.display_name} is no longer stored.")
+            self.refresh()
+        return current
 
     def _save(self, profile: SpeakerProfile) -> bool:
         try:
             save_speaker_profile(profile)
+            self._announce_change()
             return True
         except ProfileError as exc:
             # Losing operational work silently is not acceptable; surface it.
@@ -652,6 +686,14 @@ class SpeakerProfilesTab:
         wav = None
         temporary = False
         try:
+            # Enrol into the subject as stored, not the copy this page loaded,
+            # so samples another page added since are kept.
+            stored = find_speaker_profile_by_id(profile.subject_id)
+            if stored is None:
+                self._status(f"{profile.display_name} is no longer stored.")
+                self.root.after(0, self.refresh)
+                return
+            profile = stored
             self._status(f"Preparing {source.name}…")
             embedder = self._get_embedder()
             wav, digest, temporary = prepare_source(source, progress=self._status)

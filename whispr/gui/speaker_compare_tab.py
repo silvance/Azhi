@@ -58,6 +58,7 @@ from ..speaker_profiles import (
     SpeakerProfile,
     bundled_model_identity,
     display_labels,
+    find_speaker_profile_by_id,
     list_speaker_profiles,
 )
 from ..thresholds import (
@@ -391,13 +392,30 @@ class SpeakerCompareTab:
     # -- Reference ----------------------------------------------------------
 
     def refresh(self) -> None:
+        # The choice is held by subject id across the reload: a label changes
+        # when a subject is renamed, and may then belong to nobody.
+        previous = self._selected_profile()
+        previous_id = previous.subject_id if previous is not None else None
         self._profiles = list_speaker_profiles()
         # Two subjects can share a display name; picking by name alone would let
         # an operator compare against one while believing they chose the other.
         self._labels = display_labels(self._profiles)
         labels = [self._labels[p.subject_id] for p in self._profiles]
         self.reference_combo.configure(values=labels)
-        if labels and self.reference_var.get() not in labels:
+        if previous_id is not None:
+            label = self._labels.get(previous_id)
+            if label is not None:
+                self.reference_var.set(label)
+            else:
+                # Deleted on Speaker Profiles. This used to fall through to the
+                # first subject in the list - so the next Compare measured
+                # against someone the operator never chose.
+                self.reference_var.set("")
+                self._status(
+                    f"{previous.display_name} is no longer stored, so it is no "
+                    "longer selected. Choose a reference subject."
+                )
+        elif labels and self.reference_var.get() not in labels:
             self.reference_var.set(labels[0])
         if not labels:
             self.reference_var.set("")
@@ -589,6 +607,14 @@ class SpeakerCompareTab:
         if profile is None:
             self._status("Select a reference subject first.")
             return
+        # The list on this page is a snapshot. Compare against the subject as
+        # it is stored now: one deleted on Speaker Profiles was still compared
+        # against, from memory, and logged; samples removed there still counted.
+        fresh = find_speaker_profile_by_id(profile.subject_id)
+        if fresh is None:
+            self.refresh()
+            return
+        profile = fresh
         source = self.questioned_var.get().strip()
         if not source:
             self._status("Choose a questioned recording first.")
