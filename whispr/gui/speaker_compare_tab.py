@@ -25,7 +25,7 @@ from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, List, Optional, Tuple
 
-from .. import listening
+from .. import listening, speaker_count
 from ..comparison_log import (
     ProfileError as _LogError,
 )
@@ -70,7 +70,7 @@ from ..thresholds import (
     active,
     describe_active,
 )
-from ..transcription import AUDIO_EXTENSIONS
+from ..transcription import AUDIO_EXTENSIONS, CancelledError
 from ..voiceprints import SpeakerEmbedder
 from .dialogs import active_window, present
 from .errors import friendly_error
@@ -104,6 +104,7 @@ from .widgets import (
     scrollable_body,
     secondary_button,
     set_readonly_text,
+    speaker_count_row,
     style_text_widget,
     subtle_button,
     wrap_to,
@@ -146,12 +147,18 @@ class SpeakerCompareTab:
         # Set by the app so a new comparison shows up in the history page.
         self.on_history_changed: Optional[Callable[[], None]] = None
         self._measuring = False
+        # Set by Cancel on the busy card; checked during speaker separation and
+        # between measured stretches of audio.
+        self._cancel_event = threading.Event()
+        # The count asked for, read on the UI thread when a run starts.
+        self._requested_speakers: Optional[int] = None
         self._embedder: Optional[SpeakerEmbedder] = None
 
         self.reference_var = tk.StringVar(value="")
         self.reference_detail_var = tk.StringVar(value="No reference selected.")
         self.questioned_var = tk.StringVar(value="")
         self.mode_var = tk.StringVar(value=MODE_WHOLE)
+        self.speakers_var = tk.StringVar(value=speaker_count.UNKNOWN)
         self.ranges_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="Idle")
         self.allow_unverified_var = tk.BooleanVar(value=False)
@@ -260,12 +267,21 @@ class SpeakerCompareTab:
                 value=value,
                 style=Style.RADIO,
             ).pack(anchor="w")
+            if value == MODE_DIARIZE:
+                self._speakers_combo = speaker_count_row(card.body, self.speakers_var)
+        self.mode_var.trace_add("write", lambda *_: self._on_mode_changed())
+        self._on_mode_changed()
         ranges = ttk.Frame(card.body, style=Style.CARD_INNER)
         ranges.pack(anchor="w", padx=(SPACE_XL, 0))
         ttk.Entry(ranges, textvariable=self.ranges_var, width=40).pack(side="left")
         ttk.Label(ranges, text="e.g. 0:10-0:45, 1:20-2:00", style=Style.META).pack(
             side="left", padx=(SPACE_SM, 0)
         )
+
+    def _on_mode_changed(self) -> None:
+        """The count applies only when the recording is being separated."""
+        state = "readonly" if self.mode_var.get() == MODE_DIARIZE else "disabled"
+        self._speakers_combo.configure(state=state)
 
     # -- The comparison ----------------------------------------------------
 
@@ -342,8 +358,14 @@ class SpeakerCompareTab:
         ttk.Label(self._result_busy, textvariable=self.busy_var, style=Style.BODY).pack(
             anchor="w"
         )
-        self._busy_bar = ttk.Progressbar(self._result_busy, mode="indeterminate")
-        self._busy_bar.pack(fill="x", pady=(SPACE_SM, 0))
+        busy_row = ttk.Frame(self._result_busy, style=Style.CARD_INNER)
+        busy_row.pack(fill="x", pady=(SPACE_SM, 0))
+        # Separating a long recording takes minutes; there was no way out of
+        # it short of closing the application.
+        self._cancel_button = secondary_button(busy_row, "Cancel", self._cancel)
+        self._cancel_button.pack(side="right", padx=(SPACE_SM, 0))
+        self._busy_bar = ttk.Progressbar(busy_row, mode="indeterminate")
+        self._busy_bar.pack(side="left", fill="x", expand=True)
 
         self._result_body = ttk.Frame(card.body, style=Style.CARD_INNER)
 
@@ -613,8 +635,19 @@ class SpeakerCompareTab:
         if mode == MODE_DIARIZE:
             from ..diarization import diarize
 
-            self._status("Separating speakers…")
-            segments = diarize(wav, progress=self._status)
+            requested = self._requested_speakers
+            self._status(
+                "Separating speakers"
+                + (f" into {requested}" if requested else "")
+                + "… (Cancel stops it)"
+            )
+            segments = diarize(
+                wav,
+                num_speakers=requested,
+                progress=self._status,
+                cancelled=self._cancel_event.is_set,
+            )
+            self._check_cancel()
             options = speaker_options(segments)
             if not options:
                 return None
@@ -676,6 +709,7 @@ class SpeakerCompareTab:
         embedder = self._get_embedder()
         wav, digest, temporary = prepare_source(source, progress=self._status)
         try:
+            self._check_cancel()
             spans = self._prepare_spans(wav)
             if not spans:
                 return None
@@ -684,7 +718,7 @@ class SpeakerCompareTab:
                 spans,
                 embedder,
                 selection_mode=self._selection_description(spans),
-                progress=self._status,
+                progress=self._check_cancel,
             )
         finally:
             if temporary:
@@ -707,7 +741,9 @@ class SpeakerCompareTab:
             return f"{SELECTION_RANGES} ({self.ranges_var.get().strip()})"
         if mode == MODE_DIARIZE:
             speaker = self._picked_speaker or "selected speaker"
-            return f"{SELECTION_DIARIZED} ({speaker}, {len(spans)} turn(s))"
+            asked = self._requested_speakers
+            expected = f", separated into {asked} as asked" if asked else ""
+            return f"{SELECTION_DIARIZED} ({speaker}, {len(spans)} turn(s){expected})"
         return SELECTION_WHOLE
 
     def _compare_worker(self, profile: SpeakerProfile, source: Path) -> None:
@@ -735,6 +771,8 @@ class SpeakerCompareTab:
             self._status("Comparison complete.")
         except PickCancelled:
             self._pick_cancelled("compared")
+        except CancelledError:
+            self._cancelled("compared")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
         finally:
@@ -787,6 +825,8 @@ class SpeakerCompareTab:
             self._status("Search complete.")
         except PickCancelled:
             self._pick_cancelled("searched")
+        except CancelledError:
+            self._cancelled("searched")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
         finally:
@@ -838,6 +878,13 @@ class SpeakerCompareTab:
         """
         self._measuring = True
         self._on_screen = None
+        self._cancel_event.clear()
+        self._cancel_button.configure(state="normal")
+        self._requested_speakers = (
+            speaker_count.from_label(self.speakers_var.get())
+            if self.mode_var.get() == MODE_DIARIZE
+            else None
+        )
         # The file being measured stays the file on screen until it is done;
         # the busy line names it, and step 2 must not say something else.
         self._questioned_zone.set_enabled(False)
@@ -934,6 +981,29 @@ class SpeakerCompareTab:
             self.result_warnings.show("warning", "  ".join(result.warnings))
         else:
             self.result_warnings.hide()
+
+    def _cancel(self) -> None:
+        """Stop the comparison at its next checkpoint."""
+        if not self._measuring:
+            return
+        self._cancel_event.set()
+        self._cancel_button.configure(state="disabled")
+        self.busy_var.set("Cancelling… (stops at the next step)")
+
+    def _check_cancel(self, message: str = "") -> None:
+        """Progress that also stops the run when Cancel has been pressed."""
+        if self._cancel_event.is_set():
+            raise CancelledError("Comparison cancelled.")
+        if message:
+            self._status(message)
+
+    def _cancelled(self, what: str) -> None:
+        message = f"Cancelled. Nothing was {what}."
+        self._status(message)
+        self.root.after(0, lambda: self.banner.show("info", message))
+
+    def is_busy(self) -> bool:
+        return self._measuring
 
     def _pick_cancelled(self, what: str) -> None:
         """Closing the picker is a cancellation, not a finding about the audio."""

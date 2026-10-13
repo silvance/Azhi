@@ -19,7 +19,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable, List, Optional, Sequence, Tuple
 
-from .. import listening
+from .. import listening, speaker_count
 from ..enrollment import (
     enroll_from_wav,
     parse_time_ranges,
@@ -41,7 +41,7 @@ from ..speaker_profiles import (
     save_speaker_profile,
     update_speaker_profile,
 )
-from ..transcription import AUDIO_EXTENSIONS
+from ..transcription import AUDIO_EXTENSIONS, CancelledError
 from ..voiceprints import SpeakerEmbedder
 from .dialogs import active_window, present
 from .errors import friendly_error
@@ -63,6 +63,7 @@ from .widgets import (
     primary_button,
     scrollable_body,
     secondary_button,
+    speaker_count_row,
     subtle_button,
 )
 
@@ -94,6 +95,11 @@ class SpeakerProfilesTab:
         # Compare and History reload rather than working from an old copy.
         self.on_profiles_changed: Optional[Callable[[], None]] = None
         self.status_var = tk.StringVar(value="Idle")
+        # One enrolment at a time, claimed on the UI thread before its worker
+        # starts; Cancel sets the event, checked during speaker separation and
+        # between measured stretches of audio.
+        self._enrolling = False
+        self._cancel_event = threading.Event()
         self._build()
         self.refresh()
 
@@ -117,6 +123,14 @@ class SpeakerProfilesTab:
         self._status_label.pack(anchor="w", pady=(0, SPACE_MD))
         self.banner = StatusBanner(container)
         self.banner.insert_before(self._status_label)
+        # Shown while a recording is being enrolled, under the line that says
+        # what it is doing. Separating speakers in a long recording takes
+        # minutes, and there was no way to stop it short of closing the app.
+        self._busy_row = ttk.Frame(container, style=Style.PAGE)
+        self._busy_bar = ttk.Progressbar(self._busy_row, mode="indeterminate")
+        self._busy_bar.pack(side="left", fill="x", expand=True)
+        self._cancel_button = secondary_button(self._busy_row, "Cancel", self._cancel)
+        self._cancel_button.pack(side="right", padx=(SPACE_SM, 0))
 
         # Master and detail: who exists on the left, everything about the
         # selected person on the right. At 1366 wide both fit; the list is kept
@@ -236,9 +250,10 @@ class SpeakerProfilesTab:
 
         actions = ttk.Frame(self.detail_body, style=Style.CARD_INNER)
         actions.pack(fill="x", pady=(SPACE_MD, 0))
-        primary_button(actions, "Add a recording", self._add_recording).pack(
-            side="left"
+        self._add_button = primary_button(
+            actions, "Add a recording", self._add_recording
         )
+        self._add_button.pack(side="left")
         self._approve_button = secondary_button(
             actions, "Approve sample", self._approve
         )
@@ -670,6 +685,9 @@ class SpeakerProfilesTab:
     # -- Enrolment ----------------------------------------------------------
 
     def _add_recording(self) -> None:
+        if self._enrolling:
+            self._status("Wait for the current recording to finish, or cancel it.")
+            return
         profile = self._selected
         if profile is None:
             self._status("Select or create a subject first.")
@@ -696,7 +714,7 @@ class SpeakerProfilesTab:
         choice = self._ask_mode()
         if choice is None:
             return
-        mode, ranges_text = choice
+        mode, ranges_text, speakers = choice
         spans: Optional[List[Tuple[float, float]]] = None
         if mode == MODE_RANGES:
             try:
@@ -704,20 +722,57 @@ class SpeakerProfilesTab:
             except ValueError as exc:
                 self._status(f"Couldn't read the time ranges: {exc}")
                 return
+        if self._enrolling:
+            return  # one was started while the questions were open
+        self._start_enrolling()
         threading.Thread(
             target=self._enroll_worker,
-            args=(profile, Path(path), mode, spans),
+            args=(profile, Path(path), mode, spans, speakers),
             daemon=True,
         ).start()
 
-    def _ask_mode(self) -> Optional[Tuple[str, str]]:
-        """Ask which speech in the recording belongs to the subject."""
+    def _start_enrolling(self) -> None:
+        """Claim the page for one enrolment (UI thread)."""
+        self._enrolling = True
+        self._cancel_event.clear()
+        self._add_button.configure(state="disabled")
+        self._cancel_button.configure(state="normal")
+        self._busy_row.pack(fill="x", pady=(0, SPACE_MD), after=self._status_label)
+        self._busy_bar.start(12)
+
+    def _finish_enrolling(self) -> None:
+        self._enrolling = False
+        self._busy_bar.stop()
+        self._busy_row.pack_forget()
+        self._add_button.configure(state="normal")
+
+    def _cancel(self) -> None:
+        """Stop the enrolment at its next checkpoint; nothing is added."""
+        if not self._enrolling:
+            return
+        self._cancel_event.set()
+        self._cancel_button.configure(state="disabled")
+        self.status_var.set("Cancelling… (stops at the next step)")
+
+    def _check_cancel(self, message: str = "") -> None:
+        """Progress that also stops the enrolment when Cancel has been pressed."""
+        if self._cancel_event.is_set():
+            raise CancelledError("Enrolment cancelled.")
+        if message:
+            self._status(message)
+
+    def is_busy(self) -> bool:
+        return self._enrolling
+
+    def _ask_mode(self) -> Optional[Tuple[str, str, Optional[int]]]:
+        """Ask which speech is the subject: (mode, time ranges, speaker count)."""
         win = tk.Toplevel(self.root)
         win.title("Which speech is the subject?")
         win.configure(background=palette().surface)
         win.resizable(False, False)
         mode_var = tk.StringVar(value=MODE_WHOLE)
         ranges_var = tk.StringVar(value="")
+        speakers_var = tk.StringVar(value=speaker_count.UNKNOWN)
         chosen: dict = {"value": None}
 
         frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
@@ -737,6 +792,15 @@ class SpeakerProfilesTab:
                 value=value,
                 style=Style.RADIO,
             ).pack(anchor="w")
+            if value == MODE_DIARIZE:
+                speakers_combo = speaker_count_row(frame, speakers_var)
+
+        def _mode_changed(*_args: object) -> None:
+            diarize = mode_var.get() == MODE_DIARIZE
+            speakers_combo.configure(state="readonly" if diarize else "disabled")
+
+        mode_var.trace_add("write", _mode_changed)
+        _mode_changed()
         ttk.Entry(frame, textvariable=ranges_var, width=44).pack(
             anchor="w", padx=(SPACE_XL, 0), pady=(SPACE_XS, 0)
         )
@@ -745,7 +809,13 @@ class SpeakerProfilesTab:
         )
 
         def _ok() -> None:
-            chosen["value"] = (mode_var.get(), ranges_var.get())
+            mode = mode_var.get()
+            speakers = (
+                speaker_count.from_label(speakers_var.get())
+                if mode == MODE_DIARIZE
+                else None
+            )
+            chosen["value"] = (mode, ranges_var.get(), speakers)
             win.destroy()
 
         row = ttk.Frame(frame, style=Style.CARD_INNER)
@@ -769,6 +839,7 @@ class SpeakerProfilesTab:
         source: Path,
         mode: str,
         spans: Optional[List[Tuple[float, float]]],
+        speakers: Optional[int] = None,
     ) -> None:
         wav = None
         temporary = False
@@ -784,8 +855,9 @@ class SpeakerProfilesTab:
             self._status(f"Preparing {source.name}…")
             embedder = self._get_embedder()
             wav, digest, temporary = prepare_source(source, progress=self._status)
+            self._check_cancel()
             if mode == MODE_DIARIZE:
-                spans = self._diarize_and_pick(wav, profile.display_name)
+                spans = self._diarize_and_pick(wav, profile.display_name, speakers)
                 if spans is None:
                     self._status(
                         "No speakers were found in that recording, so nothing "
@@ -801,8 +873,10 @@ class SpeakerProfilesTab:
                 embedder,
                 source_filename=source.name,
                 source_sha256=digest,
-                progress=self._status,
+                progress=self._check_cancel,
             )
+            # Nothing has been saved yet: a cancel up to here adds nothing.
+            self._check_cancel()
             added = list(result.added)
             if added:
                 # Into the subject as stored now: this copy was read before the
@@ -825,6 +899,8 @@ class SpeakerProfilesTab:
                 "Cancelled. No speaker was chosen, so nothing was added to "
                 f"{profile.display_name}."
             )
+        except CancelledError:
+            self._status(f"Cancelled. Nothing was added to {profile.display_name}.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(
                 f"Nothing was added to {profile.display_name}. {friendly_error(exc)}"
@@ -835,9 +911,10 @@ class SpeakerProfilesTab:
                     Path(wav).unlink()
                 except OSError:
                     pass
+            self.root.after(0, self._finish_enrolling)
 
     def _diarize_and_pick(
-        self, wav: Path, subject: str
+        self, wav: Path, subject: str, speakers: Optional[int] = None
     ) -> Optional[List[Tuple[float, float]]]:
         """Diarize the recording and let the operator choose the subject's speech.
 
@@ -846,8 +923,18 @@ class SpeakerProfilesTab:
         """
         from ..diarization import diarize
 
-        self._status("Separating speakers…")
-        segments = diarize(wav, progress=self._status)
+        self._status(
+            "Separating speakers"
+            + (f" into {speakers}" if speakers else "")
+            + "… (Cancel stops it)"
+        )
+        segments = diarize(
+            wav,
+            num_speakers=speakers,
+            progress=self._status,
+            cancelled=self._cancel_event.is_set,
+        )
+        self._check_cancel()
         options = speaker_options(segments)
         if not options:
             return None

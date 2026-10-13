@@ -477,6 +477,14 @@ the primary one if the office has such a setup.
       Speaker Profiles page: **Which speech is the subject?** opens on that
       screen, over the window — not on the primary screen, and not behind
       whatever else is open there.
+- [ ] **How many people?** (Compare step 2, and Add a recording on Speaker
+      Profiles) is offered only with *Several people*, defaults to *Not sure*,
+      and the separation splits the recording into the number chosen.
+- [ ] **Cancel during separation**: on Compare the busy card's Cancel, and on
+      Speaker Profiles the Cancel under the page title, stop a long recording
+      at the next step; the page says "Cancelled. Nothing was compared / added
+      to <subject>", nothing is recorded or saved, and Add a recording cannot
+      start a second one while the first runs. Closing the window mid-run asks.
 - [ ] **Which speaker is …?** (Speaker Profiles and Compare): no speaker is
       preselected and Use this speaker is off until one is chosen; Play sample
       plays that speaker's longest turn; closing the dialog stops playback.

@@ -444,10 +444,16 @@ comparison is worth.
 3. Answer **Which speech is the subject?**
    - *The whole recording is this subject* — for a recording of them alone.
    - *Several people — separate speakers and let me pick* — for a conversation.
+     Say **How many people?** if you know; on a long or poor recording that
+     keeps one voice from being split in two. *Not sure* lets the tool decide.
      You then pick which speaker is them. Each speaker has **▶ Play sample**
      (their longest turn); listen before choosing, because the speaker numbers
      only reflect the order they were found. Nothing is chosen for you, and
      Cancel adds nothing.
+
+   While the recording is being added, a progress bar and **Cancel** appear
+   under the page title. Cancel stops it at the next step; nothing is added
+   to the profile.
    - *I'll give the time ranges* — type the spans yourself, e.g.
      `0:10-0:45, 1:20-2:00`.
 4. Repeat with more recordings. More speech, from more occasions, in more
@@ -494,9 +500,11 @@ reference profile. The page is three numbered steps, in order:
 1. **Reference speaker** — pick the subject whose profile you are measuring
    against.
 2. **Questioned recording** — choose the recording, then answer **Whose voice
-   should be measured?**: the whole recording, or one speaker in it, which you
-   pick from a list showing how long each talked.
-3. **Result** — what was found.
+   should be measured?**: the whole recording, or one speaker in it. For one
+   speaker, say **How many people?** if you know, then pick the speaker after
+   listening to each (**▶ Play sample**).
+3. **Result** — what was found. While it is being measured, **Cancel** beside
+   the progress bar stops it; nothing is compared or recorded.
 
 ### Reading the result
 
