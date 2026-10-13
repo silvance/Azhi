@@ -1029,6 +1029,11 @@ class TranscribeTab:
 
         exports = ttk.Frame(results.body, style=Style.CARD_INNER)
         exports.pack(fill="x", pady=(SPACE_SM, 0))
+        # Inside the card, just above the buttons it reports on: popped out,
+        # the card is in its own window and the page banner is not on screen.
+        self._card_banner = StatusBanner(results.body, wraplength=760)
+        self._card_banner.insert_before(exports)
+        self._card_banner.wrap_to(results.body)
         for text, command in (
             ("Copy transcript", self._copy_transcript),
             ("Save as Word…", self._save_transcript_docx),
@@ -1232,6 +1237,7 @@ class TranscribeTab:
                 self.progress_bar.start(12)
                 self.progress_label_var.set(message or "Working…")
                 self.banner.hide()
+                self._card_banner.hide()
             else:
                 self.progress_bar.stop()
                 self.progress_bar.configure(mode="determinate")
@@ -1262,13 +1268,27 @@ class TranscribeTab:
             )
         return None
 
-    def _report_saved(self, path: str) -> None:
-        """A save the operator asked for: say where it went, in the banner."""
+    def _announce_in_card(self, kind: str, message: str) -> None:
+        """Report beside the transcript's own buttons (any thread)."""
+        self.root.after(0, lambda: self._card_banner.show(kind, message))
+
+    def _report(self, kind: str, message: str, *, in_card: bool) -> None:
+        if in_card:
+            self._announce_in_card(kind, message)
+        else:
+            self._announce(kind, message)
+
+    def _report_saved(self, path: str, *, in_card: bool = True) -> None:
+        """A save the operator asked for: say where it went, beside the button."""
         target = Path(path)
-        self._announce("success", f"Saved {target.name} in {target.parent}.")
+        self._report(
+            "success", f"Saved {target.name} in {target.parent}.", in_card=in_card
+        )
         self.progress_label_var.set(f"Saved {target.name}")
 
-    def _report_not_saved(self, what: str, exc: Exception) -> None:
+    def _report_not_saved(
+        self, what: str, exc: Exception, *, in_card: bool = True
+    ) -> None:
         """A save or open that failed, where it will be seen.
 
         These went only to the small line under the progress bar, which is not
@@ -1277,7 +1297,7 @@ class TranscribeTab:
         """
         message = f"{what}. {friendly_error(exc)}"
         append_line(self.status, message)
-        self._announce("error", message)
+        self._report("error", message, in_card=in_card)
         self.progress_label_var.set(what)
 
     def _set_result_caveat(self, message: str) -> None:
@@ -2183,7 +2203,8 @@ class TranscribeTab:
             return
         if self._save_outputs(result, source, outdir) is False:
             reason = self._failed_saves[-1].reason if self._failed_saves else ""
-            self._announce(
+            # Corrections are made in the card, so that is where this is said.
+            self._announce_in_card(
                 "error",
                 f"The change is on screen, but the saved transcript in {outdir} "
                 f"still has the old version ({reason.rstrip('.')}). Use Save as "
@@ -3253,9 +3274,9 @@ class TranscribeTab:
             return
         try:
             export_profile(profile, path)
-            self._report_saved(path)
+            self._report_saved(path, in_card=False)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self._report_not_saved("The profile was not exported", exc)
+            self._report_not_saved("The profile was not exported", exc, in_card=False)
 
     def _import_profile(self) -> None:
         """Load a profile exported from another instance and add it here."""
@@ -3272,7 +3293,9 @@ class TranscribeTab:
         try:
             profile = read_profile_file(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self._report_not_saved("The profile could not be imported", exc)
+            self._report_not_saved(
+                "The profile could not be imported", exc, in_card=False
+            )
             return
         # Don't silently clobber a profile already on this machine - including
         # one stored under the same file name with different capitals, or one
