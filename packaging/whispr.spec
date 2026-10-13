@@ -193,9 +193,17 @@ assets = REPO_ROOT / "whispr_assets"
 if assets.is_dir():
     datas.append((str(assets), "whispr_assets"))
 
-# This build is CPU-only (the GUI always runs device="cpu"), so strip the CUDA /
-# cuDNN libraries that ctranslate2 and onnxruntime ship in their wheels - they are
-# never loaded and account for the bulk of the bundle size.
+# This build is CPU-only, so strip the CUDA / cuDNN libraries that ctranslate2
+# and onnxruntime ship in their wheels: they are never loaded and account for
+# the bulk of the bundle size.
+#
+# This stripping is what makes the bundle CPU-only, and the application reads it
+# the other way round: whispr.acceleration.build_supports_cuda() answers "no"
+# inside a bundle *because* of these lines, and the hardware card then offers no
+# GPU setting rather than one that silently does nothing. So the two have to
+# agree. tests/test_acceleration.py asserts that this stripping is still here;
+# if a CUDA-capable bundle is ever wanted, that test fails and names the
+# function to revisit.
 _CUDA_MARKERS = (
     "cudnn",
     "cublas",

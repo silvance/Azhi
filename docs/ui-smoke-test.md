@@ -152,6 +152,25 @@ Only present when the build bundles the model; **System status** says which.
 - [ ] Listen to both files on a genuinely noisy recording and judge for
       yourself whether it helped. On a crowded one, expect it not to.
 
+### Processing hardware
+
+The bundle has the CUDA libraries stripped out, so a GPU setting in a shipped
+copy would be a control that silently does nothing. **In the bundle, on the
+deployment machine:**
+
+- [ ] *Advanced options → Processing hardware* shows **CPU** as plain text,
+      with **no dropdown** to open.
+- [ ] There is **no** *Auto* and no *NVIDIA GPU (CUDA)* anywhere in that card.
+- [ ] The line underneath says GPU support is not included in this build, and
+      does **not** say a GPU was "not detected" — that would send someone off
+      to fit a card for nothing.
+- [ ] **Self-test…** says the same thing about the hardware, in the same terms.
+- [ ] Open a settings file or operation profile saved by a source copy with the
+      GPU selected, then run: it transcribes on the CPU and the Status tab says
+      the build has no GPU support. It must not fail the run.
+- [ ] Running from source (not the bundle), the dropdown is back with all three
+      choices. If it is not, this has gone too far.
+
 ### Making a recording easier to listen to
 
 Present in every build — it needs no model file. **None of this has been seen

@@ -22,12 +22,13 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from .. import enhance, folder_batch, listening, output_names, speaker_count
 from ..acceleration import (
-    DEFAULT_MODE,
-    MODE_LABELS,
     Device,
+    build_supports_cuda,
     cuda_available,
+    default_mode,
     describe_hardware,
     fallback_to_cpu,
+    offered_modes,
 )
 from ..acceleration import resolve as resolve_device
 from ..diarization import assign_speakers, diarize
@@ -173,14 +174,17 @@ def _model_label(model: str) -> str:
 
 
 # The hardware dropdown shows friendly labels; the run needs the mode behind one.
-_DEVICE_MODES = {label: mode for mode, label in MODE_LABELS}
+# Built from what this build actually offers, not from every mode that exists:
+# a bundle has the CUDA libraries stripped out of it, so a GPU choice there is a
+# control that does nothing.
+_DEVICE_MODES = {label: mode for mode, label in offered_modes()}
 
 
 def _device_label(mode: str) -> str:
-    for candidate, label in MODE_LABELS:
+    for candidate, label in offered_modes():
         if candidate == mode:
             return label
-    return MODE_LABELS[0][1]
+    return offered_modes()[0][1]
 
 
 class _SkipWrite(Exception):
@@ -241,7 +245,7 @@ class TranscribeTab:
         self.listening_playback_var = tk.BooleanVar(value=False)
         # Compute device for transcription. CPU is the supported
         # baseline; a GPU only makes the same work finish sooner.
-        self.device_var = tk.StringVar(value=_device_label(DEFAULT_MODE))
+        self.device_var = tk.StringVar(value=_device_label(default_mode()))
         self.convert_video_var = tk.BooleanVar(value=True)
         # On by default wherever this build can actually do it. Nearly every
         # recording this is pointed at has more than one voice in it, and who
@@ -695,17 +699,38 @@ class TranscribeTab:
         hardware.pack(fill="x", pady=(SPACE_MD, 0))
         row = ttk.Frame(hardware.body, style=Style.CARD_INNER)
         row.pack(fill="x")
-        ttk.Combobox(
-            row,
-            textvariable=self.device_var,
-            values=[label for _, label in MODE_LABELS],
-            state="readonly",
-            width=34,
-        ).pack(side="left")
+        choices = offered_modes()
+        if len(choices) > 1:
+            ttk.Combobox(
+                row,
+                textvariable=self.device_var,
+                values=[label for _, label in choices],
+                state="readonly",
+                width=34,
+            ).pack(side="left")
+        else:
+            # One choice is not a choice. A dropdown with a single entry invites
+            # someone to open it looking for the GPU option and wonder where it
+            # went, so the one device is stated instead.
+            ttk.Label(row, text=choices[0][1], style=Style.FIELD_LABEL).pack(
+                side="left"
+            )
         ttk.Label(hardware.body, text=describe_hardware(), style=Style.META).pack(
             anchor="w", pady=(SPACE_XS, 0)
         )
-        if not cuda_available():
+        if not build_supports_cuda():
+            ttk.Label(
+                hardware.body,
+                text=(
+                    "This build runs on the processor. Graphics-card support is "
+                    "not included in it, so fitting one would not make it "
+                    "faster — that would need a differently built copy."
+                ),
+                style=Style.META,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w")
+        elif not cuda_available():
             ttk.Label(
                 hardware.body,
                 text="The processor runs everything; a graphics card only makes it faster.",
@@ -1692,7 +1717,7 @@ class TranscribeTab:
             # neither is needed so plain transcription stays fast.
             need_words = self.diarize_var.get() or self.highlight_conf_var.get()
             device = resolve_device(
-                _DEVICE_MODES.get(self.device_var.get(), DEFAULT_MODE)
+                _DEVICE_MODES.get(self.device_var.get(), default_mode())
             )
             if device.note:
                 append_line(self.status, device.note)
@@ -2908,7 +2933,7 @@ class TranscribeTab:
         # A label from an older build (or a hand-edited settings file) would
         # otherwise sit in the dropdown and resolve to Auto silently.
         if self.device_var.get() not in _DEVICE_MODES:
-            self.device_var.set(_device_label(DEFAULT_MODE))
+            self.device_var.set(_device_label(default_mode()))
         self._restore_speaker_count(data)
         if "learn_voices" in data:
             try:

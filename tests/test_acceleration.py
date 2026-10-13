@@ -1,5 +1,7 @@
 """Choosing the compute device: CPU baseline, optional GPU, graceful failure."""
 
+from pathlib import Path
+
 import pytest
 
 from whispr import acceleration
@@ -9,11 +11,25 @@ from whispr.acceleration import (
     MODE_CUDA,
     MODE_LABELS,
     Device,
+    build_supports_cuda,
     cpu_device,
+    default_mode,
     describe_hardware,
     fallback_to_cpu,
+    offered_modes,
     resolve,
 )
+
+
+@pytest.fixture
+def cpu_only_build(monkeypatch):
+    """A build with the CUDA libraries stripped out of it - i.e. any bundle."""
+    monkeypatch.setattr(acceleration, "build_supports_cuda", lambda: False)
+
+
+@pytest.fixture
+def cuda_capable_build(monkeypatch):
+    monkeypatch.setattr(acceleration, "build_supports_cuda", lambda: True)
 
 
 @pytest.fixture
@@ -111,4 +127,108 @@ def test_every_offered_mode_resolves(no_gpu):
 def test_describe_names_the_device_and_precision():
     assert Device("cuda", "float16", "NVIDIA GPU (CUDA)").describe() == (
         "NVIDIA GPU (CUDA) (cuda/float16)"
+    )
+
+
+# -- A build that cannot use a GPU at all ----------------------------------
+#
+# The bundle strips the CUDA libraries, so selecting a GPU in a shipped copy
+# used to fall back to the CPU without saying so: the setting looked honoured
+# and the run was simply slower than the operator believed it to be. These hold
+# the option shut where it cannot work, and keep the reason given accurate.
+
+
+def test_a_frozen_bundle_reports_no_gpu_support(monkeypatch):
+    monkeypatch.setattr(acceleration.sys, "frozen", True, raising=False)
+    assert build_supports_cuda() is False
+
+
+def test_running_from_source_keeps_gpu_support(monkeypatch):
+    monkeypatch.delattr(acceleration.sys, "frozen", raising=False)
+    assert build_supports_cuda() is True
+
+
+def test_a_cpu_only_build_does_not_offer_a_gpu(cpu_only_build):
+    modes = [mode for mode, _ in offered_modes()]
+    assert modes == [MODE_CPU]
+    assert MODE_CUDA not in modes
+
+
+def test_a_cpu_only_build_does_not_offer_auto_either(cpu_only_build):
+    """Auto would resolve to the CPU and its label promises a graphics card."""
+    labels = [label for _, label in offered_modes()]
+    assert labels == ["CPU"]
+    assert not any("GPU" in label for label in labels)
+    assert default_mode() == MODE_CPU
+
+
+def test_a_cuda_capable_build_offers_everything(cuda_capable_build):
+    assert offered_modes() == MODE_LABELS
+    assert default_mode() == DEFAULT_MODE
+
+
+def test_offered_modes_cannot_be_mutated_through_the_returned_list(
+    cuda_capable_build,
+):
+    offered_modes().clear()
+    assert offered_modes() == MODE_LABELS
+
+
+def test_a_gpu_request_in_a_cpu_only_build_blames_the_build(cpu_only_build):
+    """Not "no device detected": that sends someone off to fit a card."""
+    device = resolve(MODE_CUDA)
+    assert device.device == "cpu"
+    assert "does not include GPU support" in device.note
+    assert "detected" not in device.note
+
+
+def test_auto_in_a_cpu_only_build_is_quiet_about_it(cpu_only_build):
+    """Auto asked for the best available and got it. There is nothing to report."""
+    device = resolve(acceleration.MODE_AUTO)
+    assert device.device == "cpu"
+    assert device.note == ""
+
+
+def test_a_cpu_only_build_does_not_even_look_for_a_card(cpu_only_build, monkeypatch):
+    def refuse():
+        raise AssertionError("asked the driver about a GPU this build cannot use")
+
+    monkeypatch.setattr(acceleration, "cuda_device_count", refuse)
+    for mode in (MODE_CPU, MODE_CUDA, acceleration.MODE_AUTO):
+        assert resolve(mode).device == "cpu"
+
+
+def test_the_hardware_line_blames_the_build_not_the_machine(cpu_only_build):
+    text = describe_hardware()
+    assert "does not include GPU support" in text
+    assert "detected" not in text
+
+
+def test_every_mode_a_cpu_only_build_offers_resolves(cpu_only_build):
+    for mode, _ in offered_modes():
+        assert resolve(mode).device == "cpu"
+
+
+def test_a_saved_gpu_setting_from_another_build_still_runs(cpu_only_build):
+    """A profile or settings file can outlive the build that offered the mode."""
+    device = resolve(MODE_CUDA)
+    assert device.compute_type == acceleration.CPU_COMPUTE_TYPE
+    assert device.note, "it must say why the setting was not honoured"
+
+
+def test_the_packaging_still_strips_cuda_so_the_claim_holds():
+    """build_supports_cuda() says "no" in a bundle *because* the spec strips CUDA.
+
+    If that stripping is ever removed to ship a GPU-capable bundle, this fails
+    rather than leaving the application hiding an option that would by then work.
+    """
+    spec = Path(__file__).resolve().parent.parent / "packaging" / "whispr.spec"
+    text = spec.read_text(encoding="utf-8")
+    assert "_CUDA_MARKERS" in text
+    for marker in ("cudnn", "cublas", "cudart", "onnxruntime_providers_cuda"):
+        assert f'"{marker}"' in text, f"{marker} is no longer stripped"
+    # The lines that actually do the removing, not just the list of names.
+    assert "if not _is_cuda_lib(b[0])" in text
+    assert "build_supports_cuda" in text, (
+        "the spec should name the function that depends on this stripping"
     )

@@ -123,15 +123,30 @@ you need it. What is in there:
 
 | Card | Holds |
 | --- | --- |
-| **Audio and output** | Skip silence, noise reduction, low-confidence highlighting, `.srt` subtitles, video conversion |
+| **Audio and output** | Skip silence, noise reduction, the easier-to-listen-to copy, low-confidence highlighting, `.srt` subtitles, video conversion |
 | **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English) and **Expected words** |
 | **Speaker separation** | Method and grouping sensitivity — used only when *Identify who is speaking* is on |
-| **Processing hardware** | CPU or GPU. *Auto* is right unless you are testing something |
+| **Processing hardware** | Usually just says **CPU** — see below |
 | **Operation profile** | Settings and learned voices kept per operation — see below |
 
 The text appears as it is produced. **Status** next to the Transcript tab
 shows progress and anything worth telling you. The window stays usable
 throughout, and **Cancel** stops the run.
+
+### About Processing hardware
+
+In the shipped copy this card simply reads **CPU**, with no setting to change,
+and that is correct rather than a limitation of your machine: graphics-card
+support is deliberately left out of the build, because the libraries for it are
+most of the download size and the deployed machines do not have a card to use.
+Fitting one would not make a shipped copy faster. It would need a differently
+built copy, which is a change to how the bundle is made, not a setting.
+
+A copy run from source does offer *Auto*, *NVIDIA GPU (CUDA)* and *CPU*, and
+there *Auto* is the right choice.
+
+Either way the choice does not affect the words. It changes only how long the
+run takes.
 
 ### Worth knowing
 
