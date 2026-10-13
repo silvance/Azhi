@@ -30,7 +30,7 @@ from ..speaker_profiles import ProfileError, list_speaker_profiles
 from ..thresholds import BAND_HIGH, BAND_INSUFFICIENT, BAND_NOT_ASSESSED, DISCLAIMER
 from .dialogs import active_window
 from .errors import friendly_error
-from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette
+from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette, theme
 from .widgets import (
     Card,
     EmptyState,
@@ -202,6 +202,9 @@ class ComparisonLogTab:
             wraplength=780,
             justify="left",
         )
+        # The outcome is the largest text in the record, whichever colour
+        # style it is given (those carry body-size type).
+        self.headline.configure(font=theme().section)
         self.headline.pack(anchor="w")
         self.summary_var = tk.StringVar(value="")
         ttk.Label(

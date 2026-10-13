@@ -640,7 +640,7 @@ class TranscribeTab:
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
-        strength_row = ttk.Frame(audio.body)
+        strength_row = ttk.Frame(audio.body, style=Style.CARD_INNER)
         strength_row.pack(anchor="w", pady=(0, SPACE_XS))
         ttk.Label(strength_row, text="Strength:", style=Style.META).pack(side="left")
         ttk.Combobox(

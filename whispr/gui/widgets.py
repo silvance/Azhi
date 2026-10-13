@@ -25,6 +25,7 @@ from .theme import (
     SPACE_XS,
     Style,
     palette,
+    plain_tk,
 )
 
 # How often a scrollable page checks whether its content changed size. The
@@ -71,7 +72,9 @@ def scrollable_body(parent: tk.Misc) -> "tuple[tk.Canvas, ttk.Frame]":
     scrollable canvas: the scrollbar always works, and the mouse wheel is wired
     up by :func:`bind_wheel`.
     """
-    canvas = tk.Canvas(parent, highlightthickness=0, background=palette().background)
+    canvas = tk.Canvas(
+        parent, **plain_tk(highlightthickness=0, background=palette().background)
+    )
     vsb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=vsb.set)
     vsb.pack(side="right", fill="y")
@@ -614,12 +617,14 @@ class FileDropZone(ttk.Frame):
         colors = palette()
         self.empty = tk.Frame(
             self,
-            background=colors.surface,
-            highlightthickness=1,
-            highlightbackground=colors.border,
-            highlightcolor=colors.border,
-            padx=SPACE_MD,
-            pady=SPACE_MD,
+            **plain_tk(
+                background=colors.surface,
+                highlightthickness=1,
+                highlightbackground=colors.border,
+                highlightcolor=colors.border,
+                padx=SPACE_MD,
+                pady=SPACE_MD,
+            ),
         )
         inner = ttk.Frame(self.empty, style=Style.CARD_INNER)
         inner.pack()

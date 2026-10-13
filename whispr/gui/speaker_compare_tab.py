@@ -332,6 +332,9 @@ class SpeakerCompareTab:
         self.band_label = ttk.Label(
             self._result_body, textvariable=self.band_var, style=Style.SECTION_TITLE
         )
+        # Set on the widget, not the style: _set_band swaps the style for the
+        # colour, and each colour style carries body-size type.
+        self.band_label.configure(font=theme().app_title)
         self.band_label.pack(anchor="w")
         self.lead_var = tk.StringVar(value="")
         ttk.Label(

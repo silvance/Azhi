@@ -178,7 +178,7 @@ class PanelWindow:
         pack_options: "Optional[dict]" = None,
         on_error: "Optional[Callable[[str], None]]" = None,
     ) -> None:
-        from .theme import SPACE_MD, SPACE_SM, Style, palette
+        from .theme import SPACE_MD, SPACE_SM, Style, palette, plain_tk
         from .widgets import Card, secondary_button, subtle_button
 
         self._pack_options = dict(pack_options or {"fill": "both", "expand": True})
@@ -186,7 +186,7 @@ class PanelWindow:
         self._buttons: "list[ttk.Button]" = []
 
         self.host = tk.Frame(
-            parent, background=palette().background, highlightthickness=0
+            parent, **plain_tk(background=palette().background, highlightthickness=0)
         )
         self.host.pack(**self._pack_options)
         self.card = Card(self.host, title)
