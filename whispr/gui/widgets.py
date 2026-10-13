@@ -602,7 +602,8 @@ class FileDropZone(ttk.Frame):
         inner.pack()
         ttk.Label(inner, text=prompt, style=Style.BODY).pack()
         ttk.Label(inner, text="or", style=Style.META).pack(pady=(SPACE_XS, SPACE_XS))
-        secondary_button(inner, button_text, on_choose).pack()
+        self._choose_button = secondary_button(inner, button_text, on_choose)
+        self._choose_button.pack()
 
         self.chosen = ttk.Frame(self, style=Style.CARD_INNER)
         details = ttk.Frame(self.chosen, style=Style.CARD_INNER)
@@ -611,10 +612,17 @@ class FileDropZone(ttk.Frame):
         self._name.pack(anchor="w")
         self._meta = ttk.Label(details, text="", style=Style.META)
         self._meta.pack(anchor="w", pady=(SPACE_XS, 0))
-        secondary_button(self.chosen, change_text, on_choose).pack(side="right")
+        self._change_button = secondary_button(self.chosen, change_text, on_choose)
+        self._change_button.pack(side="right")
 
         variable.trace_add("write", lambda *_a: self.refresh())
         self.refresh()
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Allow or prevent choosing another file - not while it is being used."""
+        state = "normal" if enabled else "disabled"
+        self._choose_button.configure(state=state)
+        self._change_button.configure(state=state)
 
     def refresh(self) -> None:
         raw = self._variable.get().strip()

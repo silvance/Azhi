@@ -135,6 +135,7 @@ class SpeakerCompareTab:
         self._comparisons: List[ComparisonResult] = []
         # Set by the app so a new comparison shows up in the history page.
         self.on_history_changed: Optional[Callable[[], None]] = None
+        self._measuring = False
         self._embedder: Optional[SpeakerEmbedder] = None
         self._last_result: Optional[ComparisonResult] = None
 
@@ -513,7 +514,10 @@ class SpeakerCompareTab:
     def _update_action_state(self) -> None:
         """Compare and Search stay off while a derived copy is chosen."""
         refused = self._questioned_refusal(self.questioned_var.get().strip())
-        state = "disabled" if refused else "normal"
+        # Not while a comparison is running. Choosing another recording
+        # mid-run used to switch both back on, so a second comparison could
+        # start on top of the first.
+        state = "disabled" if refused or self._measuring else "normal"
         # The trace is attached in step 2 and the buttons are built in step 3,
         # so a write during construction arrives before they exist.
         for name in ("_compare_button", "_gallery_button"):
@@ -790,6 +794,10 @@ class SpeakerCompareTab:
         status line running underneath - invites reading it as the answer for
         this one.
         """
+        self._measuring = True
+        # The file being measured stays the file on screen until it is done;
+        # the busy line names it, and step 2 must not say something else.
+        self._questioned_zone.set_enabled(False)
         self.banner.hide()
         self._result_empty.pack_forget()
         self._result_body.pack_forget()
@@ -800,6 +808,8 @@ class SpeakerCompareTab:
             button.configure(state="disabled")
 
     def _finish_measuring(self) -> None:
+        self._measuring = False
+        self._questioned_zone.set_enabled(True)
         self._busy_bar.stop()
         self._result_busy.pack_forget()
         for button in self._busy_disabled():
