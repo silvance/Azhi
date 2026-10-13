@@ -147,8 +147,12 @@ Only present when the build bundles the model; **System status** says which.
       removed, and a warning about crowd noise.
 - [ ] **Analysis report…** records that the audio was cleaned.
 - [ ] Take that `.cleaned.wav` to **Compare Speakers** and choose it as the
-      questioned recording: it says it is a cleaned copy and that a score from
-      it is not comparable. The same on **Speaker Profiles → Add a recording**.
+      questioned recording: a red line **directly under the file** says it is a
+      cleaned copy and cannot be compared, and **Compare speakers** and
+      **Search all profiles** are greyed out. Choose the original and both come
+      back. The same refusal on **Speaker Profiles → Add a recording**.
+- [ ] Rename the file to upper case (`X.CLEANED.WAV`) and try again: still
+      refused.
 - [ ] Listen to both files on a genuinely noisy recording and judge for
       yourself whether it helped. On a crowded one, expect it not to.
 
@@ -198,8 +202,8 @@ properly and expect to find something.
       found (50 or 60 Hz). On a recording without hum, it must **not** claim to
       have found any.
 - [ ] Take that `.listening.wav` to **Compare Speakers** as the questioned
-      recording: it says it is a listening copy and that a score from it is not
-      comparable. The same on **Speaker Profiles → Add a recording**.
+      recording: it is refused the same way, with both buttons greyed out. The
+      same on **Speaker Profiles → Add a recording**.
 - [ ] Put the `.listening.wav` in a folder and run **a whole folder**: it is
       skipped and counted as a derived copy, not queued for transcription.
 - [ ] Listen to both files. On a recording with hum or a very quiet talker,

@@ -222,9 +222,17 @@ class SpeakerCompareTab:
         )
         self._questioned_zone.pack(fill="x")
 
-        ttk.Label(
+        whose = ttk.Label(
             card.body, text="Whose voice should be measured?", style=Style.FIELD_LABEL
-        ).pack(anchor="w", pady=(SPACE_MD, SPACE_XS))
+        )
+        whose.pack(anchor="w", pady=(SPACE_MD, SPACE_XS))
+        # Under the file it is about, not in the status line at the foot of the
+        # page, which at 1366x768 is below the fold.
+        self._questioned_banner = StatusBanner(card.body, wraplength=640)
+        self._questioned_banner.insert_before(whose)
+        # However the file gets chosen - the button, a drop, a project - the
+        # same check runs.
+        self.questioned_var.trace_add("write", lambda *_: self._on_questioned_changed())
         for text, value in (
             ("Only one person is speaking — use the whole recording", MODE_WHOLE),
             ("Several people — separate them and let me pick", MODE_DIARIZE),
@@ -450,29 +458,49 @@ class SpeakerCompareTab:
         )
         if path:
             self.questioned_var.set(path)
-            self._warn_if_cleaned(path)
 
-    def _warn_if_cleaned(self, path: str) -> None:
-        """Say so when the chosen file is one this application derived.
+    def _questioned_refusal(self, path: str) -> Optional[str]:
+        """Why ``path`` must not be compared, or None if it may be.
 
-        Both kinds of processing alter exactly the spectral detail a voiceprint
-        measures - noise reduction by removing what it takes for noise, a
-        listening copy by deliberately changing the balance of the voice - so a
-        profile built from a recording and a questioned sample that has been
-        through either are not measuring the same thing. The embedding-model
-        check already refuses that class of mismatch; this one cannot refuse,
-        because the only evidence is a file name - so it says why, clearly, and
-        leaves the judgement with the operator.
+        Both kinds of processing alter exactly the detail a voiceprint measures
+        - noise reduction by removing what it takes for noise, a listening copy
+        by deliberately changing the balance of the voice - so a score from one
+        is not comparable with a profile built from original audio.
+
+        This used to be a warning in the status line at the foot of the page,
+        with Compare and Search left enabled: the comparison ran and was logged.
+        The evidence is only a file name, and someone who renames the file can
+        still get it in; but that is a deliberate act, and Speaker Profiles
+        already refused on the same evidence.
         """
-        kind = listening.derived_kind(path)
+        kind = listening.derived_kind(path) if path else None
         if kind is None:
-            return
-        self._status(
-            f"That is a {kind}, not the recording. Processing changes the "
-            "detail a voice comparison measures, so a score from it is not "
-            "comparable with a profile built from original audio. Use the "
-            "recording itself."
+            return None
+        return (
+            f"That is a {kind}, not the recording, so it cannot be compared. "
+            "Processing changes the detail a voice comparison measures, and a "
+            "score from it would not be comparable with a profile built from "
+            "original audio. Choose the original recording."
         )
+
+    def _on_questioned_changed(self) -> None:
+        refusal = self._questioned_refusal(self.questioned_var.get().strip())
+        if refusal is None:
+            self._questioned_banner.hide()
+        else:
+            self._questioned_banner.show("error", refusal)
+        self._update_action_state()
+
+    def _update_action_state(self) -> None:
+        """Compare and Search stay off while a derived copy is chosen."""
+        refused = self._questioned_refusal(self.questioned_var.get().strip())
+        state = "disabled" if refused else "normal"
+        # The trace is attached in step 2 and the buttons are built in step 3,
+        # so a write during construction arrives before they exist.
+        for name in ("_compare_button", "_gallery_button"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.configure(state=state)
 
     def _get_embedder(self) -> SpeakerEmbedder:
         """Load the speaker-embedding model once (sherpa loads on first use)."""
@@ -564,6 +592,10 @@ class SpeakerCompareTab:
         if not source:
             self._status("Choose a questioned recording first.")
             return
+        refusal = self._questioned_refusal(source)
+        if refusal is not None:
+            self._questioned_banner.show("error", refusal)
+            return
         self._start_measuring(Path(source), "Comparing")
         threading.Thread(
             target=self._compare_worker, args=(profile, Path(source)), daemon=True
@@ -648,6 +680,10 @@ class SpeakerCompareTab:
         source = self.questioned_var.get().strip()
         if not source:
             self._status("Choose a questioned recording first.")
+            return
+        refusal = self._questioned_refusal(source)
+        if refusal is not None:
+            self._questioned_banner.show("error", refusal)
             return
         self._start_measuring(Path(source), "Searching all profiles against")
         threading.Thread(
@@ -741,6 +777,7 @@ class SpeakerCompareTab:
         self._result_busy.pack_forget()
         for button in self._busy_disabled():
             button.configure(state="normal")
+        self._update_action_state()
         # Nothing was produced (an error, or a cancelled speaker picker): show
         # the empty state rather than restoring a result about another
         # recording.
