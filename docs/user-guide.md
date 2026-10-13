@@ -521,8 +521,15 @@ starting points, not figures calibrated against your recordings, and they are
 recorded in every exported report so a result can always be read against the
 settings that produced it.
 
-**Export report…** writes the result with everything needed to check it later:
-the recordings, the models, the thresholds, and the caveats.
+**Export this result…** writes the result on screen — a comparison or a search
+of all profiles — with everything needed to check it later: the recording and
+its SHA-256, the models, the thresholds, and the caveats. The open transcript
+is attached only when it is of that same recording.
+
+**Export session report…** writes every comparison and search made on this
+page since Whispers opened, in order. **Start a new session report** begins
+that list again; it does not touch Comparison History, which keeps every
+record.
 
 ---
 

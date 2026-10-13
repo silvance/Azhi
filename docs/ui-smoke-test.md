@@ -406,8 +406,13 @@ recording containing that person speaking for more than three seconds.
       it supports no conclusion.
 - [ ] Nowhere does the screen show a percentage, "match", "confirmed" or
       "same person". The disclaimer is visible without expanding anything.
-- [ ] **Full result text** expands to the copyable block; Export report… and
-      Copy result work.
+- [ ] **Full result text** expands to the copyable block; Copy result works.
+- [ ] **Export this result…** writes the result on screen. Compare recording A,
+      then search all profiles with recording B: the report holds B's search
+      only, and leaves out a transcript that is not of B.
+- [ ] **Export session report…** holds both, in order. **Start a new session
+      report** empties it, says History is untouched, and History still lists
+      both.
 
 ## Comparison History
 

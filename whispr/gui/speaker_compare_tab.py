@@ -42,7 +42,6 @@ from ..enrollment import (
 )
 from ..matching import (
     ComparisonResult,
-    GalleryResult,
     compare_questioned_to_profile,
     search_gallery_for_questioned,
 )
@@ -53,7 +52,7 @@ from ..questioned import (
     QuestionedSpeaker,
     measure_from_wav,
 )
-from ..reports import write_analysis_report
+from ..reports import GallerySearch, ReportEntry, write_analysis_report
 from ..speaker_profiles import (
     SpeakerProfile,
     bundled_model_identity,
@@ -127,15 +126,17 @@ class SpeakerCompareTab:
         self._labels: dict = {}
         # The diarized cluster the operator chose, for the selection record.
         self._picked_speaker: Optional[str] = None
-        # Source hashes of every recording compared here, so a report only
-        # attaches a transcript that is actually of the questioned audio.
-        self._questioned_sources: set = set()
-        self._comparisons: List[ComparisonResult] = []
+        # Every comparison and search made on this page since it opened (or
+        # since "Start a new session report"), for the session report.
+        self._session: List[ReportEntry] = []
+        # The result the card is showing, which is what Export writes. It used
+        # to write the session's one-to-one comparisons instead, so with a
+        # search on screen the report held a different recording's result.
+        self._on_screen: Optional[ReportEntry] = None
         # Set by the app so a new comparison shows up in the history page.
         self.on_history_changed: Optional[Callable[[], None]] = None
         self._measuring = False
         self._embedder: Optional[SpeakerEmbedder] = None
-        self._last_result: Optional[ComparisonResult] = None
 
         self.reference_var = tk.StringVar(value="")
         self.reference_detail_var = tk.StringVar(value="No reference selected.")
@@ -374,19 +375,26 @@ class SpeakerCompareTab:
 
         result_actions = ttk.Frame(card.body, style=Style.CARD_INNER)
         result_actions.pack(fill="x", pady=(SPACE_MD, 0))
-        export = secondary_button(result_actions, "Export report…", self._export_report)
+        export = secondary_button(
+            result_actions, "Export this result…", self._export_report
+        )
         export.pack(side="left")
         copy = secondary_button(result_actions, "Copy result", self._copy_result)
         copy.pack(side="left", padx=(SPACE_SM, 0))
-        clear = subtle_button(
-            result_actions, "Clear recorded comparisons", self._clear_comparisons
+        session = secondary_button(
+            result_actions, "Export session report…", self._export_session_report
         )
-        clear.pack(side="left", padx=(SPACE_SM, 0))
+        session.pack(side="left", padx=(SPACE_SM, 0))
+        # Not "Clear recorded comparisons", which reads as deleting History.
+        restart = subtle_button(
+            result_actions, "Start a new session report", self._clear_comparisons
+        )
+        restart.pack(side="left", padx=(SPACE_SM, 0))
         # Everything that acts on "the result" is held while a new one is being
         # measured: until it finishes, these still refer to the previous
         # recording, and a copied or exported result about the wrong recording
         # is worse than one you had to wait for.
-        self._result_actions = (export, copy, clear)
+        self._result_actions = (export, copy, session, restart)
 
     # -- Reference ----------------------------------------------------------
 
@@ -687,9 +695,7 @@ class SpeakerCompareTab:
                 questioned_model=bundled_model_identity(),
                 allow_unverified_model=self.allow_unverified_var.get(),
             )
-            self._last_result = result
-            self._comparisons.append(result)
-            self._questioned_sources.add(measured.source_sha256 or "")
+            self._session.append(result)
             self._log(
                 record_from_comparison(
                     result,
@@ -741,7 +747,14 @@ class SpeakerCompareTab:
                     embedding_model=self._model_description(),
                 )
             )
-            self.root.after(0, lambda: self._show_gallery(measured, result))
+            search = GallerySearch(
+                result,
+                questioned_seconds=measured.speech_seconds,
+                questioned_quality=str(measured.quality),
+                questioned_window_count=measured.window_count,
+            )
+            self._session.append(search)
+            self.root.after(0, lambda: self._show_gallery(measured, search))
             self._status("Search complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
@@ -793,6 +806,7 @@ class SpeakerCompareTab:
         this one.
         """
         self._measuring = True
+        self._on_screen = None
         # The file being measured stays the file on screen until it is done;
         # the busy line names it, and step 2 must not say something else.
         self._questioned_zone.set_enabled(False)
@@ -832,6 +846,7 @@ class SpeakerCompareTab:
         same person, which is not what a cosine similarity is. A result the
         audio cannot support outranks whatever the number happens to be.
         """
+        self._on_screen = result
         self._show(result.format_lines())
 
         if result.refused:
@@ -925,8 +940,10 @@ class SpeakerCompareTab:
         self.band_var.set(text)
         self.band_label.configure(style=style_name)
 
-    def _show_gallery(self, measured: object, result: GalleryResult) -> None:
+    def _show_gallery(self, measured: object, search: GallerySearch) -> None:
         """A ranked search is context, not an identification."""
+        self._on_screen = search
+        result = search.result
         describe = getattr(measured, "describe", None)
         lines = list(describe()) if callable(describe) else []
         self._show(lines + [""] + result.summary_lines())
@@ -1005,8 +1022,9 @@ class SpeakerCompareTab:
         self.root.clipboard_append(text)
         self._status("Result copied to clipboard.")
 
-    def _analysis_matches(self, provenance) -> bool:
-        """True when the open analysis is of a recording these comparisons used.
+    @staticmethod
+    def _analysis_matches(provenance, entries: List[ReportEntry]) -> bool:
+        """True when the open analysis is of a recording ``entries`` measured.
 
         Compared by source SHA-256: a matching name proves nothing, and an
         analysis with no recorded hash cannot be shown to be the right one.
@@ -1016,13 +1034,26 @@ class SpeakerCompareTab:
             digest = provenance.source.sha256
         if not digest:
             return False
-        return digest in self._questioned_sources
+        return any(entry.questioned_source_sha256 == digest for entry in entries)
 
     def _export_report(self) -> None:
-        """Write a report of the comparisons made, with the transcript if there is one."""
-        if not self._comparisons:
-            self._status("Run a comparison first.")
+        """Write the result on screen, with the transcript if it is of that recording."""
+        entry = self._on_screen
+        if entry is None:
+            self._status("There is no comparison or search result on screen to export.")
             return
+        self._write_report([entry], "speaker-analysis-report.docx")
+
+    def _export_session_report(self) -> None:
+        """Write every comparison and search made since the session report began."""
+        if not self._session:
+            self._status(
+                "No comparison or search has been made since the report began."
+            )
+            return
+        self._write_report(list(self._session), "speaker-analysis-session-report.docx")
+
+    def _write_report(self, entries: List[ReportEntry], initialfile: str) -> None:
         result = names = provenance = None
         if self._get_analysis is not None:
             try:
@@ -1030,18 +1061,17 @@ class SpeakerCompareTab:
             except Exception:  # noqa: BLE001 - a report without the transcript is fine
                 result = names = provenance = None
         # A transcript from a *different* recording must not be presented as the
-        # source of these comparisons. Attach it only when its source hash is
-        # one of the recordings actually compared here.
-        if result is not None and not self._analysis_matches(provenance):
+        # source of these results. Attach it only when its source hash is one
+        # of the recordings actually measured for them.
+        left_out = result is not None and not self._analysis_matches(
+            provenance, entries
+        )
+        if left_out:
             result = names = provenance = None
-            self._status(
-                "The open transcript is of a different recording, so it was left "
-                "out of this report."
-            )
         path = filedialog.asksaveasfilename(
             title="Export analysis report",
             defaultextension=".docx",
-            initialfile="speaker-analysis-report.docx",
+            initialfile=initialfile,
             filetypes=[("Word document", "*.docx"), ("Text file", "*.txt")],
             parent=active_window(self.root),
         )
@@ -1053,15 +1083,28 @@ class SpeakerCompareTab:
                 result=result,
                 speaker_names=names,
                 provenance=provenance,
-                comparisons=self._comparisons,
+                comparisons=entries,
             )
-            self._status(f"Saved {Path(path).name}")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._status(friendly_error(exc))
+            return
+        count = len(entries)
+        what = "1 result" if count == 1 else f"{count} results"
+        note = (
+            " The open transcript is of a different recording, so it was left out."
+            if left_out
+            else ""
+        )
+        self._status(f"Saved {what} to {path}.{note}")
 
     def _clear_comparisons(self) -> None:
-        self._comparisons = []
-        self._status("Cleared the recorded comparisons.")
+        count = len(self._session)
+        self._session = []
+        self._status(
+            "The session report starts again from the next result"
+            + (f" ({count} earlier result(s) left out)" if count else "")
+            + ". Comparison History keeps every record."
+        )
 
     def _status(self, message: str) -> None:
         self.root.after(0, lambda: self.status_var.set(message))
