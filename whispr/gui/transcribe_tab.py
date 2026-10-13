@@ -235,6 +235,11 @@ class TranscribeTab:
         self._cancel_event = cancel_event
         self._on_cancel = on_cancel
         self._dnd_ok = dnd_ok
+        # True from the moment a run or redo is asked for until it has ended,
+        # set and cleared on the UI thread. The buttons are switched off from
+        # the worker via after(), which left a window in which a second click
+        # started a second run, and nothing else checked at all.
+        self._busy = False
 
         # Bundled (offline) models take priority so the app works air-gapped;
         # the order preferred is DEFAULT_MODEL first, and why is stated there.
@@ -1218,11 +1223,8 @@ class TranscribeTab:
                 self.progress_bar.configure(mode="determinate")
                 self.progress_bar["value"] = 0
                 self.progress_label_var.set(message or "Ready")
-                self.run_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
-                # Whether the redo comes back depends on what the run left
-                # behind, so let that decide rather than enabling it here.
-                self._update_redo_state()
+                self._release_busy()
 
         self.root.after(0, _do)
 
@@ -1452,7 +1454,37 @@ class TranscribeTab:
 
     # -- Run ---------------------------------------------------------------
 
+    def _refuse_while_busy(self, what: str) -> bool:
+        """True (and say why) when a run or redo is still going."""
+        if not self._busy:
+            return False
+        self._announce(
+            "warning",
+            f"Wait for the current run to finish, or cancel it, before {what}.",
+        )
+        return True
+
+    def _claim_busy(self) -> None:
+        """Mark the page busy now, before the worker starts (UI thread)."""
+        self._busy = True
+        self.run_button.configure(state="disabled")
+        self.redo_button.configure(state="disabled")
+        # Corrections made while a run is going were lost: a redo replaces the
+        # transcript when it ends, and a batch replaces it with each file.
+        self.transcript_view.set_editable(False)
+
+    def _release_busy(self) -> None:
+        """End the busy state begun by :meth:`_claim_busy` (UI thread)."""
+        self._busy = False
+        self.transcript_view.set_editable(True)
+        self.run_button.configure(state="normal")
+        # Whether the redo comes back depends on what the run left behind, so
+        # let that decide rather than enabling it here.
+        self._update_redo_state()
+
     def run_in_thread(self) -> None:
+        if self._busy:
+            return  # a second click before the button was switched off
         # One question has to be answered before a long job starts, because the
         # cost of getting it wrong is only visible once the job has finished.
         if not self._speaker_count_answered():
@@ -1472,6 +1504,7 @@ class TranscribeTab:
             return
         # Collapse the settings so the transcript and progress get the space.
         self._collapse_all_settings()
+        self._claim_busy()
         self._cancel_event.clear()
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -2105,7 +2138,12 @@ class TranscribeTab:
 
     def _update_redo_state(self) -> None:
         def _do() -> None:
-            if self._can_redo_speakers():
+            if self._busy:
+                # Each finished file of a batch, and every edit, asked for the
+                # button back - mid-run, where a redo would end the run's busy
+                # state while the batch carried on.
+                self.redo_button.configure(state="disabled")
+            elif self._can_redo_speakers():
                 self.redo_button.configure(state="normal")
                 people = "speaker" if self._diarized_count == 1 else "speakers"
                 self.redo_hint_var.set(
@@ -2123,6 +2161,8 @@ class TranscribeTab:
 
     def _redo_speakers(self) -> None:
         """Ask for a different speaker count and split the transcript again."""
+        if self._refuse_while_busy("splitting the speakers again"):
+            return
         if not self._can_redo_speakers():
             self._announce(
                 "warning",
@@ -2140,6 +2180,9 @@ class TranscribeTab:
         )
         if choice is None:  # cancelled; "" is a real answer ("work it out")
             return
+        if self._refuse_while_busy("splitting the speakers again"):
+            return  # a run was started while the question was open
+        self._claim_busy()
         self._cancel_event.clear()
         threading.Thread(
             target=self._redo_speakers_worker, args=(choice,), daemon=True
@@ -2397,6 +2440,8 @@ class TranscribeTab:
 
     def _open_project(self) -> None:
         """Load a saved project so its transcript can be reviewed/edited again."""
+        if self._refuse_while_busy("opening a project"):
+            return
         path = filedialog.askopenfilename(
             title="Open project",
             filetypes=[
@@ -2710,6 +2755,14 @@ class TranscribeTab:
         embedder = self._get_embedder()
         if embedder is None:
             return
+        # Read now, on the UI thread: by the time the worker files a proposed
+        # sample, a new run may have replaced both, and the sample would be
+        # recorded as coming from a recording it never came from.
+        source = self._result_source
+        provenance = self._result_provenance
+        source_sha256 = (
+            provenance.source.sha256 if provenance and provenance.source else None
+        )
 
         def _worker() -> None:
             try:
@@ -2733,12 +2786,20 @@ class TranscribeTab:
                 self._announce("error", f"Voice not kept. {exc}")
             except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
                 self.progress_label_var.set(friendly_error(exc))
-            self._propose_to_speaker_profile(name, wav, spans, embedder)
+            self._propose_to_speaker_profile(
+                name, wav, spans, embedder, source, source_sha256
+            )
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _propose_to_speaker_profile(
-        self, name: str, wav: Path, spans: List[Tuple[float, float]], embedder
+        self,
+        name: str,
+        wav: Path,
+        spans: List[Tuple[float, float]],
+        embedder,
+        source: Optional[Path],
+        source_sha256: Optional[str],
     ) -> None:
         """Offer this correction to a known subject's profile - unapproved.
 
@@ -2752,18 +2813,13 @@ class TranscribeTab:
             subject = find_speaker_profile_by_name(name)
             if subject is None:
                 return
-            source = self._result_source
             result = enroll_from_wav(
                 subject,
                 wav,
                 spans,
                 embedder,
                 source_filename=source.name if source else None,
-                source_sha256=(
-                    self._result_provenance.source.sha256
-                    if self._result_provenance and self._result_provenance.source
-                    else None
-                ),
+                source_sha256=source_sha256,
                 sample_type=SAMPLE_LEARNED,
                 notes="Proposed automatically from a transcript correction.",
             )
@@ -2800,6 +2856,8 @@ class TranscribeTab:
         known subject - pending review, never trusted on the strength of a
         correction alone.
         """
+        if self._refuse_while_busy("saving a speaker"):
+            return
         if self._result is None:
             self._announce("warning", "Transcribe a recording first.")
             return
@@ -2864,6 +2922,12 @@ class TranscribeTab:
         )
         if choice is None:
             return
+        if self._refuse_while_busy("saving a speaker"):
+            return
+        # Held for the few seconds it takes: the worker reads this run's audio
+        # and source, which a run started meanwhile would delete and replace -
+        # filing one recording's speaker under another recording's name.
+        self._claim_busy()
         threading.Thread(
             target=self._save_speaker_worker,
             args=(choice, list(spans[choice.speaker]), embedder),
@@ -2877,6 +2941,17 @@ class TranscribeTab:
         embedder: SpeakerEmbedder,
     ) -> None:
         """Enrol the chosen speaker's audio off the UI thread, then report."""
+        try:
+            self._save_speaker(choice, spans, embedder)
+        finally:
+            self.root.after(0, self._release_busy)
+
+    def _save_speaker(
+        self,
+        choice: SaveSpeakerChoice,
+        spans: List[Tuple[float, float]],
+        embedder: SpeakerEmbedder,
+    ) -> None:
         subject = choice.profile
         self.progress_label_var.set(f"Measuring {choice.speaker}\u2019s speech\u2026")
         notes = (
