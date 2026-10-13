@@ -100,6 +100,7 @@ from .widgets import (
     StatusBanner,
     bind_wheel,
     primary_button,
+    register_drop,
     scrollable_body,
     secondary_button,
     set_readonly_text,
@@ -122,7 +123,9 @@ class SpeakerCompareTab:
         root: tk.Misc,
         *,
         get_analysis: Optional[Callable[[], Any]] = None,
+        dnd_ok: bool = False,
     ) -> None:
+        self._dnd_ok = dnd_ok
         self.parent = parent
         self.root = root
         # Supplies (result, speaker_names, provenance) from the Transcribe tab so
@@ -217,11 +220,19 @@ class SpeakerCompareTab:
             card.body,
             self.questioned_var,
             self._choose_questioned,
-            prompt="Drop the recording to check here",
+            # Only invite a drop where one works: without drag-and-drop the
+            # invitation did nothing.
+            prompt=(
+                "Drop the recording to check here"
+                if self._dnd_ok
+                else "Choose the recording to check"
+            ),
             button_text="Choose recording",
             change_text="Change recording",
         )
         self._questioned_zone.pack(fill="x")
+        for target in (self._questioned_zone, self._questioned_zone.empty):
+            register_drop(self.root, self._dnd_ok, target, self._on_drop_questioned)
 
         whose = ttk.Label(
             card.body, text="Whose voice should be measured?", style=Style.FIELD_LABEL
@@ -502,6 +513,13 @@ class SpeakerCompareTab:
         )
         if path:
             self.questioned_var.set(path)
+
+    def _on_drop_questioned(self, paths: List[Path]) -> None:
+        """A dropped file is chosen like one picked with the button."""
+        if not paths or self._measuring:
+            return
+        # The variable's trace runs the same processed-audio check as the button.
+        self.questioned_var.set(str(paths[0]))
 
     def _questioned_refusal(self, path: str) -> Optional[str]:
         """Why ``path`` must not be compared, or None if it may be.

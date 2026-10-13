@@ -138,6 +138,7 @@ class WhisprApp:
                 # Lets a comparison report carry the current transcript and the
                 # provenance of the run that produced it.
                 get_analysis=self.transcribe.current_analysis,
+                dnd_ok=self._dnd_ok,
             )
             self._tabs.append(self.speaker_compare)
 
