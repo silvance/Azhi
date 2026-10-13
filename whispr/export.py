@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional, Union
 
+from .speaker_names import LEAD_LEGEND, any_leads
 from .transcription import TranscriptionResult
 
 PathLike = Union[str, Path]
@@ -79,6 +80,13 @@ def transcript_to_docx(
             for line in result.text.split("\n"):
                 document.add_paragraph(line)
     else:
+        labels = [
+            result._speaker_label(segment.speaker, speaker_names)
+            for segment in result.segments
+        ]
+        if any_leads(labels):
+            note = document.add_paragraph()
+            note.add_run(LEAD_LEGEND).italic = True
         for segment in result.segments:
             label = result._speaker_label(segment.speaker, speaker_names)
             paragraph = document.add_paragraph()

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .resources import find_ffmpeg
+from .speaker_names import LEAD_LEGEND, any_leads
 
 PathLike = Union[str, Path]
 ProgressCallback = Callable[[str], None]
@@ -239,10 +240,18 @@ class TranscriptionResult:
             if self.segments:
                 return sep.join(segment.text for segment in self.segments)
             return self.text
-        return sep.join(
-            f"[{self._speaker_label(segment.speaker, speaker_names)}] {segment.text}"
+        labels = [
+            self._speaker_label(segment.speaker, speaker_names)
             for segment in self.segments
+        ]
+        body = sep.join(
+            f"[{label}] {segment.text}" for label, segment in zip(labels, self.segments)
         )
+        if any_leads(labels):
+            # A transcript leaves this machine as this file; the marker on each
+            # line is only self-explanatory if the file says what it means.
+            return f"{LEAD_LEGEND}\n\n{body}"
+        return body
 
     def to_srt(self, speaker_names: Optional[Dict[str, str]] = None) -> str:
         """Render the segments as SubRip (``.srt``) subtitles."""

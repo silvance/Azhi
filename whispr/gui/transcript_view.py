@@ -19,6 +19,7 @@ from ..editing import (
     split_segment_on_span,
     split_segment_on_word,
 )
+from ..speaker_names import bare_name, is_lead
 from ..transcription import (
     TranscriptionResult,
     is_low_confidence_segment,
@@ -650,10 +651,17 @@ class TranscriptView:
 
     def _rename_speaker(self, speaker_id: str) -> None:
         current = self._speaker_names.get(speaker_id, speaker_id)
+        # A voice lead is offered without its marker, so pressing OK confirms
+        # it as a plain name rather than writing "? (voice lead)" into one.
         new_name = simpledialog.askstring(
             "Rename speaker",
-            f"New name for {current}:",
-            initialvalue=current,
+            (
+                f"{current} was suggested by voice similarity. Type the name to "
+                "confirm it, or a different one to correct it:"
+                if is_lead(current)
+                else f"New name for {current}:"
+            ),
+            initialvalue=bare_name(current),
             parent=active_window(self.root),
         )
         if not new_name or not new_name.strip():

@@ -277,3 +277,22 @@ def test_recognize_leaves_ambiguous_turn_unknown():
     out, name_map = recognize("x.wav", segments, [a, b], embedder)
     assert out[0].speaker == "SPEAKER_00"
     assert name_map == {}
+
+
+def test_a_turn_too_short_to_assess_is_not_named():
+    """A name on a turn is an assessment, so it needs the assessment minimum.
+
+    QA found 1.2 s turns being named, where the comparison page would have
+    called the same audio Insufficient data.
+    """
+    known = Voiceprint(name="Viktor", vectors=[[1.0, 0.0]])
+    segments = [
+        SpeakerSegment(start=0.0, end=1.2, speaker="SPEAKER_00"),  # embeddable, short
+        SpeakerSegment(start=2.0, end=6.0, speaker="SPEAKER_00"),
+    ]
+    embedder = _FakeEmbedder({0.0: [1.0, 0.0], 2.0: [1.0, 0.0]})
+    out, name_map = recognize(
+        "x.wav", segments, [known], embedder, min_assess_seconds=3.0
+    )
+    assert [s.speaker for s in out] == ["SPEAKER_00", "voice::Viktor"]
+    assert name_map == {"voice::Viktor": "Viktor"}

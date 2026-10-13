@@ -65,7 +65,7 @@ from ..run_summary import (
 )
 from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
 from ..speaker_count import UNSET as SPEAKERS_UNSET
-from ..speaker_names import preset_names
+from ..speaker_names import is_lead, preset_names
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
     ProfileError,
@@ -2490,9 +2490,12 @@ class TranscribeTab:
                 embedder,
                 threshold=active.recognition_acceptance,
                 margin=active.recognition_margin,
-                # min_seconds stays voiceprints.MIN_TURN_SECONDS: it is the
-                # shortest turn worth embedding at all, not the comparison
-                # tool's minimum for making an assessment.
+                # Putting a person's name on a turn is an assessment, so it
+                # takes the same minimum the comparison page uses before it will
+                # make one. It used to be the 1 s embedding floor, which named
+                # speakers on turns the comparison page would have called
+                # Insufficient data.
+                min_assess_seconds=active.min_questioned_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - never fail a run on recognition
             append_line(self.status, f"Voice recognition skipped: {exc}")
@@ -2530,6 +2533,15 @@ class TranscribeTab:
         """
         profile = self._profile
         if profile is None or not self.learn_var.get():
+            return
+        if is_lead(name):
+            # The name is still the recogniser's suggestion. Learning its voice
+            # from a line attributed to it would let a guess reinforce itself,
+            # so the operator confirms the name first.
+            self.progress_label_var.set(
+                f"Not learned: {name} is still a suggestion. Click the speaker "
+                "tag and confirm the name first."
+            )
             return
         refusal = _derived_voice_refusal(self._result_source)
         if refusal is not None:

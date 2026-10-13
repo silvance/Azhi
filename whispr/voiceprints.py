@@ -434,6 +434,7 @@ def recognize(
     threshold: float = RECOGNITION_ACCEPTANCE_THRESHOLD,
     margin: float = RECOGNITION_MARGIN_THRESHOLD,
     min_seconds: float = MIN_TURN_SECONDS,
+    min_assess_seconds: float = 0.0,
 ) -> "Tuple[List[SpeakerSegment], Dict[str, str]]":
     """Attribute diarizer turns to enrolled voices, conservatively and per turn.
 
@@ -446,6 +447,10 @@ def recognize(
     Sharing a cluster with a matched turn is evidence about clustering, not
     evidence that this audio is the known person - and when the label names a
     specific individual, guessing is the wrong trade.
+
+    ``min_seconds`` is the shortest turn worth embedding at all.
+    ``min_assess_seconds`` is the shortest turn that may be *named*: a turn
+    between the two is embedded and judged, and refused as too short.
 
     Returns the relabelled turns plus a ``{speaker_id: display_name}`` map for
     the ids that were recognised (recognised ids look like ``voice::Name``).
@@ -468,6 +473,7 @@ def recognize(
                     acceptance=threshold,
                     margin=margin,
                     speech_seconds=duration,
+                    min_speech_seconds=min_assess_seconds,
                 )
                 if decision.accepted and decision.best_name:
                     speaker_id = f"voice::{decision.best_name}"

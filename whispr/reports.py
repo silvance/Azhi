@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Sequence, Union
 
 from .matching import ComparisonResult
 from .provenance import AnalysisProvenance
+from .speaker_names import LEAD_LEGEND, any_leads
 from .thresholds import DISCLAIMER, Thresholds, active, describe
 from .transcription import TranscriptionResult
 
@@ -53,13 +54,17 @@ def _transcript_lines(
     if not result.segments:
         return [result.text or "(empty transcript)"]
     lines: List[str] = []
+    labels: List[str] = []
     for segment in result.segments:
         stamp = f"[{_clock(segment.start)}-{_clock(segment.end)}]"
         if segment.speaker:
             label = result._speaker_label(segment.speaker, speaker_names)
+            labels.append(label)
             lines.append(f"{stamp} [{label}] {segment.text}")
         else:
             lines.append(f"{stamp} {segment.text}")
+    if any_leads(labels):
+        return [LEAD_LEGEND, ""] + lines
     return lines
 
 
