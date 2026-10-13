@@ -439,13 +439,23 @@ never the duration of a selection that was only partly usable.
 
 **Sharing and comparing speakers.** A profile can be moved between machines with
 **Export…** / **Import…** (the whole profile — settings and learned voices — as one
-`*.whispr-profile.json`; import warns before overwriting a same-named profile). For
-1:1 checks, **Export speaker…** writes a single person's voiceprint
-(`*.whispr-voiceprint.json`), and **Compare voices…** loads two voiceprints (from
-those files, or from a whole profile) and reports a **similarity score out of 1.00**
-with a qualitative band — **High similarity / Intermediate similarity / Low
-similarity / Insufficient data** — alongside the operational threshold, the speech
-duration on each side and the quality of each.
+`*.whispr-profile.json`; import warns before overwriting a same-named profile).
+
+Comparing one voice with another is done on the **Compare Speakers** page, against
+a subject built on **Speaker Profiles**, and nowhere else. It reports a
+**similarity score out of 1.00** with a qualitative band — **High similarity /
+Intermediate similarity / Low similarity / Insufficient data** — alongside the
+operational threshold, the speech duration on each side and the quality of each,
+and it refuses a comparison across different voice models.
+
+An earlier **Compare voices…** button on the operation-profile card compared two
+exported voiceprint files directly. It was removed: a voiceprint file records
+neither how much speech built it nor which model measured it, so that dialog could
+apply neither the minimum-speech rule nor the model check, scored prints of
+different models as "Low similarity" instead of refusing, and called two
+single-sample prints "High similarity". Its results were also never logged to
+Comparison History. **Export speaker…**, which only produced those files, went
+with it.
 
 The score is **not** a percentage and **not** a probability: a cosine similarity of
 0.78 does not mean "78% the same person". Whispers deliberately never reports a

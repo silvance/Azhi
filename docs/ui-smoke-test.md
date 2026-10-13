@@ -406,7 +406,8 @@ properly and expect to find something.
 - [ ] Help and System status open themed, scroll, close on **Escape**, and open
       with the Close button focused.
 - [ ] System status still leads with READY / NOT READY.
-- [ ] Compare voices… (from the operation profile card) is themed and readable.
+- [ ] The operation profile card has **no** "Export speaker…" or "Compare
+      voices…" button. Comparing voices happens on Compare Speakers only.
 - [ ] Every dialog is dark like the rest of the application. A pale grey box
       with plain grey buttons is one that was missed.
 - [ ] Every dialog closes on **Escape** and on its window X, and cancelling

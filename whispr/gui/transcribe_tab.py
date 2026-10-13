@@ -88,7 +88,6 @@ from ..transcription import (
     usable_model_folder,
 )
 from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
-from . import speaker_compare
 from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
@@ -852,8 +851,6 @@ class TranscribeTab:
             ("Save", self._save_profile_settings),
             ("Export…", self._export_profile),
             ("Import…", self._import_profile),
-            ("Export speaker…", self._export_speaker),
-            ("Compare voices…", self._compare_voices),
         ):
             subtle_button(buttons, text, command).pack(side="left", padx=(0, SPACE_SM))
         danger_button(buttons, "Delete", self._delete_profile).pack(side="left")
@@ -867,9 +864,11 @@ class TranscribeTab:
         ttk.Label(
             frame,
             text=(
-                "With speaker identification on, each speaker is matched against "
-                "the voices this profile has learned. Correcting a name teaches it "
-                "that voice for next time; it does not change the words themselves."
+                "With speaker identification on, each speaker is compared with "
+                "the voices this profile has learned, and a similar one is shown "
+                "as a suggestion marked \u201c?\u00a0(voice\u00a0lead)\u201d for you to "
+                "confirm. Confirming or correcting a name teaches it that voice "
+                "for next time; it does not change the words themselves."
             ),
             style=Style.META,
             wraplength=560,
@@ -2893,19 +2892,6 @@ class TranscribeTab:
         self.progress_label_var.set(
             f"Imported profile '{profile.name}' ({vp_count} learned voice(s))."
         )
-
-    # -- Single-speaker export + voice comparison --------------------------
-    # The dialogs live in whispr.gui.speaker_compare (self-contained); these
-    # thin wrappers keep the button commands and pass the active profile + a
-    # status callback.
-
-    def _export_speaker(self) -> None:
-        speaker_compare.export_speaker(
-            self.root, self._profile, self.progress_label_var.set
-        )
-
-    def _compare_voices(self) -> None:
-        speaker_compare.open_compare_dialog(self.root)
 
     def _profile_settings(self) -> Dict[str, object]:
         """The settings a profile remembers (the persisted set plus custom words).

@@ -173,16 +173,6 @@ def best_match(
 # -- 1:1 speaker comparison (verification) ---------------------------------
 
 
-def compare_voiceprints(a: Voiceprint, b: Voiceprint) -> float:
-    """Similarity of two voiceprints: cosine of their centroids (~0..1).
-
-    Higher means the two sets of enrolled speech are more alike. This is an
-    investigative *indicator*, not a calibrated probability and not forensic
-    identification - see :func:`similarity_band`.
-    """
-    return cosine_similarity(a.centroid, b.centroid)
-
-
 def similarity_band(
     score: float,
     high: float = COMPARISON_HIGH_BAND,
