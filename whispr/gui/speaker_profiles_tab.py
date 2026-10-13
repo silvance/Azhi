@@ -31,6 +31,7 @@ from ..hashing import short
 from ..speaker_profiles import (
     ProfileError,
     SpeakerProfile,
+    add_samples,
     delete_speaker_profile,
     find_speaker_profile_by_id,
     list_speaker_profiles,
@@ -38,6 +39,7 @@ from ..speaker_profiles import (
     new_subject_id,
     profile_path,
     save_speaker_profile,
+    update_speaker_profile,
 )
 from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
@@ -302,6 +304,11 @@ class SpeakerProfilesTab:
 
     def refresh(self) -> None:
         """Reload the stored subjects and repaint the list."""
+        # Kept by subject id across the reload. Every approval, removal and
+        # enrolment refreshes this page, and each one used to drop the
+        # selection and put "No subject selected" in place of the subject
+        # being worked on.
+        kept = self.subject_tree.selection()
         self._profiles = list_speaker_profiles()
         self.subject_tree.delete(*self.subject_tree.get_children())
         for profile in self._profiles:
@@ -324,6 +331,8 @@ class SpeakerProfilesTab:
         else:
             self.subject_tree.pack_forget()
             self.subjects_empty.pack(fill="both", expand=True)
+        if kept and self.subject_tree.exists(kept[0]):
+            self.subject_tree.selection_set(kept[0])
         self._on_select()
 
     def _on_select(self) -> None:
@@ -599,8 +608,7 @@ class SpeakerProfilesTab:
             )
         ):
             return
-        if profile.approve_sample(sample_id) and self._save(profile):
-            self._selected = profile
+        if self._change(profile, lambda stored: stored.approve_sample(sample_id)):
             self._render_detail()
             self._status("Sample promoted into the trusted reference.")
 
@@ -621,8 +629,7 @@ class SpeakerProfilesTab:
             parent=active_window(self.root),
         ):
             return
-        if profile.remove_sample(sample_id) and self._save(profile):
-            self._selected = profile
+        if self._change(profile, lambda stored: stored.remove_sample(sample_id)):
             self.refresh()
             self._status("Sample removed.")
 
@@ -640,18 +647,25 @@ class SpeakerProfilesTab:
             self.refresh()
         return current
 
-    def _save(self, profile: SpeakerProfile) -> bool:
+    def _change(
+        self, profile: SpeakerProfile, change: Callable[[SpeakerProfile], bool]
+    ) -> bool:
+        """Apply ``change`` to the subject as stored, under the update lock."""
         try:
-            save_speaker_profile(profile)
-            self._announce_change()
-            return True
+            stored = update_speaker_profile(profile.subject_id, change)
         except ProfileError as exc:
-            # Losing operational work silently is not acceptable; surface it.
             messagebox.showerror(
                 "Could not save", str(exc), parent=active_window(self.root)
             )
             self._status(friendly_error(exc))
             return False
+        if stored is None:
+            self._status(f"{profile.display_name} is no longer stored.")
+            self.refresh()
+            return False
+        self._selected = stored
+        self._announce_change()
+        return True
 
     # -- Enrolment ----------------------------------------------------------
 
@@ -789,16 +803,19 @@ class SpeakerProfilesTab:
                 source_sha256=digest,
                 progress=self._status,
             )
-            if result.added:
-                # Not self._save(): that puts up a message box, and this is a
-                # worker thread. A ProfileError lands in the handler below.
-                save_speaker_profile(profile)
+            added = list(result.added)
+            if added:
+                # Into the subject as stored now: this copy was read before the
+                # conversion, speaker separation and pick, and saving it would
+                # undo any removal or approval made meanwhile.
+                _, added = add_samples(profile, added)
                 self.root.after(0, self._announce_change)
             self.root.after(0, self.refresh)
             quality = result.quality.assessment if result.quality else "n/a"
+            seconds = sum(sample.speech_duration for sample in added)
             message = (
-                f"Enrolled {result.added_count} sample(s), "
-                f"{result.added_seconds:.1f}s of speech (quality: {quality})."
+                f"Enrolled {len(added)} sample(s), "
+                f"{seconds:.1f}s of speech (quality: {quality})."
             )
             if result.skipped:
                 message += f" Skipped {len(result.skipped)}: {result.skipped[0]}"

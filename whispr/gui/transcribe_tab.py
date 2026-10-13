@@ -73,8 +73,8 @@ from ..speaker_names import LEAD_LEGEND, any_leads, is_lead, preset_names
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
     ProfileError,
+    add_samples,
     find_speaker_profile_by_name,
-    save_speaker_profile,
 )
 from ..thresholds import active as active_thresholds
 from ..transcription import (
@@ -2918,14 +2918,18 @@ class TranscribeTab:
             )
             if not result.added:
                 return
-            save_speaker_profile(subject)
+            # Into the subject as stored now: a second correction's proposal,
+            # or a removal on Speaker Profiles, may have saved it meanwhile.
+            subject, added = add_samples(subject, result.added)
+            if not added:
+                return
             # Speaker Profiles may be showing this subject: without this it
             # could later save its older copy over these proposed samples.
             notify = self.on_profiles_changed
             if notify is not None:
                 self.root.after(0, notify)
             self.progress_label_var.set(
-                f"{result.added_count} sample(s) proposed for {subject.display_name} - "
+                f"{len(added)} sample(s) proposed for {subject.display_name} - "
                 "approve them in Speaker profiles before they are used."
             )
         except Exception as exc:  # noqa: BLE001 - never fail a correction on this
@@ -3097,8 +3101,11 @@ class TranscribeTab:
                 self.progress_label_var.set("Ready")
                 return
             # An empty new subject is never written: the profile only reaches
-            # disk once there is something in it.
-            save_speaker_profile(subject)
+            # disk once there is something in it. An existing one is added to
+            # as stored now, not as it was when the dialog opened.
+            subject, added = add_samples(
+                subject, result.added, new_subject=choice.is_new
+            )
         except ProfileError as exc:
             self._announce("error", friendly_error(exc))
             self.progress_label_var.set("Ready")
@@ -3112,7 +3119,8 @@ class TranscribeTab:
         created = " (new subject)" if choice.is_new else ""
         self._announce(
             "success",
-            f"Added {result.added_count} sample(s) - {result.added_seconds:.0f} "
+            f"Added {len(added)} sample(s) - "
+            f"{sum(sample.speech_duration for sample in added):.0f} "
             f"sec of speech - to {subject.display_name}{created}. They are "
             "pending review: approve them on the Speaker Profiles page before "
             "they are used as reference material.",

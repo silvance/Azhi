@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .atomicio import write_json_atomic
 from .settings import settings_path
@@ -785,6 +786,88 @@ def find_speaker_profile_by_id(subject_id: str) -> Optional[SpeakerProfile]:
         if profile.subject_id == subject_id:
             return profile
     return None
+
+
+# One read-change-write of a subject at a time. Enrolment holds a copy for
+# minutes (conversion, speaker separation, the operator's pick, embedding);
+# saving that copy wrote back a sample removed or approved in the meantime -
+# a removed wrong-person sample returned as *trusted* reference material.
+_UPDATE_LOCK = threading.Lock()
+
+
+def _overlaps(sample: EnrollmentSample, other: EnrollmentSample) -> bool:
+    if not sample.source_sha256 or sample.source_sha256 != other.source_sha256:
+        return False
+    if None in (sample.source_start, sample.source_end):
+        return False
+    if None in (other.source_start, other.source_end):
+        return False
+    return (
+        sample.source_start < other.source_end
+        and other.source_start < sample.source_end
+    )
+
+
+def add_samples(
+    subject: SpeakerProfile,
+    samples: Sequence[EnrollmentSample],
+    *,
+    new_subject: bool = False,
+) -> Tuple[SpeakerProfile, List[EnrollmentSample]]:
+    """Add ``samples`` to ``subject`` as stored now, and save it.
+
+    ``subject`` is the copy the samples were measured against; only the new
+    samples are taken from it. Audio the stored copy already holds from the
+    same recording is not added twice. Returns the saved profile and the
+    samples actually added. Raises :class:`ProfileError` when the subject has
+    been deleted since (unless ``new_subject``) or cannot be saved.
+    """
+    with _UPDATE_LOCK:
+        stored = find_speaker_profile_by_id(subject.subject_id)
+        if stored is None:
+            if not new_subject:
+                raise ProfileError(
+                    f"{subject.display_name} is no longer stored (it was "
+                    "deleted), so nothing was added."
+                )
+            save_speaker_profile(subject)
+            return subject, list(samples)
+        if (
+            stored.embedding_model is not None
+            and subject.embedding_model is not None
+            and stored.embedding_model != subject.embedding_model
+        ):
+            raise ProfileError(
+                f"{subject.display_name}'s profile now records a different voice "
+                "model, so these samples were not added."
+            )
+        if stored.embedding_model is None:
+            stored.embedding_model = subject.embedding_model
+        added = [
+            sample
+            for sample in samples
+            if not any(_overlaps(sample, kept) for kept in stored.samples)
+        ]
+        stored.samples.extend(added)
+        stored._trim_learned()
+        save_speaker_profile(stored)
+        return stored, added
+
+
+def update_speaker_profile(
+    subject_id: str, change: Callable[[SpeakerProfile], bool]
+) -> Optional[SpeakerProfile]:
+    """Apply ``change`` to the stored subject and save it if it says it changed.
+
+    Returns the stored profile (None when it no longer exists). Taken under
+    the same lock as :func:`add_samples`, so an approval or removal cannot be
+    overwritten by an enrolment finishing at the same moment.
+    """
+    with _UPDATE_LOCK:
+        stored = find_speaker_profile_by_id(subject_id)
+        if stored is not None and change(stored):
+            save_speaker_profile(stored)
+        return stored
 
 
 def delete_speaker_profile(profile: SpeakerProfile) -> None:
