@@ -437,3 +437,49 @@ def test_an_ambiguous_name_matches_nothing_rather_than_guessing(tmp_path, monkey
     # to the wrong person's reference material.
     _stored(tmp_path, monkeypatch, ["J. Smith", "J. Smith"])
     assert sp.find_speaker_profile_by_name("J. Smith") is None
+
+
+# -- Importing a subject that is already here -------------------------------
+#
+# QA imported an export holding one trusted sample over a profile that had
+# grown to three: same subject id, same file, two samples gone without a word.
+# A subject renamed since the export was worse - a second file with the same
+# id, so two stored subjects claimed one identity.
+
+
+def test_a_subject_is_found_by_id_even_after_it_was_renamed(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    profile = sp.SpeakerProfile(display_name="Viktor Marchenko")
+    sp.save_speaker_profile(profile)
+    renamed = sp.SpeakerProfile.from_dict(profile.to_dict())
+    renamed.display_name = "V. Marchenko"
+    assert sp.profile_path(renamed) != sp.profile_path(profile)
+    found = sp.find_speaker_profile_by_id(profile.subject_id)
+    assert found is not None and found.display_name == "Viktor Marchenko"
+    assert sp.find_speaker_profile_by_id("subj_nothing_here") is None
+
+
+def test_a_new_subject_id_is_never_an_existing_one():
+    ids = {sp.new_subject_id() for _ in range(200)}
+    assert len(ids) == 200
+    assert all(i.startswith("subj_") for i in ids)
+
+
+def test_deleting_a_subject_that_is_not_there_is_not_an_error(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    sp.delete_speaker_profile(sp.SpeakerProfile(display_name="Nobody"))
+
+
+def test_a_delete_that_fails_is_reported(tmp_path, monkeypatch):
+    """A subject still on disk is still compared against."""
+    _isolate(tmp_path, monkeypatch)
+    profile = sp.SpeakerProfile(display_name="Viktor Marchenko")
+    sp.save_speaker_profile(profile)
+
+    def refuse(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr("pathlib.Path.unlink", refuse)
+    with pytest.raises(sp.ProfileError) as caught:
+        sp.delete_speaker_profile(profile)
+    assert "Couldn't delete" in str(caught.value)

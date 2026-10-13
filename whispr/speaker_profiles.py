@@ -769,9 +769,35 @@ def find_speaker_profile_by_name(display_name: str) -> Optional[SpeakerProfile]:
     return matches[0] if len(matches) == 1 else None
 
 
+def new_subject_id() -> str:
+    """A fresh subject id, for a copy that must not be mistaken for its original."""
+    return _new_id("subj")
+
+
+def find_speaker_profile_by_id(subject_id: str) -> Optional[SpeakerProfile]:
+    """The stored subject with this id, wherever its file is.
+
+    By id, not by file name: the file name includes the display name, so a
+    subject renamed since it was exported lives in a differently named file
+    with the same id.
+    """
+    for profile in list_speaker_profiles():
+        if profile.subject_id == subject_id:
+            return profile
+    return None
+
+
 def delete_speaker_profile(profile: SpeakerProfile) -> None:
-    """Remove a stored subject profile (best-effort)."""
+    """Remove a stored subject profile. Raises if it is there and cannot go.
+
+    It used to swallow every error and the page said "Subject deleted."
+    regardless - and a subject still on disk is still compared against.
+    """
     try:
         profile_path(profile).unlink()
-    except OSError:
-        pass
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ProfileError(
+            f"Couldn't delete the speaker profile for {profile.display_name}: {exc}"
+        ) from exc

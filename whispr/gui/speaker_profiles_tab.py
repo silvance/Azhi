@@ -32,8 +32,11 @@ from ..speaker_profiles import (
     ProfileError,
     SpeakerProfile,
     delete_speaker_profile,
+    find_speaker_profile_by_id,
     list_speaker_profiles,
     load_profile_file,
+    new_subject_id,
+    profile_path,
     save_speaker_profile,
 )
 from ..transcription import AUDIO_EXTENSIONS
@@ -382,7 +385,11 @@ class SpeakerProfilesTab:
             parent=active_window(self.root),
         ):
             return
-        delete_speaker_profile(profile)
+        try:
+            delete_speaker_profile(profile)
+        except ProfileError as exc:
+            self._status(friendly_error(exc))
+            return
         self.refresh()
         self._status("Subject deleted.")
 
@@ -426,8 +433,34 @@ class SpeakerProfilesTab:
                 for profile in imported
                 for warning in profile.import_warnings
             ]
+            kept: List[SpeakerProfile] = []
             for profile in imported:
-                save_speaker_profile(profile)
+                existing = find_speaker_profile_by_id(profile.subject_id)
+                if existing is None:
+                    save_speaker_profile(profile)
+                    kept.append(profile)
+                    continue
+                # The same subject is already here. Saving over it used to
+                # happen without a word: QA imported an export holding one
+                # trusted sample over a profile that had grown to three, and
+                # two were gone.
+                choice = _ask_import_conflict(self.root, existing, profile)
+                if choice == _SKIP:
+                    continue
+                if choice == _KEEP_BOTH:
+                    profile.subject_id = new_subject_id()
+                    profile.display_name = f"{profile.display_name} (imported)"
+                    save_speaker_profile(profile)
+                else:
+                    old_path = profile_path(existing)
+                    new_path = save_speaker_profile(profile)
+                    if old_path != new_path:
+                        # Renamed since the export: the old file has the same
+                        # id, and two files claiming one subject is its own
+                        # kind of corruption.
+                        delete_speaker_profile(existing)
+                kept.append(profile)
+            imported = kept
         except ProfileError as exc:
             self._status(friendly_error(exc))
             return
@@ -438,6 +471,9 @@ class SpeakerProfilesTab:
             if legacy
             else ""
         )
+        if not imported:
+            self._status("Nothing was imported.")
+            return
         self._status(f"Imported {len(imported)} subject(s).{note}")
         if issues:
             self._report_import_issues(Path(path).name, issues)
@@ -747,3 +783,83 @@ def _duration(wav_path: Path) -> float:
 
     with wave.open(str(wav_path), "rb") as wav:
         return wav.getnframes() / float(wav.getframerate() or 1)
+
+
+_REPLACE = "replace"
+_KEEP_BOTH = "keep_both"
+_SKIP = "skip"
+
+
+def _describe_subject(profile: SpeakerProfile) -> str:
+    when = (profile.updated_utc or "")[:10] or "date not recorded"
+    return (
+        f"{len(profile.trusted_samples())} trusted and "
+        f"{len(profile.pending_samples())} pending sample(s), last changed {when}"
+    )
+
+
+def _ask_import_conflict(
+    root: tk.Misc, existing: SpeakerProfile, incoming: SpeakerProfile
+) -> str:
+    """Ask what to do with an imported subject that is already here.
+
+    Keeping both is the safe choice and has the focus: nothing is lost, and
+    the operator can delete whichever copy they decide against. Merging the
+    samples is deliberately not offered - it means settling conflicting
+    trusted and pending states between two histories, and doing that wrongly
+    corrupts a reference voice silently.
+    """
+    win = tk.Toplevel(root)
+    win.title("Subject already here")
+    win.configure(background=palette().surface)
+    win.resizable(False, False)
+    frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(
+        frame,
+        text=f"{existing.display_name} is already here",
+        style=Style.SECTION_TITLE,
+    ).pack(anchor="w")
+    for heading, profile in (
+        ("On this machine", existing),
+        ("In the file being imported", incoming),
+    ):
+        ttk.Label(frame, text=heading, style=Style.FIELD_LABEL).pack(
+            anchor="w", pady=(SPACE_MD, 0)
+        )
+        ttk.Label(
+            frame,
+            text=f"{profile.display_name}: {_describe_subject(profile)}",
+            style=Style.META,
+            wraplength=460,
+            justify="left",
+        ).pack(anchor="w")
+    ttk.Label(
+        frame,
+        text=(
+            "Replacing discards the copy on this machine, and any samples it "
+            "has that the imported file does not."
+        ),
+        style=Style.WARNING,
+        wraplength=460,
+        justify="left",
+    ).pack(anchor="w", pady=(SPACE_LG, SPACE_MD))
+
+    chosen = {"value": _SKIP}
+
+    def choose(value: str) -> None:
+        chosen["value"] = value
+        win.destroy()
+
+    buttons = ttk.Frame(frame, style=Style.CARD_INNER)
+    buttons.pack(fill="x")
+    secondary_button(buttons, "Skip it", lambda: choose(_SKIP)).pack(side="right")
+    secondary_button(buttons, "Replace", lambda: choose(_REPLACE)).pack(
+        side="right", padx=(0, SPACE_SM)
+    )
+    keep = primary_button(buttons, "Keep both", lambda: choose(_KEEP_BOTH))
+    keep.pack(side="left")
+    present(win, root, modal=True)
+    keep.focus_set()
+    win.wait_window()
+    return chosen["value"]
