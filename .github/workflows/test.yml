@@ -9,7 +9,9 @@ on:
 
 jobs:
   pre-commit:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which has no Python 3.9 build for
+    # setup-python, and lint and mypy run on 3.9 to keep 3.9 support checked.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Fetch base branch
