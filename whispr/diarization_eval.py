@@ -460,7 +460,7 @@ def _transcribe_and_separate(
         )
         backend = chosen_backend(engine)
         progress(f"{case.name}: separating speakers ({backend})…")
-        turns = diarize(wav, backend=backend, num_speakers=speakers)
+        turns = diarize(wav, backend=backend, num_speakers=speakers, progress=progress)
     finally:
         if temporary:
             try:
@@ -638,8 +638,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--engine",
         default="auto",
-        choices=("auto", "pyannote", "sherpa"),
-        help="Speaker separation method (default: %(default)s)",
+        choices=("auto", "pyannote", "sherpa", "nemotron"),
+        help=(
+            "Speaker separation method (default: %(default)s). nemotron works "
+            "out the number of speakers itself, so --speakers does not apply to it"
+        ),
     )
     parser.add_argument(
         "--speakers",

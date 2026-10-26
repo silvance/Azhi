@@ -317,6 +317,13 @@ Leave it on **Auto** unless you have a reason. In a bundle with both:
 
 - **pyannote** is much better on hard, noisy or overlapping audio.
 - **sherpa** is lighter and faster, and fine on clean audio.
+- **Nemotron** appears only in a copy built with it. It is a trial: a newer
+  kind of model, meant to be better at quick back-and-forth and at people
+  talking over each other, but not yet measured on recordings like yours.
+  It works out how many people are speaking by itself and **ignores the number
+  you give**; if it finds a different number, the status says so, and **Redo
+  speaker separation…** with pyannote or sherpa will use yours. It does not
+  show how far it has got; Cancel still stops it.
 
 **Grouping sensitivity** only applies to sherpa, and only when you have not
 given a count. Higher merges more (fewer speakers), lower splits more.

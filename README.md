@@ -329,7 +329,7 @@ for when one speaker's sentence is lumped into the middle of another's line
 assigns is arbitrary, so if two names land on the wrong voices it's a one-click
 swap.
 
-**Backends.** Two are supported, chosen with the **Method** dropdown under
+**Backends.** Three are supported, chosen with the **Method** dropdown under
 *Advanced options* → *Speaker separation* (default **Auto**):
 
 - **pyannote.audio** (`speaker-diarization-3.1`, PyTorch) — much better on hard /
@@ -339,6 +339,21 @@ swap.
   to load; a good choice for clean audio. Needs a segmentation model and a speaker
   embedding model at `whispr_assets/diarization/segmentation.onnx` and
   `.../embedding.onnx` (embedding is NeMo TitaNet-large, English).
+
+- **Nemotron** (trial; NVIDIA Nemotron 3 Diarization through the
+  [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) CPU runtime) — one
+  model that decides every 10 ms which of up to eight people is speaking,
+  overlapping speech included, instead of cutting, measuring and grouping. Built
+  for exactly the case the other two find hardest: short turns in quick
+  succession. Only in a bundle built with `nemotron=yes`, and only when chosen:
+  Auto never picks it. It works out the number of speakers itself and **cannot be
+  given one**; when you have said how many people there are and it finds a
+  different number, the status says so. The model is licensed **OpenMDW-1.1**
+  (the runtime is Apache-2.0) — have that reviewed before distributing a bundle
+  that carries it. NVIDIA's published results (DIHARD III 12.7% DER against 21.4%
+  for pyannote 3.1) are its own, on its own benchmarks; measure it on your
+  recordings with the [test set](docs/test-set.md) (`--engine nemotron`) before
+  relying on it.
 
 **Auto** uses pyannote when it's installed/bundled and otherwise falls back to
 sherpa; pick a specific engine to force it (e.g. sherpa for a quick pass on clean

@@ -110,6 +110,15 @@ def _model_entries() -> List[Dict[str, Any]]:
             pass
     _add(embedding_name, diarization / "embedding.onnx", "speaker-embedding")
 
+    nemotron = ASSETS / "nemotron"
+    _add(
+        "nemotron-3-diarization",
+        nemotron / "Nemotron-3-Diarization.q8_0.gguf",
+        "diarization",
+    )
+    for name in ("nemo-speech", "nemo-speech.exe"):
+        _add("nemo-speech", nemotron / "bin" / name, "tool")
+
     for name in ("ffmpeg", "ffmpeg.exe"):
         _add("ffmpeg", ASSETS / "ffmpeg" / name, "tool")
     return entries
