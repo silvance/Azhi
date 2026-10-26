@@ -19,13 +19,16 @@ from typing import Any, List, Optional
 # WhisprApp is resolved lazily by __getattr__ below, so it is not listed here:
 # naming it would make a static check demand a module-level import, which is the
 # one thing this module exists to avoid.
-__all__ = ["main", "self_test", "verify_install", "launch"]
+__all__ = ["main", "self_test", "verify_install", "score_test_set", "launch"]
 
 USAGE = """Whispers - offline audio analysis
 
   whispr               open the application
   whispr --self-test   print what this copy can do, and exit
   whispr --verify      check this copy against the build that made it
+  whispr --score-test-set FOLDER [--out RESULTS] [--speakers known|unknown]
+                       measure who-said-what on your own labelled recordings
+                       (see the user guide); writes summary.txt and scores.csv
   whispr --help        show this message
 """
 
@@ -70,9 +73,23 @@ def verify_install() -> int:
     return 0 if result.intact else 1
 
 
+def score_test_set(args: "List[str]") -> int:
+    """Score a folder of labelled recordings, as ``whispr.diarization_eval`` does.
+
+    Here so the shipped copy - the one with the models, on the machine with the
+    recordings - can run it, not only a source checkout. The report is written
+    to files as well as printed, because a windowed build has nowhere to print.
+    """
+    from .diarization_eval import main as score_main
+
+    return score_main(args)
+
+
 def main(argv: "Optional[List[str]]" = None) -> None:
     """Run Whispers: a check if asked for one, otherwise the window."""
     args = sys.argv[1:] if argv is None else list(argv)
+    if args and args[0] == "--score-test-set":
+        raise SystemExit(score_test_set(args[1:]))
     if "--self-test" in args:
         raise SystemExit(self_test())
     if "--verify" in args:

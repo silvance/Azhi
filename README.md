@@ -346,10 +346,12 @@ audio). A `both` bundle (see below) ships both so you can switch per recording.
 **Grouping sensitivity** applies to sherpa only.
 
 The audio is normalised to 16 kHz mono with ffmpeg first. Speaker labels are
-assigned **per word** (using Whisper word timestamps): a single transcript segment
-that spans a speaker change is split at the boundary, and a smoothing pass absorbs
-stray sub-second fragments, so rapid back-and-forth is attributed correctly rather
-than lumped onto one speaker.
+assigned **per word** (using Whisper word timestamps): each word goes to the
+speaker heard alone for most of it, so a single transcript segment that spans a
+speaker change is split at the boundary. A smoothing pass then absorbs stray
+sub-second fragments where a word has landed on a sliver of someone else's turn —
+but leaves a short reply alone when the diarizer itself heard that person over
+most of it, so a quick "Yes." is not handed back to whoever asked the question.
 
 ### Profiles that learn speaker voices
 
@@ -501,6 +503,26 @@ not calibrated values.** They should be replaced with figures measured on
 recordings representative of the intended deployment — language, channel,
 microphone, noise and speech duration all move these numbers substantially. Until
 that has been done, treat similarity results as directional only.
+
+### Measuring who-said-what (quick-exchange test set)
+
+Speaker labels are weakest in quick exchanges — one-word replies, interruptions,
+overlapping speech — and how weak depends on the deployment's own audio.
+`whispr.diarization_eval` scores the transcript against recordings an analyst
+has labelled by ear (Audacity label exports or RTTM), offline:
+
+```bash
+whispr --score-test-set /path/to/testset --out results     # shipped copy
+python -m whispr.diarization_eval /path/to/testset --out results
+```
+
+It reports, per recording and pooled: the share of words shown against the
+right person, how many sub-second reference turns kept their speaker, and the
+diarization error rate (no edge collar, overlap scored). Transcription and
+separation are cached in the output folder (text and timings, never audio), so
+`--rescore` re-measures a change to word assignment in seconds.
+[`docs/test-set.md`](docs/test-set.md) is the guide for building and labelling a
+test set.
 
 ### Live (stream) transcription
 

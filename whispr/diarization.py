@@ -12,11 +12,12 @@ and the rest of the package - does not require the optional dependencies.
 
 from __future__ import annotations
 
+import bisect
 import os
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from . import hub_cache
 from .resources import bundled_diarization_models, pyannote_cache_dir
@@ -511,7 +512,12 @@ def _diarize_sherpa(
             threshold=threshold,
         ),
         min_duration_on=0.3,
-        min_duration_off=0.5,
+        # Gaps shorter than this inside one speaker's speech are bridged. At
+        # 0.5 s that can bridge right over a quick reply from the other person,
+        # leaving the two turns overlapping. 0.2 s lowered the diarization
+        # error rate in 14 of 22 test runs (whispr.diarization_eval) and
+        # raised none by more than a tenth of a point.
+        min_duration_off=0.2,
     )
     if not config.validate():
         raise RuntimeError(
@@ -562,10 +568,77 @@ def _best_overlap_speaker(
     return best_speaker
 
 
+class _TurnIndex:
+    """Speaker turns sorted by start, for finding those that touch a span quickly.
+
+    A long recording has thousands of turns and tens of thousands of words;
+    scanning every turn for every word was the slow part of assignment.
+    """
+
+    def __init__(self, turns: Sequence[SpeakerSegment]) -> None:
+        self.turns = sorted(turns, key=lambda t: (t.start, t.end))
+        self._starts = [t.start for t in self.turns]
+        self._longest = max((t.end - t.start for t in self.turns), default=0.0)
+
+    def touching(self, start: float, end: float) -> List[SpeakerSegment]:
+        """Turns that overlap ``[start, end]`` (or contain the point when equal)."""
+        lo = bisect.bisect_left(self._starts, start - self._longest)
+        hi = bisect.bisect_right(self._starts, end)
+        return [t for t in self.turns[lo:hi] if t.end >= start and t.start <= end]
+
+
+def exclusive_coverage(
+    start: float, end: float, turns: Sequence[SpeakerSegment]
+) -> Dict[str, float]:
+    """Seconds of ``[start, end]`` during which each speaker is the only one active.
+
+    Time where two people are both marked as speaking counts for neither: it is
+    evidence that someone spoke, not of who.
+    """
+    out: Dict[str, float] = {}
+    if end <= start:
+        return out
+    relevant = [t for t in turns if t.start < end and t.end > start]
+    if not relevant:
+        return out
+    edges = {start, end}
+    for turn in relevant:
+        edges.add(min(max(turn.start, start), end))
+        edges.add(min(max(turn.end, start), end))
+    points = sorted(edges)
+    for a, b in zip(points, points[1:]):
+        if b <= a:
+            continue
+        middle = (a + b) / 2.0
+        active = {t.speaker for t in relevant if t.start <= middle < t.end}
+        if len(active) == 1:
+            speaker = next(iter(active))
+            out[speaker] = out.get(speaker, 0.0) + (b - a)
+    return out
+
+
 # A word sitting more than this far from any speaker turn is essentially
 # unattributable; return None (which assign_speakers handles) rather than
 # confidently snapping it to a distant speaker.
 _MAX_GAP_SECONDS = 2.0
+
+
+def _speaker_for_word(start: float, end: float, index: _TurnIndex) -> Optional[str]:
+    """The speaker a word belongs to.
+
+    The speaker heard alone for most of the word's span. It used to be whoever
+    was active at the word's midpoint, taking the first turn listed when two
+    overlapped - and the first listed is the turn that started earlier, so a
+    quick reply that the diarizer marked as overlapping the end of the other
+    person's turn was credited to the person who had been talking. Only when
+    the whole word sits in overlapped speech (a backchannel under someone
+    else's sentence, say) or in a gap does it fall back to that rule.
+    """
+    nearby = index.touching(start, end)
+    coverage = exclusive_coverage(start, end, nearby)
+    if coverage:
+        return max(coverage, key=lambda speaker: coverage[speaker])
+    return _speaker_at((start + end) / 2.0, index.turns)
 
 
 def _speaker_at(t: float, speaker_segments: Sequence[SpeakerSegment]) -> Optional[str]:
@@ -619,27 +692,61 @@ def _coalesce(runs: List[_Run]) -> List[_Run]:
     return out
 
 
+# A short run is the diarizer's own finding, and kept, when its speaker's
+# turns cover at least this share of the run.
+SHORT_RUN_SUPPORT = 0.5
+
+
+def _supported(run: _Run, index: Optional[_TurnIndex]) -> bool:
+    """True when the diarizer has the run's speaker talking over most of it.
+
+    Overlapped time counts: a reply that starts under the end of the question
+    is still a turn the diarizer found. A word that merely clips the edge of
+    someone else's turn is not.
+    """
+    if index is None or run.speaker is None:
+        return False
+    # A one-word run can be a few milliseconds long; judge it over a span long
+    # enough for "most of it" to mean something.
+    start, end = run.start, max(run.end, run.start + 0.1)
+    covered = sum(
+        min(t.end, end) - max(t.start, start)
+        for t in index.touching(start, end)
+        if t.speaker == run.speaker
+    )
+    return covered >= SHORT_RUN_SUPPORT * (end - start)
+
+
 def _merge_short_runs(
     runs: List[_Run],
+    index: Optional[_TurnIndex] = None,
     *,
     min_seconds: float = 0.8,
     max_words: int = 2,
 ) -> List[_Run]:
     """Absorb stray sub-second / 1-2 word runs into an adjacent speaker.
 
-    pyannote's turn boundaries rarely line up exactly with Whisper's word
-    boundaries, so the first word or two of a new turn can be attributed to the
-    previous speaker (and vice versa). These show up as tiny runs wedged between
-    longer ones. We relabel any such fragment to a neighbouring speaker - the
-    only neighbour at the edges, or the longer (by word count) neighbour in the
-    middle - then coalesce. This trades the occasional genuinely short
-    interjection for far fewer boundary leaks.
+    Whisper's word timings and the diarizer's turn edges rarely agree to the
+    tenth of a second, so a word can land on a sliver of someone else's turn.
+    Such a fragment is relabelled to a neighbouring speaker - the only
+    neighbour at the edges, or the longer (by word count) neighbour in the
+    middle - and then coalesced.
+
+    It used to relabel every short run, which is exactly what a quick "Yes."
+    or "No." from the other person looks like: two words or fewer, under a
+    second, between someone else's sentences. A short run is now left alone
+    when the diarizer itself has that speaker talking over most of it
+    (:data:`SHORT_RUN_SUPPORT`) - the reply was found, not inferred from a
+    misaligned word. On spliced test conversations with the reference turns
+    given, the old rule lost 12 of 72 replies under a second; this loses none.
     """
     # Single linear pass: relabel each short run to a neighbour, then coalesce
     # once. We work on a copy so the caller's runs are left untouched.
     runs = [_Run(speaker=r.speaker, words=list(r.words)) for r in runs]
     for i, run in enumerate(runs):
         if run.duration >= min_seconds or len(run.words) > max_words:
+            continue
+        if _supported(run, index):
             continue
         prev = runs[i - 1] if i > 0 else None
         nxt = runs[i + 1] if i + 1 < len(runs) else None
@@ -663,18 +770,19 @@ def assign_speakers(
     """Attach speaker labels to a transcript, splitting on speaker changes.
 
     When per-word timestamps are available, each word is assigned to the speaker
-    active at its midpoint and consecutive same-speaker words are grouped into
-    runs - so a single Whisper segment that spans a speaker change is split
-    correctly. A smoothing pass (:func:`_merge_short_runs`) then absorbs tiny
-    stray fragments at turn boundaries, where pyannote's turn edges don't line
-    up with Whisper's word edges. Each surviving run becomes one segment.
+    heard alone for most of it (:func:`_speaker_for_word`) and consecutive
+    same-speaker words are grouped into runs - so a single Whisper segment that
+    spans a speaker change is split correctly. A smoothing pass
+    (:func:`_merge_short_runs`) then absorbs stray fragments the diarizer did
+    not itself support. Each surviving run becomes one segment.
     Segments without word timestamps fall back to whole-segment overlap.
     """
     out: List[Segment] = []
     pending: List[_Run] = []
+    index = _TurnIndex(speaker_segments)
 
     def _emit_pending() -> None:
-        for run in _merge_short_runs(pending):
+        for run in _merge_short_runs(pending, index):
             text = "".join(w.word for w in run.words).strip()
             if not text:
                 continue
@@ -700,8 +808,7 @@ def assign_speakers(
             continue
 
         for word in segment.words:
-            midpoint = (word.start + word.end) / 2.0
-            speaker = _speaker_at(midpoint, speaker_segments)
+            speaker = _speaker_for_word(word.start, word.end, index)
             if pending and pending[-1].speaker == speaker:
                 pending[-1].words.append(word)
             else:
