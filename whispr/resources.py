@@ -13,6 +13,10 @@ Expected layout of an assets directory::
             small/model.bin ...
             medium/model.bin ...
             large-v3/model.bin ...
+        nemotron/                (optional speaker separation)
+            bin/nemo-speech      (or nemo-speech.exe, with its libraries)
+            Nemotron-3-Diarization.q8_0.gguf
+            nemotron.json
 """
 
 from __future__ import annotations
@@ -199,6 +203,47 @@ def bundled_diarization_models() -> Optional[Tuple[Path, Path]]:
         if segmentation.is_file() and embedding.is_file():
             return segmentation, embedding
     return None
+
+
+# NVIDIA's end-to-end diarizer and the runtime that runs it, both optional.
+NEMOTRON_DIRNAME = "nemotron"
+NEMOTRON_MODEL_FILENAME = "Nemotron-3-Diarization.q8_0.gguf"
+
+
+def bundled_nemotron() -> Optional[Tuple[Path, Path]]:
+    """Return ``(nemo-speech executable, model)`` if this build ships both.
+
+    Kept in one folder, ``whispr_assets/nemotron``: the executable loads its
+    libraries from beside itself, and the build copies the folder as it is.
+    """
+    names = ("nemo-speech.exe",) if os.name == "nt" else ("nemo-speech",)
+    for base in asset_dirs():
+        directory = base / NEMOTRON_DIRNAME
+        model = directory / NEMOTRON_MODEL_FILENAME
+        if not model.is_file():
+            continue
+        for name in names:
+            binary = directory / "bin" / name
+            if binary.is_file():
+                return binary, model
+    return None
+
+
+def bundled_nemotron_info() -> Dict[str, object]:
+    """What the build recorded about the Nemotron files (``nemotron.json``).
+
+    Runtime version and archive digest, model repository, revision, digest and
+    licence, as downloaded. ``{}`` when nothing was recorded; nothing is guessed.
+    """
+    for base in asset_dirs():
+        note = base / NEMOTRON_DIRNAME / "nemotron.json"
+        if note.is_file():
+            try:
+                data = json.loads(note.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {}
+            return data if isinstance(data, dict) else {}
+    return {}
 
 
 def bundled_embedding_model() -> Optional[Path]:

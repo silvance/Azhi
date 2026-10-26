@@ -104,7 +104,7 @@ Options:
 | Option | What it does |
 |---|---|
 | `--speakers unknown` | Let the tool work out how many people there are, as *Not sure — work it out* does. |
-| `--engine pyannote` or `--engine sherpa` | Score one speaker-separation method rather than the one *Auto* would pick. |
+| `--engine pyannote`, `--engine sherpa` or `--engine nemotron` | Score one speaker-separation method rather than the one *Auto* would pick. Nemotron (in copies built with it) works out the number of people itself, so it is not told the reference's count. |
 | `--model small` | Score a different transcription model (default: `medium`). |
 | `--language ru` | The recordings' language, if you would set it in the application. |
 | `--rescore` | Score the saved results again without transcribing. For developers changing how words are given to speakers. |
@@ -153,3 +153,11 @@ reveal nothing, and send those two files only — never the `cache` folder.
 
 Keep the test set. Run it again after an update to the tool, and the numbers
 show whether that update helped your recordings or harmed them.
+
+To compare speaker-separation methods, score the same test set once per method,
+each into its own results folder:
+
+```
+whispr.exe --score-test-set D:\testset --out D:\results-pyannote --engine pyannote
+whispr.exe --score-test-set D:\testset --out D:\results-nemotron --engine nemotron
+```

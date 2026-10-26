@@ -32,6 +32,11 @@ on:
         type: choice
         options: [both, pyannote, sherpa]
         default: both
+      nemotron:
+        description: "Also bundle NVIDIA Nemotron 3 Diarization (+ NeMo-Speech.cpp runtime, ~125 MB) as a trial speaker-separation Method. The model is licensed OpenMDW-1.1: have it reviewed before distributing a bundle that carries it."
+        type: choice
+        options: ["no", "yes"]
+        default: "no"
       embedding:
         description: "Speaker-embedding model for speaker profiles/comparison. titanet-large (default) and titanet-small: NeMo TitaNet, English corpora. wespeaker-en: ResNet34, VoxCeleb (mostly English). campplus/eres2net: 3D-Speaker zh-cn 16k-common, Mandarin-trained. A direct .onnx URL also works."
         default: "titanet-large"
@@ -80,6 +85,9 @@ jobs:
       # have no inputs, so they get both. "!= 'sherpa'" means pyannote-or-both;
       # "!= 'pyannote'" means sherpa-or-both.
       DIARIZER: ${{ github.event.inputs.diarizer || 'both' }}
+      # Trial end-to-end diarizer, never bundled unless asked for (licence
+      # review pending); tag builds have no inputs, so they leave it out.
+      NEMOTRON: ${{ github.event.inputs.nemotron || 'no' }}
       # Speaker-embedding model for speaker profiles + comparison (and sherpa
       # diarization). Bundled on every build. Default TitaNet-large, trained on
       # English corpora; campplus / eres2net are the 3D-Speaker zh-cn 16k-common
@@ -193,6 +201,9 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python packaging/fetch_assets.py pyannote
+      - name: Fetch Nemotron diarization (trial; NeMo-Speech.cpp runtime + model)
+        if: env.NEMOTRON == 'yes'
+        run: python packaging/fetch_assets.py nemotron
       - name: Fetch translation packs (Argos) + warm offline splitter
         if: env.TRANSLATE_LANGS != ''
         run: python packaging/fetch_assets.py argos ${{ env.TRANSLATE_LANGS }}

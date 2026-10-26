@@ -121,3 +121,131 @@ def test_embedding_metadata_hashes_the_downloaded_file(tmp_path):
 
     assert meta["sha256"] == sha256_file(model)
     assert meta["size"] == len(b"weights")
+
+
+# -- Nemotron: runtime archive + model, both checked against pinned digests ----
+
+
+def _runtime_archive(path, platform):
+    """A small stand-in for NVIDIA's release archive, laid out as theirs is."""
+    import io
+    import os
+    import tarfile
+    import zipfile
+
+    root = f"nemo-speech-0.2.0-{platform}-x86_64-cpu"
+    files = {
+        f"{root}/bin/nemo-speech"
+        + (".exe" if platform == "windows" else ""): b"program",
+        f"{root}/lib/libggml.so.0.25.1": b"library",
+        f"{root}/lib/cmake/NeMoSpeech/NeMoSpeechConfig.cmake": b"cmake",
+        f"{root}/share/licenses/nemo-speech/LICENSE": b"Apache-2.0",
+        f"{root}/share/doc/nemo-speech/README.md": b"docs",
+    }
+    if platform == "windows":
+        with zipfile.ZipFile(path, "w") as zipped:
+            for name, data in files.items():
+                zipped.writestr(name, data)
+        return
+    with tarfile.open(path, "w:gz") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o755
+            tar.addfile(info, io.BytesIO(data))
+        link = tarfile.TarInfo(f"{root}/lib/libggml.so.0")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "libggml.so.0.25.1"
+        tar.addfile(link)
+    assert os.path.getsize(path)
+
+
+@pytest.fixture
+def nemotron_fetch(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from whispr import asset_lock
+    from whispr.hashing import sha256_file
+
+    platform = "windows" if __import__("os").name == "nt" else "linux"
+    archive_name, _ = fetch_assets.NEMO_SPEECH_ARCHIVES[platform]
+    source = tmp_path / "source" / archive_name
+    source.parent.mkdir()
+    _runtime_archive(source, platform)
+    model_bytes = b"gguf-weights"
+    model_source = tmp_path / "source" / "model.gguf"
+    model_source.write_bytes(model_bytes)
+
+    monkeypatch.setattr(fetch_assets, "ASSETS", tmp_path / "whispr_assets")
+    monkeypatch.setattr(fetch_assets, "LOCK", asset_lock.empty())
+    monkeypatch.setattr(fetch_assets, "save_lock", lambda: None)
+    monkeypatch.setitem(
+        fetch_assets.NEMO_SPEECH_ARCHIVES, platform, (archive_name, sha256_file(source))
+    )
+    monkeypatch.setattr(fetch_assets, "NEMOTRON_SHA256", sha256_file(model_source))
+    monkeypatch.setattr(fetch_assets, "NEMOTRON_SIZE", len(model_bytes))
+    monkeypatch.setattr(
+        fetch_assets.urllib.request,
+        "urlretrieve",
+        lambda url, dest: __import__("shutil").copyfile(source, dest),
+    )
+
+    def hf_hub_download(repo_id, filename, revision, local_dir):
+        assert (repo_id, revision) == (
+            fetch_assets.NEMOTRON_REPO,
+            fetch_assets.NEMOTRON_REVISION,
+        )
+        target = __import__("pathlib").Path(local_dir) / filename
+        target.write_bytes(model_bytes)
+        return str(target)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(hf_hub_download=hf_hub_download),
+    )
+    return {"platform": platform, "out": tmp_path / "whispr_assets" / "nemotron"}
+
+
+def test_nemotron_bundle_holds_program_libraries_licence_model_and_record(
+    nemotron_fetch,
+):
+    import json
+
+    fetch_assets.fetch_nemotron()
+    out = nemotron_fetch["out"]
+    linux = nemotron_fetch["platform"] == "linux"
+    assert (out / "bin" / ("nemo-speech" if linux else "nemo-speech.exe")).is_file()
+    assert (out / "licenses" / "nemo-speech" / "LICENSE").is_file()
+    assert (out / fetch_assets.NEMOTRON_FILENAME).is_file()
+    assert not (out / "doc").exists() and not (out / "lib" / "cmake").exists()
+    if linux:
+        # A link arrives as a plain file: not every tool that copies a bundle
+        # keeps links.
+        library = out / "lib" / "libggml.so.0"
+        assert library.is_file() and not library.is_symlink()
+    record = json.loads((out / "nemotron.json").read_text(encoding="utf-8"))
+    assert record["runtime"]["version"] == fetch_assets.NEMO_SPEECH_VERSION
+    assert record["model"]["revision"] == fetch_assets.NEMOTRON_REVISION
+    assert record["model"]["licence"] == "OpenMDW-1.1"
+    assert fetch_assets.LOCK["huggingface"][fetch_assets.NEMOTRON_REPO] == (
+        fetch_assets.NEMOTRON_REVISION
+    )
+
+
+def test_nemotron_runtime_with_another_digest_is_not_bundled(
+    nemotron_fetch, monkeypatch
+):
+    platform = nemotron_fetch["platform"]
+    name, _ = fetch_assets.NEMO_SPEECH_ARCHIVES[platform]
+    monkeypatch.setitem(fetch_assets.NEMO_SPEECH_ARCHIVES, platform, (name, "0" * 64))
+    with pytest.raises(SystemExit, match="does not match its pinned digest"):
+        fetch_assets.fetch_nemotron()
+    assert not (nemotron_fetch["out"] / "bin").exists()
+
+
+def test_nemotron_model_with_another_digest_is_not_bundled(nemotron_fetch, monkeypatch):
+    monkeypatch.setattr(fetch_assets, "NEMOTRON_SHA256", "0" * 64)
+    with pytest.raises(SystemExit, match="does not match its pinned digest"):
+        fetch_assets.fetch_nemotron()

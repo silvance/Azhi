@@ -99,3 +99,16 @@ def test_main_refuses_to_write_a_manifest_with_no_assets(tmp_path, monkeypatch):
     monkeypatch.setattr(build_manifest, "ASSETS", tmp_path / "missing")
     with pytest.raises(SystemExit):
         build_manifest.main([])
+
+
+def test_nemotron_model_and_program_are_hashed_when_bundled(assets):
+    nemotron = assets / "nemotron"
+    (nemotron / "bin").mkdir(parents=True)
+    (nemotron / "Nemotron-3-Diarization.q8_0.gguf").write_bytes(b"gguf")
+    (nemotron / "bin" / "nemo-speech.exe").write_bytes(b"program")
+    entries = _by_name(build_manifest._model_entries())
+    assert entries["nemotron-3-diarization"]["kind"] == "diarization"
+    assert entries["nemotron-3-diarization"]["sha256"] == sha256_file(
+        nemotron / "Nemotron-3-Diarization.q8_0.gguf"
+    )
+    assert entries["nemo-speech"]["kind"] == "tool"

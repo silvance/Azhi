@@ -232,9 +232,42 @@ class DiarizationProvenance:
         )
         if record.engine == "pyannote":
             record._describe_pyannote()
+        elif record.engine == "nemotron":
+            record._describe_nemotron()
         else:
             record._describe_sherpa()
         return record
+
+    def _describe_nemotron(self) -> None:
+        """The runtime and model as the build recorded them, and the file's hash.
+
+        One model does the whole job, so there is no separate embedding model
+        to name. The configuration it ran with goes in ``pipeline``: the same
+        model scores differently with a different one.
+        """
+        from .nemotron import describe_geometry
+        from .resources import bundled_nemotron, bundled_nemotron_info
+
+        info = bundled_nemotron_info()
+        runtime = info.get("runtime")
+        if isinstance(runtime, dict) and runtime.get("version"):
+            self.engine_version = f"NeMo-Speech.cpp {runtime['version']}"
+        model = info.get("model")
+        repo = model.get("repo") if isinstance(model, dict) else None
+        revision = model.get("revision") if isinstance(model, dict) else None
+        name = (
+            f"{repo}@{revision}"
+            if repo and revision
+            else f"{repo} (revision not recorded)"
+            if repo
+            else "Nemotron 3 Diarization (revision not recorded)"
+        )
+        self.pipeline = f"{name}; {describe_geometry()}"
+        bundled = bundled_nemotron()
+        if bundled is None:
+            return
+        self.segmentation_model = bundled[1].name
+        self.segmentation_model_sha256 = sha256_file_or_none(bundled[1])
 
     def _describe_sherpa(self) -> None:
         from .resources import bundled_diarization_models, bundled_embedding_model_name
@@ -378,6 +411,25 @@ class AnalysisProvenance:
             schema_version=int(data.get("schema_version") or PROVENANCE_SCHEMA_VERSION),
         )
 
+    @staticmethod
+    def _staged_model_lines(diar: "DiarizationProvenance") -> List[str]:
+        """Segmentation and embedding models, for the engines that have both."""
+        lines = [f"Segmentation model: {diar.segmentation_model or 'not recorded'}"]
+        if diar.segmentation_model_sha256:
+            lines.append(f"Segmentation SHA-256: {diar.segmentation_model_sha256}")
+        lines.append(
+            f"Speaker embedding model: {diar.embedding_model or 'not recorded'}"
+        )
+        if diar.embedding_model_sha256:
+            # Always shown when recorded: a report never hides a fact the
+            # record holds.
+            lines.append(f"Speaker embedding SHA-256: {diar.embedding_model_sha256}")
+        elif diar.engine != "pyannote":
+            # sherpa is identified by file hash, so a missing one is worth
+            # saying; pyannote is identified by the commit above instead.
+            lines.append("Speaker embedding SHA-256: not recorded")
+        return lines
+
     def describe(self) -> List[str]:
         """Report-ready lines covering source, build and models."""
         lines = [
@@ -404,24 +456,17 @@ class AnalysisProvenance:
             )
             if diar.pipeline:
                 lines.append(f"Diarization pipeline: {diar.pipeline}")
-            lines.append(
-                f"Segmentation model: {diar.segmentation_model or 'not recorded'}"
-            )
-            if diar.segmentation_model_sha256:
-                lines.append(f"Segmentation SHA-256: {diar.segmentation_model_sha256}")
-            lines.append(
-                f"Speaker embedding model: {diar.embedding_model or 'not recorded'}"
-            )
-            if diar.embedding_model_sha256:
-                # Always shown when recorded: a report never hides a fact the
-                # record holds.
+            if diar.engine == "nemotron":
+                # One end-to-end model: no segmentation or embedding stage.
                 lines.append(
-                    f"Speaker embedding SHA-256: {diar.embedding_model_sha256}"
+                    f"Diarization model: {diar.segmentation_model or 'not recorded'}"
                 )
-            elif diar.engine != "pyannote":
-                # sherpa is identified by file hash, so a missing one is worth
-                # saying; pyannote is identified by the commit above instead.
-                lines.append("Speaker embedding SHA-256: not recorded")
+                lines.append(
+                    "Diarization model SHA-256: "
+                    f"{diar.segmentation_model_sha256 or 'not recorded'}"
+                )
+            else:
+                lines += self._staged_model_lines(diar)
             if diar.voice_leads:
                 lines.append(
                     "Names suggested by voice similarity (leads, not "

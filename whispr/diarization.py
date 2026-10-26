@@ -81,7 +81,7 @@ def _read_wav_mono16k(path: PathLike):
     return data, sample_rate
 
 
-BACKENDS = ("auto", "pyannote", "sherpa")
+BACKENDS = ("auto", "pyannote", "sherpa", "nemotron")
 
 
 def diarize(
@@ -104,9 +104,12 @@ def diarize(
     * ``"pyannote"`` - force pyannote (best on hard/low-quality audio).
     * ``"sherpa"`` - force the sherpa-onnx ONNX pipeline (no PyTorch, faster;
       good enough for clean audio).
+    * ``"nemotron"`` - NVIDIA's end-to-end model (:mod:`whispr.nemotron`), when
+      the build includes it. Never chosen by "auto": it has not been measured
+      on this deployment's recordings, and cannot take a speaker count.
 
-    Both engines return the same ``SpeakerSegment`` list, so the rest of the app
-    is unaffected.
+    Every engine returns the same ``SpeakerSegment`` list, so the rest of the
+    app is unaffected.
     """
     backend = (backend or "auto").lower()
     if backend not in BACKENDS:
@@ -125,6 +128,20 @@ def diarize(
             "so that method cannot run here. Choose the sherpa method under "
             "Advanced options, or untick \u201cIdentify who is speaking\u201d."
         )
+
+    if backend == "nemotron":
+        from . import nemotron
+
+        return [
+            SpeakerSegment(start=start, end=end, speaker=speaker)
+            for start, end, speaker in nemotron.diarize(
+                wav_path,
+                num_speakers=num_speakers,
+                progress=progress,
+                on_progress=on_progress,
+                cancelled=cancelled,
+            )
+        ]
 
     # Not just "is the library installed": in a bundle without the pyannote
     # cache, Pipeline.from_pretrained would go to the Hugging Face Hub for it.
@@ -170,6 +187,8 @@ def available_backends() -> List[str]:
         and resources.bundled_diarization_models() is not None
     ):
         out.append("sherpa")
+    if resources.bundled_nemotron() is not None:
+        out.append("nemotron")
     return out
 
 

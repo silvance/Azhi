@@ -20,6 +20,11 @@
 #     python packaging/fetch_assets.py argos ar,ru,zh,fa,uk,he,ko
 #     (plus the steps above, then pyinstaller)
 #
+# Optional Nemotron speaker separation (NVIDIA; model licence OpenMDW-1.1 -
+# have it reviewed before distributing a bundle that carries it):
+#     python packaging/fetch_assets.py nemotron
+#     (plus the steps above, then pyinstaller)
+#
 # Optional OCR for the translation workflow (images + PDFs):
 #     # install a system Tesseract first (apt-get install tesseract-ocr /
 #     # choco install tesseract), then:
@@ -189,9 +194,28 @@ for enabled, dists in (
             print(f"whispr.spec: skipping copy_metadata({dist!r}): {exc}")
 
 # Bundle the offline assets (ffmpeg + models) fetched by fetch_assets.py.
+#
+# Except whispr_assets/nemotron: a program and the libraries it loads from
+# beside itself. Given to Analysis as data, PyInstaller would take the program
+# and its libraries for binaries of its own and might move them apart (it did
+# that to Tesseract). It is handed to COLLECT instead, which copies it as it is.
 assets = REPO_ROOT / "whispr_assets"
+NEMOTRON_ASSETS = assets / "nemotron"
+nemotron_files = []
 if assets.is_dir():
-    datas.append((str(assets), "whispr_assets"))
+    for child in sorted(assets.iterdir()):
+        if child == NEMOTRON_ASSETS:
+            continue
+        datas.append(
+            (str(child), f"whispr_assets/{child.name}" if child.is_dir() else "whispr_assets")
+        )
+if NEMOTRON_ASSETS.is_dir():
+    nemotron_files = [
+        (f"whispr_assets/nemotron/{path.relative_to(NEMOTRON_ASSETS).as_posix()}", str(path), "DATA")
+        for path in sorted(NEMOTRON_ASSETS.rglob("*"))
+        if path.is_file()
+    ]
+    print(f"whispr.spec: bundling Nemotron diarization ({len(nemotron_files)} files)")
 
 # This build is CPU-only, so strip the CUDA / cuDNN libraries that ctranslate2
 # and onnxruntime ship in their wheels: they are never loaded and account for
@@ -272,6 +296,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    nemotron_files,
     strip=False,
     upx=False,
     name="whispr",

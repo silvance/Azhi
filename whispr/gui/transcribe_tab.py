@@ -147,12 +147,27 @@ COMMON_LANGUAGES = [
 # Diarization engine choices: dropdown label -> diarize() backend. "Auto" uses
 # pyannote when it's available, else sherpa. pyannote is best on hard/overlapping
 # audio; sherpa is lighter and faster and fine for clean audio.
+# Nemotron is offered only by a build that includes it, and Auto never picks
+# it: it has not been measured on this deployment's recordings yet.
 ENGINE_CHOICES = {
     "Auto (pyannote if available)": "auto",
     "pyannote - most accurate": "pyannote",
     "sherpa - faster, for clean audio": "sherpa",
+    "Nemotron - trial, counts speakers": "nemotron",
 }
 ENGINE_LABELS = list(ENGINE_CHOICES)
+
+
+def engine_labels() -> List[str]:
+    """The Method choices this build can offer."""
+    from ..diarization import available_backends
+
+    ready = available_backends()
+    return [
+        label
+        for label, engine in ENGINE_CHOICES.items()
+        if engine != "nemotron" or "nemotron" in ready
+    ]
 
 
 # What each model size means to someone choosing one. The size stays visible -
@@ -795,7 +810,7 @@ class TranscribeTab:
         self.engine_combo = ttk.Combobox(
             frame,
             textvariable=self.engine_var,
-            values=ENGINE_LABELS,
+            values=engine_labels(),
             state="readonly",
             width=34,
         )
@@ -3411,6 +3426,10 @@ class TranscribeTab:
         # otherwise sit in the dropdown and resolve to Auto silently.
         if self.device_var.get() not in _DEVICE_MODES:
             self.device_var.set(_device_label(default_mode()))
+        # Likewise a Method this build does not offer (Nemotron, chosen on a
+        # copy that had it): back to Auto rather than a run that cannot start.
+        if self.engine_var.get() not in engine_labels():
+            self.engine_var.set(ENGINE_LABELS[0])
         self._restore_speaker_count(data)
         if "learn_voices" in data:
             try:

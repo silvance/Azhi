@@ -424,6 +424,127 @@ def fetch_diarization(embedding: str = DEFAULT_EMBEDDING) -> None:
     fetch_segmentation()
 
 
+# NVIDIA's end-to-end diarizer (optional; see whispr/nemotron.py). Two parts,
+# under two licences, both pinned here by digest rather than trusted by name:
+#
+# - NeMo-Speech.cpp, the CPU runtime that runs it (Apache-2.0). Digests are the
+#   .sha256 files NVIDIA publishes with the release.
+# - Nemotron 3 Diarization, the model (OpenMDW-1.1 - have it reviewed before a
+#   bundle carrying it is distributed). Revision, size and digest are the ones
+#   the runtime's own model index pins for this release.
+NEMO_SPEECH_VERSION = "0.2.0"
+NEMO_SPEECH_RELEASE = (
+    "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/"
+)
+NEMO_SPEECH_ARCHIVES = {
+    "linux": (
+        "nemo-speech-0.2.0-linux-x86_64-cpu.tar.gz",
+        "f396057150f1b774935c7414fd32ebc04195a795a34120d78d8c9ecefa1b7507",
+    ),
+    "windows": (
+        "nemo-speech-0.2.0-windows-x86_64-cpu.zip",
+        "82c80451086e86194aba9af19f800da77cd66d1c28d993d0efceffd6cdb49bb8",
+    ),
+}
+NEMOTRON_REPO = "nvidia/Nemotron-3-Diarization"
+NEMOTRON_REVISION = "f667ed73aee57d40cc39428eb768b4fd87a0a29e"
+NEMOTRON_FILENAME = "Nemotron-3-Diarization.q8_0.gguf"
+NEMOTRON_SIZE = 107012128
+NEMOTRON_SHA256 = "08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1"
+
+
+def _check_digest(path: Path, expected: str, what: str) -> None:
+    actual = sha256_file_or_none(path)
+    if actual != expected:
+        raise SystemExit(
+            f"{what} does not match its pinned digest "
+            f"(expected {expected}, got {actual}); not bundling it."
+        )
+
+
+def fetch_nemotron() -> None:
+    """Download the NeMo-Speech.cpp runtime and the Nemotron model.
+
+    Into ``whispr_assets/nemotron``: the runtime's ``bin`` folder (the program
+    and the libraries it loads from beside itself), its licence files, the
+    model, and ``nemotron.json`` recording exactly what was fetched.
+    """
+    import zipfile
+
+    from huggingface_hub import hf_hub_download
+
+    platform = "windows" if os.name == "nt" else "linux"
+    archive_name, archive_sha256 = NEMO_SPEECH_ARCHIVES[platform]
+    url = NEMO_SPEECH_RELEASE + archive_name
+    out = ASSETS / "nemotron"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / archive_name
+        print(f"downloading {url}")
+        urllib.request.urlretrieve(url, archive)
+        _check_digest(archive, archive_sha256, archive_name)
+        _verify_or_pin_file(url, archive)
+        unpacked = Path(tmp) / "unpacked"
+        if archive_name.endswith(".zip"):
+            with zipfile.ZipFile(archive) as zipped:
+                zipped.extractall(unpacked)
+        else:
+            with tarfile.open(archive, "r:gz") as tar:
+                tar.extractall(unpacked, filter="data")
+        (root,) = [p for p in unpacked.iterdir() if p.is_dir()]
+        # Links are copied as the files they point to: a bundle is copied
+        # about by tools that do not all keep them.
+        shutil.copytree(root / "bin", out / "bin")
+        if platform == "linux":
+            # The Linux program finds its libraries in ../lib (its RPATH).
+            shutil.copytree(
+                root / "lib",
+                out / "lib",
+                ignore=shutil.ignore_patterns("cmake", "*.a"),
+            )
+        shutil.copytree(root / "share" / "licenses", out / "licenses")
+
+    print(f"downloading {NEMOTRON_REPO}/{NEMOTRON_FILENAME} @ {NEMOTRON_REVISION}")
+    model = Path(
+        hf_hub_download(
+            repo_id=NEMOTRON_REPO,
+            filename=NEMOTRON_FILENAME,
+            revision=NEMOTRON_REVISION,
+            local_dir=str(out),
+        )
+    )
+    if model.stat().st_size != NEMOTRON_SIZE:
+        raise SystemExit(f"{NEMOTRON_FILENAME} is not {NEMOTRON_SIZE} bytes")
+    _check_digest(model, NEMOTRON_SHA256, NEMOTRON_FILENAME)
+    _pin_repo(NEMOTRON_REPO, NEMOTRON_REVISION)
+    # hf_hub_download leaves its own bookkeeping folder beside the file.
+    shutil.rmtree(out / ".cache", ignore_errors=True)
+
+    record = {
+        "runtime": {
+            "name": "NeMo-Speech.cpp",
+            "version": NEMO_SPEECH_VERSION,
+            "archive": url,
+            "archive_sha256": archive_sha256,
+            "licence": "Apache-2.0",
+        },
+        "model": {
+            "repo": NEMOTRON_REPO,
+            "revision": NEMOTRON_REVISION,
+            "file": NEMOTRON_FILENAME,
+            "sha256": NEMOTRON_SHA256,
+            "licence": "OpenMDW-1.1",
+        },
+    }
+    (out / "nemotron.json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8"
+    )
+    save_lock()
+    print(f"nemotron -> {out}")
+
+
 # Argos Translate source languages to bundle (each translates -> English). The
 # intel-leaning set; all are present in the Argos index (Pashto has no Argos pack).
 # Override on the command line / via the workflow input.
@@ -622,8 +743,8 @@ def main(argv: List[str]) -> None:
     if not argv:
         raise SystemExit(
             "usage: fetch_assets.py [ffmpeg | models <names> | embedding <model> | "
-            "segmentation | diarization <embedding> | pyannote | enhancement | "
-            "argos <codes> | tesseract <codes>]"
+            "segmentation | diarization <embedding> | pyannote | nemotron | "
+            "enhancement | argos <codes> | tesseract <codes>]"
         )
     command = argv[0]
     if command == "ffmpeg":
@@ -641,6 +762,8 @@ def main(argv: List[str]) -> None:
         fetch_diarization(embedding or DEFAULT_EMBEDDING)
     elif command == "pyannote":
         fetch_pyannote()
+    elif command == "nemotron":
+        fetch_nemotron()
     elif command == "enhancement":
         fetch_enhancement()
     elif command == "argos":
