@@ -304,6 +304,12 @@ hour.
 The words stay exactly as transcribed. Speakers are numbered from scratch, so
 any names you typed have to be put back afterwards.
 
+### How well it does on your recordings
+
+Short replies and interruptions are where speakers most often get mixed up, and
+how often depends on your audio. [Measuring who-said-what](test-set.md) shows how
+to label a few of your own recordings and score the tool on them, offline.
+
 ### Method and sensitivity
 
 In *Advanced options* → *Speaker separation*, **Method** picks the engine.

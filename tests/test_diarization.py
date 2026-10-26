@@ -92,30 +92,113 @@ def test_assign_speakers_large_gap_is_unassigned():
     assert out[0].speaker is None
 
 
-def test_assign_speakers_smooths_spurious_short_run():
-    # A spurious 1-word island (from overlap/jitter) wedged between two longer
-    # runs of the same speaker should be absorbed back into them.
-    segment = Segment(
+def _five_words(third_start=1.6, third_end=1.9):
+    return Segment(
         start=0.0,
         end=4.0,
         text="alpha beta gamma delta epsilon",
         words=[
             Word(start=0.0, end=0.8, word=" alpha"),
             Word(start=0.8, end=1.6, word=" beta"),
-            Word(start=1.6, end=1.9, word=" gamma"),  # spurious single-word blip
+            Word(start=third_start, end=third_end, word=" gamma"),
             Word(start=1.9, end=2.8, word=" delta"),
             Word(start=2.8, end=4.0, word=" epsilon"),
         ],
     )
+
+
+def test_assign_speakers_smooths_unsupported_short_run():
+    # "gamma" overlaps a sliver of SPEAKER_01 that covers less than half of it
+    # (the rest is a gap): a misaligned word, not a reply. It is absorbed.
     speakers = [
         SpeakerSegment(start=0.0, end=1.6, speaker="SPEAKER_00"),
-        SpeakerSegment(start=1.6, end=1.9, speaker="SPEAKER_01"),  # blip turn
+        SpeakerSegment(start=1.75, end=1.85, speaker="SPEAKER_01"),
         SpeakerSegment(start=1.9, end=4.0, speaker="SPEAKER_00"),
     ]
-    out = assign_speakers([segment], speakers)
-    # Without smoothing this would split into three runs; the blip is absorbed.
+    out = assign_speakers([_five_words()], speakers)
     assert [s.speaker for s in out] == ["SPEAKER_00"]
     assert out[0].text == "alpha beta gamma delta epsilon"
+
+
+def test_assign_speakers_keeps_short_reply_the_diarizer_found():
+    # A 0.3 s turn by the other person that covers the whole word is a quick
+    # reply, not a stray fragment: it used to be relabelled, and is now kept.
+    speakers = [
+        SpeakerSegment(start=0.0, end=1.6, speaker="SPEAKER_00"),
+        SpeakerSegment(start=1.6, end=1.9, speaker="SPEAKER_01"),
+        SpeakerSegment(start=1.9, end=4.0, speaker="SPEAKER_00"),
+    ]
+    out = assign_speakers([_five_words()], speakers)
+    assert [s.speaker for s in out] == ["SPEAKER_00", "SPEAKER_01", "SPEAKER_00"]
+    assert out[1].text == "gamma"
+
+
+def test_assign_speakers_reply_overlapping_question_goes_to_replier():
+    # The reply starts before the question ends. Its midpoint is in the overlap,
+    # where the earlier turn used to win, and then smoothing handed the one-word
+    # run back to the questioner as well. The only time anyone is heard alone
+    # during "yes" is the replier, and the replier's turn covers all of it.
+    segment = Segment(
+        start=0.0,
+        end=2.5,
+        text="are you ready yes",
+        words=[
+            Word(start=0.0, end=0.6, word=" are"),
+            Word(start=0.6, end=1.2, word=" you"),
+            Word(start=1.2, end=1.8, word=" ready"),
+            Word(start=1.8, end=2.5, word=" yes"),
+        ],
+    )
+    speakers = [
+        SpeakerSegment(start=0.0, end=2.3, speaker="SPEAKER_00"),
+        SpeakerSegment(start=1.8, end=2.5, speaker="SPEAKER_01"),
+    ]
+    out = assign_speakers([segment], speakers)
+    assert [(s.speaker, s.text) for s in out] == [
+        ("SPEAKER_00", "are you ready"),
+        ("SPEAKER_01", "yes"),
+    ]
+
+
+def test_assign_speakers_word_wholly_in_overlap_uses_midpoint_rule():
+    # No one is heard alone during the word, so the old rule decides: the turn
+    # active at the midpoint, the earlier-starting one first.
+    segment = Segment(
+        start=1.0,
+        end=1.4,
+        text="mm",
+        words=[Word(start=1.0, end=1.4, word=" mm")],
+    )
+    speakers = [
+        SpeakerSegment(start=0.0, end=3.0, speaker="SPEAKER_00"),
+        SpeakerSegment(start=0.9, end=1.5, speaker="SPEAKER_01"),
+    ]
+    out = assign_speakers([segment], speakers)
+    assert [s.speaker for s in out] == ["SPEAKER_00"]
+
+
+def test_exclusive_coverage_counts_only_time_one_person_is_heard():
+    turns = [
+        SpeakerSegment(start=0.0, end=2.0, speaker="A"),
+        SpeakerSegment(start=1.5, end=3.0, speaker="B"),
+    ]
+    # 0-1.5 A alone, 1.5-2.0 both (neither), 2.0-3.0 B alone, 3.0-4.0 silence.
+    heard = diarization.exclusive_coverage(0.0, 4.0, turns)
+    assert heard == {"A": pytest.approx(1.5), "B": pytest.approx(1.0)}
+    assert diarization.exclusive_coverage(1.6, 1.9, turns) == {}
+    assert diarization.exclusive_coverage(5.0, 5.0, turns) == {}
+
+
+def test_turn_index_finds_long_turns_that_started_earlier():
+    turns = [
+        SpeakerSegment(start=0.0, end=100.0, speaker="A"),
+        SpeakerSegment(start=50.0, end=51.0, speaker="B"),
+        SpeakerSegment(start=99.0, end=101.0, speaker="B"),
+    ]
+    index = diarization._TurnIndex(turns)
+    assert {t.start for t in index.touching(60.0, 61.0)} == {0.0}
+    assert {t.start for t in index.touching(50.5, 50.6)} == {0.0, 50.0}
+    assert index.touching(200.0, 201.0) == []
 
 
 def test_assign_speakers_keeps_real_short_turn_at_min_length():
