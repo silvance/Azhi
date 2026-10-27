@@ -104,7 +104,7 @@ Options:
 | Option | What it does |
 |---|---|
 | `--speakers unknown` | Let the tool work out how many people there are, as *Not sure — work it out* does. |
-| `--engine pyannote`, `--engine sherpa` or `--engine nemotron` | Score one speaker-separation method rather than the one *Auto* would pick. Nemotron (in copies built with it) works out the number of people itself, so it is not told the reference's count. |
+| `--engine pyannote`, `--engine sherpa` or `--engine nemotron` | Score one speaker-separation method rather than the one *Auto* would pick. Nemotron is only in copies built with it. |
 | `--model small` | Score a different transcription model (default: `medium`). |
 | `--language ru` | The recordings' language, if you would set it in the application. |
 | `--rescore` | Score the saved results again without transcribing. For developers changing how words are given to speakers. |
@@ -138,6 +138,19 @@ for them — and nor are words outside every reference turn.
 A recording with a high **Speaker time wrong** and a low **Words to right
 person** has usually had two voices merged into one, or one voice split in
 two. Listen to it in the application with the count given, and see which.
+
+Below the table, the report says where the quick replies that went to the
+wrong person were lost:
+
+- **the speaker separation did not find** them: it had no turn for that
+  person there at all — the separation method is what to change;
+- **it did find** them, **but the words still went to someone else**: usually
+  the transcription's word timings, which can be a few tenths of a second out
+  on a short word — worth reporting, with these counts, to whoever maintains
+  the tool.
+
+Quick replies with no transcribed words are counted separately: the
+transcription never heard them, so no speaker separation can help.
 
 ## 6. Handling the results
 

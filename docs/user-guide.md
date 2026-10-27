@@ -320,10 +320,10 @@ Leave it on **Auto** unless you have a reason. In a bundle with both:
 - **Nemotron** appears only in a copy built with it. It is a trial: a newer
   kind of model, meant to be better at quick back-and-forth and at people
   talking over each other, but not yet measured on recordings like yours.
-  It works out how many people are speaking by itself and **ignores the number
-  you give**; if it finds a different number, the status says so, and **Redo
-  speaker separation…** with pyannote or sherpa will use yours. It does not
-  show how far it has got; Cancel still stops it.
+  It uses the number of people you give: if it heard more voices than that,
+  each moment of the extra ones goes to whichever of your speakers is most
+  likely. If it heard fewer, it cannot split them, and the status says so —
+  **Redo speaker separation…** with pyannote or sherpa may do better there.
 
 **Grouping sensitivity** only applies to sherpa, and only when you have not
 given a count. Higher merges more (fewer speakers), lower splits more.

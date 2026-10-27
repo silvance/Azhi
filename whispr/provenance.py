@@ -242,10 +242,11 @@ class DiarizationProvenance:
         """The runtime and model as the build recorded them, and the file's hash.
 
         One model does the whole job, so there is no separate embedding model
-        to name. The configuration it ran with goes in ``pipeline``: the same
-        model scores differently with a different one.
+        to name. The configuration it ran with, and how its probabilities were
+        made into turns, go in ``pipeline``: the same model gives different
+        turns under either changed.
         """
-        from .nemotron import describe_geometry
+        from .nemotron import describe_method
         from .resources import bundled_nemotron, bundled_nemotron_info
 
         info = bundled_nemotron_info()
@@ -262,7 +263,7 @@ class DiarizationProvenance:
             if repo
             else "Nemotron 3 Diarization (revision not recorded)"
         )
-        self.pipeline = f"{name}; {describe_geometry()}"
+        self.pipeline = f"{name}; {describe_method()}"
         bundled = bundled_nemotron()
         if bundled is None:
             return

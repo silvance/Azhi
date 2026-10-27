@@ -259,6 +259,11 @@ class CaseScore:
     short_turns: int = 0
     short_turns_with_words: int = 0
     short_turns_right: int = 0
+    # Of the short turns whose words went to someone else: the separation had
+    # no turn for that person there, or it had, and the words were still given
+    # to someone else.
+    short_lost_separation: int = 0
+    short_lost_assignment: int = 0
     speakers_reference: int = 0
     speakers_found: int = 0
     mapping: Dict[str, str] = field(default_factory=dict)
@@ -336,11 +341,29 @@ def score_case(
                 if turn.speaker == truth and turn.start <= middle <= turn.end:
                     results[i].append(right)
     score.short_turns = len(short)
-    for outcomes in results.values():
-        if outcomes:
-            score.short_turns_with_words += 1
-            score.short_turns_right += int(sum(outcomes) * 2 >= len(outcomes))
+    for i, outcomes in results.items():
+        if not outcomes:
+            continue
+        score.short_turns_with_words += 1
+        if sum(outcomes) * 2 >= len(outcomes):
+            score.short_turns_right += 1
+        elif _separation_found(short[i], turns, mapping):
+            score.short_lost_assignment += 1
+        else:
+            score.short_lost_separation += 1
     return score
+
+
+def _separation_found(
+    turn: SpeakerSegment, found: Sequence[SpeakerSegment], mapping: Dict[str, str]
+) -> bool:
+    """Whether the separation's turns for this person cover most of ``turn``."""
+    covered = sum(
+        _overlap(turn, other)
+        for other in found
+        if mapping.get(other.speaker) == turn.speaker
+    )
+    return covered * 2 >= turn.end - turn.start
 
 
 def total(scores: Sequence[CaseScore]) -> CaseScore:
@@ -359,6 +382,8 @@ def total(scores: Sequence[CaseScore]) -> CaseScore:
             "short_turns",
             "short_turns_with_words",
             "short_turns_right",
+            "short_lost_separation",
+            "short_lost_assignment",
         ):
             setattr(out, name, getattr(out, name) + getattr(s, name))
     return out
@@ -556,6 +581,10 @@ def summary_lines(scores: Sequence[CaseScore]) -> List[str]:
         f"Short turns are reference turns under {SHORT_TURN_SECONDS:g} s - the quick "
         f"replies. {pooled.short_turns - pooled.short_turns_with_words} of "
         f"{pooled.short_turns} had no transcribed words, so could not be scored.",
+        "Short turns given to the wrong person: "
+        f"{pooled.short_lost_separation} the speaker separation did not find "
+        f"(no turn for that person there), {pooled.short_lost_assignment} it "
+        "did find but the words still went to someone else.",
         f"{pooled.words_not_scored} word(s) were not scored: in overlapping speech "
         "or outside every reference turn.",
         f"{pooled.words_unattributed} scored word(s) were given to no one.",
@@ -582,6 +611,8 @@ def write_csv(scores: Sequence[CaseScore], path: PathLike) -> Path:
                 "short_turns",
                 "short_turns_with_words",
                 "short_turns_right",
+                "short_lost_separation",
+                "short_lost_assignment",
                 "reference_seconds",
                 "missed_seconds",
                 "false_alarm_seconds",
@@ -603,6 +634,8 @@ def write_csv(scores: Sequence[CaseScore], path: PathLike) -> Path:
                     s.short_turns,
                     s.short_turns_with_words,
                     s.short_turns_right,
+                    s.short_lost_separation,
+                    s.short_lost_assignment,
                     round(s.reference_seconds, 2),
                     round(s.missed, 2),
                     round(s.false_alarm, 2),
@@ -640,8 +673,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="auto",
         choices=("auto", "pyannote", "sherpa", "nemotron"),
         help=(
-            "Speaker separation method (default: %(default)s). nemotron works "
-            "out the number of speakers itself, so --speakers does not apply to it"
+            "Speaker separation method (default: %(default)s); nemotron only "
+            "in copies built with it"
         ),
     )
     parser.add_argument(

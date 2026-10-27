@@ -346,9 +346,13 @@ swap.
   overlapping speech included, instead of cutting, measuring and grouping. Built
   for exactly the case the other two find hardest: short turns in quick
   succession. Only in a bundle built with `nemotron=yes`, and only when chosen:
-  Auto never picks it. It works out the number of speakers itself and **cannot be
-  given one**; when you have said how many people there are and it finds a
-  different number, the status says so. The model is licensed **OpenMDW-1.1**
+  Auto never picks it. Turns are built from the model's own per-10 ms speaker
+  probabilities — each moment goes to the most likely speaker — rather than from
+  the runtime's turns, which are widened, bridged across short gaps and drop
+  anything under half a second, and so lost one-word replies. With a speaker
+  count given, the voices heard longest are kept and each moment of any other
+  goes to whichever of them is more likely; it cannot split a voice it heard as
+  one, and says so. The model is licensed **OpenMDW-1.1**
   (the runtime is Apache-2.0) — have that reviewed before distributing a bundle
   that carries it. NVIDIA's published results (DIHARD III 12.7% DER against 21.4%
   for pyannote 3.1) are its own, on its own benchmarks; measure it on your

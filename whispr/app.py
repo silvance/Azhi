@@ -88,6 +88,12 @@ def score_test_set(args: "List[str]") -> int:
 def main(argv: "Optional[List[str]]" = None) -> None:
     """Run Whispers: a check if asked for one, otherwise the window."""
     args = sys.argv[1:] if argv is None else list(argv)
+    if args and args[0] == "--nemotron-worker":
+        # Started by whispr.nemotron, never by a person: the shipped copy has
+        # no Python of its own to run the worker module with.
+        from .nemotron_worker import main as worker_main
+
+        raise SystemExit(worker_main(args[1:]))
     if args and args[0] == "--score-test-set":
         raise SystemExit(score_test_set(args[1:]))
     if "--self-test" in args:
