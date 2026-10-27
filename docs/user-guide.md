@@ -126,7 +126,7 @@ you need it. What is in there:
 | Card | Holds |
 | --- | --- |
 | **Audio and output** | Skip silence, noise reduction, the easier-to-listen-to copy, low-confidence highlighting, `.srt` subtitles, video conversion |
-| **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English) and **Expected words** |
+| **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English — with **medium** or **large-v3** only: *turbo* and the *.en* models cannot translate, and the run is refused with them) and **Expected words** |
 | **Speaker separation** | Method and grouping sensitivity — used only when *Identify who is speaking* is on |
 | **Processing hardware** | Usually just says **CPU** — see below |
 | **Operation profile** | Settings and learned voices kept per operation — see below |

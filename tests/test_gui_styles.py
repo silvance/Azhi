@@ -66,3 +66,18 @@ def test_custom_styles_survive_ttkbootstrap(app):
     # The ones that were stripped to ttkbootstrap's defaults.
     assert seen["TLabel"] == 0
     assert seen["TFrame"] == 0
+
+
+def test_translate_with_a_model_that_cannot_is_refused_before_it_runs(app):
+    # turbo writes the original language when asked to translate: a Chinese
+    # recording came back in Chinese, with nothing on screen to say so.
+    page = app.transcribe
+    page.diarize_var.set(False)
+    page.model_var.set("turbo")
+    page.task_var.set("translate")
+    assert "cannot translate" in page.model_status_var.get()
+    page.run_in_thread()
+    assert page._busy is False
+    assert page.progress_label_var.get() == "Choose a model that can translate"
+    page.task_var.set("transcribe")
+    assert "cannot translate" not in page.model_status_var.get()
