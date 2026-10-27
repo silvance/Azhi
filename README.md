@@ -2,7 +2,7 @@
 
 Whispers is an offline desktop application for transcribing recordings,
 working out who spoke when, and comparing a voice against reference profiles.
-It is built for investigative and intelligence triage on air-gapped Windows and
+It is built for investigative triage on air-gapped Windows and
 Linux machines: nothing it does reaches the network, and a voice comparison is a
 lead for an analyst to review - never an identification.
 
