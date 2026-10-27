@@ -18,10 +18,13 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 from .resources import find_ffmpeg
-from .transcription import transcribe_audio
+from .transcription import Segment, transcribe_audio
+
+if TYPE_CHECKING:
+    from .live_speakers import SpeakerReviewer
 
 PathLike = Union[str, Path]
 
@@ -95,6 +98,10 @@ class LiveTranscriber:
         When True, ffmpeg *waits for an incoming connection* (``-listen 1``)
         instead of connecting out - use it when the source pushes directly to a
         URL this machine hosts.
+    speakers
+        A :class:`whispers.live_speakers.SpeakerReviewer` to hand each chunk's
+        audio and timed words to, so it can work out who is speaking behind the
+        words. Told when the stream ends; ``None`` for words only.
     """
 
     def __init__(
@@ -106,6 +113,7 @@ class LiveTranscriber:
         segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
         vad_filter: bool = True,
         listen: bool = False,
+        speakers: "Optional[SpeakerReviewer]" = None,
     ) -> None:
         self._source = source
         self._model_size = model_size
@@ -113,6 +121,7 @@ class LiveTranscriber:
         self._segment_seconds = max(2, int(segment_seconds))
         self._vad_filter = vad_filter
         self._listen = listen
+        self._speakers = speakers
 
         self._stop = threading.Event()
         self._proc: Optional[subprocess.Popen] = None
@@ -254,13 +263,22 @@ class LiveTranscriber:
                     if on_status is not None and not announced:
                         announced = True
                         on_status("Transcribing…")
+                    timed: List[Segment] = []
                     try:
-                        text = self._transcribe_segment(segment, context)
+                        text, timed = self._transcribe_segment(segment, context)
                     except Exception as exc:  # noqa: BLE001 - surfaced, non-fatal
                         if on_error is not None and not error_reported:
                             error_reported = True
                             on_error(exc)
                         text = ""
+                    if self._speakers is not None:
+                        try:
+                            # Even a chunk with no words: it is stream time.
+                            self._speakers.add(segment, timed)
+                        except Exception as exc:  # noqa: BLE001 - words go on
+                            if on_error is not None and not error_reported:
+                                error_reported = True
+                                on_error(exc)
                     if text:
                         context = (context + " " + text)[-_CONTEXT_CHARS:]
                         on_text(text)
@@ -272,6 +290,8 @@ class LiveTranscriber:
                     break
                 self._stop.wait(0.3)
         finally:
+            if self._speakers is not None:
+                self._speakers.finish()
             rc = self._proc.poll()
             # ffmpeg failed before producing anything - surface why (bad URL, no
             # connection, etc.) rather than finishing silently.
@@ -288,18 +308,24 @@ class LiveTranscriber:
             if on_status is not None:
                 on_status("Stopped.")
 
-    def _transcribe_segment(self, segment: Path, context: str) -> str:
-        """Transcribe one finished segment, primed with the recent transcript."""
+    def _transcribe_segment(
+        self, segment: Path, context: str
+    ) -> "tuple[str, List[Segment]]":
+        """Transcribe one finished segment, primed with the recent transcript.
+
+        Word times are worked out only when someone will give the words to
+        speakers: they cost a little time on every chunk.
+        """
         result = transcribe_audio(
             segment,
             model_size=self._model_size,
             language=self._language,
             vad_filter=self._vad_filter,
-            word_timestamps=False,
+            word_timestamps=self._speakers is not None,
             initial_prompt=context or None,
             cancelled=self._stop.is_set,
         )
-        return result.text.strip()
+        return result.text.strip(), list(result.segments)
 
     def _cleanup_tmpdir(self) -> None:
         if self._tmpdir is None:

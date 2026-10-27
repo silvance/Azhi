@@ -135,3 +135,57 @@ def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
         assert len(calls) == 1
     finally:
         root.destroy()
+
+
+def test_live_speakers_relabel_the_transcript_and_rewrite_the_file(
+    tmp_path, monkeypatch
+):
+    from whispers.transcription import Segment
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    import whispers.gui.app as app_mod
+    import whispers.gui.live_tab as live_mod
+
+    monkeypatch.setattr(live_mod, "diarization_available", lambda: True)
+    # The Live page is only built where ffmpeg can read a stream.
+    monkeypatch.setattr(app_mod, "find_ffmpeg", lambda: Path("ffmpeg"))
+    root = tb.Window(themename="darkly")
+    try:
+        page = app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True).live
+        assert page.speakers_var.get() is False  # a second model: asked for
+
+        saved = tmp_path / "live.txt"
+        saved.write_text("from last time\n", encoding="utf-8")
+        page._save_path, page._save_prefix = saved, saved.read_text(encoding="utf-8")
+        reviewer = object()
+        page._reviewer = reviewer
+        labelled = [
+            Segment(0.0, 2.0, "Who is it?", speaker="SPEAKER_00"),
+            Segment(2.1, 2.5, "Me.", speaker="SPEAKER_01"),
+        ]
+        pending = [Segment(9.0, 12.0, "Come in.")]
+        page._show_speakers(reviewer, labelled, pending)
+        shown = page.transcript.get("1.0", "end-1c")
+        assert shown == ("[Speaker 1] Who is it?\n[Speaker 2] Me.\n[…] Come in.\n")
+        assert saved.read_text(encoding="utf-8") == "from last time\n" + shown
+
+        # A later pass changes its mind; the screen and the file follow.
+        labelled[1].speaker = "SPEAKER_00"
+        page._show_speakers(reviewer, labelled, [])
+        assert "[Speaker 1] Me." in page.transcript.get("1.0", "end-1c")
+        assert "[Speaker 1] Me." in saved.read_text(encoding="utf-8")
+
+        # Lines from a session that has been replaced are not drawn.
+        page._show_speakers(object(), [], pending)
+        assert "Come in." not in page.transcript.get("1.0", "end-1c")
+
+        # Cleared lines stay cleared when the next pass redraws.
+        page._hide_before = 2.05
+        page._show_speakers(reviewer, labelled, pending)
+        assert page.transcript.get("1.0", "end-1c") == (
+            "[Speaker 1] Me.\n[…] Come in.\n"
+        )
+        page._reviewer = None
+    finally:
+        root.destroy()

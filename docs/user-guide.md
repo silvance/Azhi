@@ -593,6 +593,28 @@ later be read as cleaner than it was.
 against smoothness: shorter is more live but choppier. The transcript can be
 saved to a file as it goes.
 
+**Show who is speaking** (in a copy that can separate speakers) labels the
+live transcript by speaker, a little behind the words. Telling one voice from
+another takes more than a few seconds of each, so:
+
+- New lines appear at once marked **[…]**. About every 20 seconds the last ten
+  minutes are gone over and those lines get a speaker.
+- **An earlier line can change speaker** on a later pass, because by then more
+  of each voice has been heard. The saved file is rewritten to match; what the
+  file held before the session is kept at the top.
+- When you press **Stop**, the end is checked once more. The status says when
+  that is done.
+- Give **People speaking** if you know it, as on the Transcribe page. **Method**
+  is the same choice too.
+- It runs beside the transcription on the same processor. On a slow machine,
+  both fall further behind; use the smallest model that is good enough.
+- Someone who has said nothing for more than ten minutes may come back under a
+  new speaker number.
+
+The Live page does not keep the audio. For a transcript you need to rely on,
+record the stream as well, and transcribe the recording on the Transcribe page
+afterwards: that hears all of it at once.
+
 This is the one page that uses the network, and only where you tell it to: it
 reads the **Stream URL** you give it, or waits for an incoming connection when
 you ask this PC to host. Nothing is sent out, and the transcription itself
