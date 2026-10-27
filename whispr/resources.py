@@ -14,7 +14,7 @@ Expected layout of an assets directory::
             medium/model.bin ...
             large-v3/model.bin ...
         nemotron/                (optional speaker separation)
-            bin/nemo-speech      (or nemo-speech.exe, with its libraries)
+            bin/ or lib/         (the runtime's C library and what it loads)
             Nemotron-3-Diarization.q8_0.gguf
             nemotron.json
 """
@@ -211,21 +211,22 @@ NEMOTRON_MODEL_FILENAME = "Nemotron-3-Diarization.q8_0.gguf"
 
 
 def bundled_nemotron() -> Optional[Tuple[Path, Path]]:
-    """Return ``(nemo-speech executable, model)`` if this build ships both.
+    """Return ``(runtime C library, model)`` if this build ships both.
 
-    Kept in one folder, ``whispr_assets/nemotron``: the executable loads its
-    libraries from beside itself, and the build copies the folder as it is.
+    Kept in one folder, ``whispr_assets/nemotron``: the library loads the
+    others it needs from beside itself, and the build copies the folder as it
+    is. Windows keeps the libraries in ``bin``, Linux in ``lib``.
     """
-    names = ("nemo-speech.exe",) if os.name == "nt" else ("nemo-speech",)
+    library = (
+        Path("bin") / "nemo_speech_asr_c.dll"
+        if os.name == "nt"
+        else Path("lib") / "libnemo_speech_asr_c.so.1"
+    )
     for base in asset_dirs():
         directory = base / NEMOTRON_DIRNAME
         model = directory / NEMOTRON_MODEL_FILENAME
-        if not model.is_file():
-            continue
-        for name in names:
-            binary = directory / "bin" / name
-            if binary.is_file():
-                return binary, model
+        if model.is_file() and (directory / library).is_file():
+            return directory / library, model
     return None
 
 

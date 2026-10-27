@@ -116,7 +116,22 @@ def test_score_counts_words_and_quick_replies():
     assert (score.words_scored, score.words_right, score.words_not_scored) == (6, 5, 1)
     assert (score.short_turns, score.short_turns_with_words) == (1, 1)
     assert score.short_turns_right == 0
+    # The separation had Bob's turn; the word was still given to Alice.
+    assert (score.short_lost_assignment, score.short_lost_separation) == (1, 0)
     assert score.der == pytest.approx(0.0)
+
+
+def test_a_reply_the_separation_never_found_is_counted_as_its_loss():
+    reference = [turn(0, 3, "Alice"), turn(3.2, 3.8, "Bob"), turn(4, 7, "Alice")]
+    # Bob has turns elsewhere, but none at the reply: Alice's runs straight over it.
+    found = [turn(0, 7, "S0"), turn(8, 9, "S1")]
+    reference.append(turn(8, 9, "Bob"))
+    attributed = [Segment(3.2, 3.8, "", words=_words((3.2, 3.7)), speaker="S0")]
+    score = ev.score_case("call", reference, found, attributed)
+    assert (score.short_lost_separation, score.short_lost_assignment) == (1, 0)
+    assert "1 the speaker separation did not find" in "\n".join(
+        ev.summary_lines([score])
+    )
 
 
 def test_word_in_overlapping_speech_is_not_scored():

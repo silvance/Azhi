@@ -106,7 +106,7 @@ def diarize(
       good enough for clean audio).
     * ``"nemotron"`` - NVIDIA's end-to-end model (:mod:`whispr.nemotron`), when
       the build includes it. Never chosen by "auto": it has not been measured
-      on this deployment's recordings, and cannot take a speaker count.
+      on this deployment's recordings.
 
     Every engine returns the same ``SpeakerSegment`` list, so the rest of the
     app is unaffected.

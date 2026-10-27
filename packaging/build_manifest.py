@@ -116,8 +116,8 @@ def _model_entries() -> List[Dict[str, Any]]:
         nemotron / "Nemotron-3-Diarization.q8_0.gguf",
         "diarization",
     )
-    for name in ("nemo-speech", "nemo-speech.exe"):
-        _add("nemo-speech", nemotron / "bin" / name, "tool")
+    for library in ("bin/nemo_speech_asr_c.dll", "lib/libnemo_speech_asr_c.so.1"):
+        _add("nemo-speech-library", nemotron / library, "tool")
 
     for name in ("ffmpeg", "ffmpeg.exe"):
         _add("ffmpeg", ASSETS / "ffmpeg" / name, "tool")

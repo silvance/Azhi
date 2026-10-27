@@ -105,10 +105,10 @@ def test_nemotron_model_and_program_are_hashed_when_bundled(assets):
     nemotron = assets / "nemotron"
     (nemotron / "bin").mkdir(parents=True)
     (nemotron / "Nemotron-3-Diarization.q8_0.gguf").write_bytes(b"gguf")
-    (nemotron / "bin" / "nemo-speech.exe").write_bytes(b"program")
+    (nemotron / "bin" / "nemo_speech_asr_c.dll").write_bytes(b"library")
     entries = _by_name(build_manifest._model_entries())
     assert entries["nemotron-3-diarization"]["kind"] == "diarization"
     assert entries["nemotron-3-diarization"]["sha256"] == sha256_file(
         nemotron / "Nemotron-3-Diarization.q8_0.gguf"
     )
-    assert entries["nemo-speech"]["kind"] == "tool"
+    assert entries["nemo-speech-library"]["kind"] == "tool"
