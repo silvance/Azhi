@@ -496,6 +496,18 @@ def parse_time_ranges(text: str) -> List[Tuple[float, float]]:
     return ranges
 
 
+def format_time_ranges(spans: Sequence[Tuple[float, float]]) -> str:
+    """Spans as :func:`parse_time_ranges` reads them: ``0:10.25-0:45.00, ...``."""
+
+    def clock(seconds: float) -> str:
+        minutes, rest = divmod(max(0.0, seconds), 60.0)
+        hours, minutes = divmod(int(minutes), 60)
+        text = f"{minutes}:{rest:05.2f}"
+        return f"{hours}:{minutes:02d}:{rest:05.2f}" if hours else text
+
+    return ", ".join(f"{clock(start)}-{clock(end)}" for start, end in spans)
+
+
 def _parse_timestamp(value: str, context: str) -> float:
     """Seconds from ``ss``, ``mm:ss`` or ``h:mm:ss``."""
     if not value:

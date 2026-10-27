@@ -37,6 +37,11 @@ on:
         type: choice
         options: ["no", "yes"]
         default: "no"
+      alignment:
+        description: "Also bundle the English word-timing model (wav2vec2-base-960h, Apache-2.0, ~380 MB) as a trial: it re-times English words before they are given to speakers, so one-word replies land on the right person more often."
+        type: choice
+        options: ["no", "yes"]
+        default: "no"
       embedding:
         description: "Speaker-embedding model for speaker profiles/comparison. titanet-large (default) and titanet-small: NeMo TitaNet, English corpora. wespeaker-en: ResNet34, VoxCeleb (mostly English). campplus/eres2net: 3D-Speaker zh-cn 16k-common, Mandarin-trained. A direct .onnx URL also works."
         default: "titanet-large"
@@ -88,6 +93,8 @@ jobs:
       # Trial end-to-end diarizer, never bundled unless asked for (licence
       # review pending); tag builds have no inputs, so they leave it out.
       NEMOTRON: ${{ github.event.inputs.nemotron || 'no' }}
+      # Trial English word re-timing (~380 MB); tag builds leave it out.
+      ALIGNMENT: ${{ github.event.inputs.alignment || 'no' }}
       # Speaker-embedding model for speaker profiles + comparison (and sherpa
       # diarization). Bundled on every build. Default TitaNet-large, trained on
       # English corpora; campplus / eres2net are the 3D-Speaker zh-cn 16k-common
@@ -204,6 +211,9 @@ jobs:
       - name: Fetch Nemotron diarization (trial; NeMo-Speech.cpp runtime + model)
         if: env.NEMOTRON == 'yes'
         run: python packaging/fetch_assets.py nemotron
+      - name: Fetch English word-timing model (trial; wav2vec2-base-960h ONNX)
+        if: env.ALIGNMENT == 'yes'
+        run: python packaging/fetch_assets.py alignment
       - name: Fetch translation packs (Argos) + warm offline splitter
         if: env.TRANSLATE_LANGS != ''
         run: python packaging/fetch_assets.py argos ${{ env.TRANSLATE_LANGS }}

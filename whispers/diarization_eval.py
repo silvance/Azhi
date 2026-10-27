@@ -267,6 +267,9 @@ class CaseScore:
     speakers_reference: int = 0
     speakers_found: int = 0
     mapping: Dict[str, str] = field(default_factory=dict)
+    # When the words were re-timed by the English aligner, as the application
+    # does: the same recording scored with the transcription's own timings.
+    whisper_timing: Optional["CaseScore"] = None
 
     @property
     def der(self) -> float:
@@ -386,10 +389,45 @@ def total(scores: Sequence[CaseScore]) -> CaseScore:
             "short_lost_assignment",
         ):
             setattr(out, name, getattr(out, name) + getattr(s, name))
+    as_timed = [s.whisper_timing for s in scores if s.whisper_timing is not None]
+    if scores and len(as_timed) == len(scores):
+        out.whisper_timing = total(as_timed)
     return out
 
 
 # -- Cache: what transcription and separation produced -------------------------
+
+
+def _segments_to_json(segments: Sequence[Segment]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "start": s.start,
+            "end": s.end,
+            "text": s.text,
+            "words": [
+                {
+                    "start": w.start,
+                    "end": w.end,
+                    "word": w.word,
+                    "probability": w.probability,
+                }
+                for w in s.words
+            ],
+        }
+        for s in segments
+    ]
+
+
+def _segments_from_json(items: Sequence[Dict[str, Any]]) -> List[Segment]:
+    return [
+        Segment(
+            start=s["start"],
+            end=s["end"],
+            text=s["text"],
+            words=[Word(**w) for w in s.get("words", [])],
+        )
+        for s in items
+    ]
 
 
 def save_hypothesis(
@@ -397,34 +435,24 @@ def save_hypothesis(
     segments: Sequence[Segment],
     turns: Sequence[SpeakerSegment],
     meta: Dict[str, Any],
+    retimed: Optional[Sequence[Segment]] = None,
 ) -> Path:
-    """Write words, timings and turns - no audio, no voiceprints - as JSON."""
+    """Write words, timings and turns - no audio, no voiceprints - as JSON.
+
+    ``retimed`` is the same words after the English aligner, when it ran.
+    """
     from .atomicio import write_json_atomic
 
     data = {
         "version": CACHE_VERSION,
         **meta,
-        "segments": [
-            {
-                "start": s.start,
-                "end": s.end,
-                "text": s.text,
-                "words": [
-                    {
-                        "start": w.start,
-                        "end": w.end,
-                        "word": w.word,
-                        "probability": w.probability,
-                    }
-                    for w in s.words
-                ],
-            }
-            for s in segments
-        ],
+        "segments": _segments_to_json(segments),
         "turns": [
             {"start": t.start, "end": t.end, "speaker": t.speaker} for t in turns
         ],
     }
+    if retimed is not None:
+        data["retimed_segments"] = _segments_to_json(retimed)
     return write_json_atomic(Path(path), data)
 
 
@@ -436,18 +464,21 @@ def load_hypothesis(
         raise ValueError(
             f"{Path(path).name} was written by another version; run again without --rescore."
         )
-    segments = [
-        Segment(
-            start=s["start"],
-            end=s["end"],
-            text=s["text"],
-            words=[Word(**w) for w in s.get("words", [])],
-        )
-        for s in data["segments"]
-    ]
+    segments = _segments_from_json(data["segments"])
     turns = [SpeakerSegment(**t) for t in data["turns"]]
-    meta = {k: v for k, v in data.items() if k not in ("segments", "turns")}
+    meta = {
+        k: v
+        for k, v in data.items()
+        if k not in ("segments", "turns", "retimed_segments")
+    }
     return segments, turns, meta
+
+
+def load_retimed(path: PathLike) -> Optional[List[Segment]]:
+    """The re-timed words cached beside the transcription's, if it ran."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    items = data.get("retimed_segments")
+    return _segments_from_json(items) if isinstance(items, list) else None
 
 
 # -- Running a test set --------------------------------------------------------
@@ -470,7 +501,12 @@ def _transcribe_and_separate(
     speakers: Optional[int],
     language: Optional[str],
     progress: Any,
-) -> Tuple[List[Segment], List[SpeakerSegment], Dict[str, Any]]:
+) -> Tuple[
+    List[Segment], List[SpeakerSegment], Dict[str, Any], Optional[List[Segment]]
+]:
+    from copy import deepcopy
+
+    from . import alignment
     from .diarization import chosen_backend, diarize
     from .enrollment import prepare_source
     from .resources import bundled_models
@@ -483,6 +519,13 @@ def _transcribe_and_separate(
         result = transcribe_audio(
             wav, model_size=resolved, word_timestamps=True, language=language
         )
+        retimed: Optional[List[Segment]] = None
+        if alignment.available() and alignment.applies(result.language):
+            # As the application does with "Sharpen English word timings" on;
+            # the words as transcribed are kept too, to score both.
+            progress(f"{case.name}: re-timing words…")
+            retimed = deepcopy(list(result.segments))
+            alignment.align_segments(retimed, wav, progress=progress)
         backend = chosen_backend(engine)
         progress(f"{case.name}: separating speakers ({backend})…")
         turns = diarize(wav, backend=backend, num_speakers=speakers, progress=progress)
@@ -500,7 +543,7 @@ def _transcribe_and_separate(
         "speakers_given": speakers,
         "language": result.language,
     }
-    return list(result.segments), list(turns), meta
+    return list(result.segments), list(turns), meta, retimed
 
 
 def run_test_set(
@@ -534,9 +577,10 @@ def run_test_set(
                     f"{case.name} has not been run yet; run once without --rescore."
                 )
             segments, turns, _meta = load_hypothesis(cached)
+            retimed = load_retimed(cached)
         else:
             count = len({t.speaker for t in reference}) if speakers == "known" else None
-            segments, turns, meta = _transcribe_and_separate(
+            segments, turns, meta, retimed = _transcribe_and_separate(
                 case,
                 model=model,
                 engine=engine,
@@ -544,9 +588,16 @@ def run_test_set(
                 language=language,
                 progress=progress,
             )
-            save_hypothesis(cached, segments, turns, meta)
+            save_hypothesis(cached, segments, turns, meta, retimed)
         attributed = assign_speakers(deepcopy(segments), turns)
-        scores.append(score_case(case.name, reference, turns, attributed))
+        score = score_case(case.name, reference, turns, attributed)
+        if retimed is not None:
+            as_timed = score
+            score = score_case(
+                case.name, reference, turns, assign_speakers(deepcopy(retimed), turns)
+            )
+            score.whisper_timing = as_timed
+        scores.append(score)
     return scores
 
 
@@ -591,7 +642,35 @@ def summary_lines(scores: Sequence[CaseScore]) -> List[str]:
         "Speaker time wrong is the diarization error rate: missed, falsely "
         "detected or misattributed speech, no edge tolerance, overlap included.",
     ]
-    return lines
+    return lines + _timing_lines(scores)
+
+
+def _timing_lines(scores: Sequence[CaseScore]) -> List[str]:
+    """Re-timed words against the transcription's own, where both were scored."""
+    pairs = [(s, s.whisper_timing) for s in scores if s.whisper_timing is not None]
+    if not pairs:
+        return []
+    retimed = total([new for new, _old in pairs])
+    as_timed = total([old for _new, old in pairs if old is not None])
+
+    def row(label: str, s: CaseScore) -> str:
+        words = f"{_percent(s.word_accuracy)} of {s.words_scored}"
+        short = (
+            f"{s.short_turns_right} of {s.short_turns_with_words}"
+            if s.short_turns_with_words
+            else "none"
+        )
+        return f"  {label:<20}  {words:>22}  {short:>16}"
+
+    return [
+        "",
+        f"Word timings ({len(pairs)} English recording(s)): the scores above use "
+        "words re-timed by the English word-timing model, as the application "
+        "does with \u201cSharpen English word timings\u201d on.",
+        f"  {'':<20}  {'Words to right person':>22}  {'Short turns kept':>16}",
+        row("Re-timed (as above)", retimed),
+        row("As transcribed", as_timed),
+    ]
 
 
 def write_csv(scores: Sequence[CaseScore], path: PathLike) -> Path:
@@ -620,9 +699,23 @@ def write_csv(scores: Sequence[CaseScore], path: PathLike) -> Path:
                 "der",
                 "speakers_reference",
                 "speakers_found",
+                # Filled when the words were re-timed: the same recording
+                # scored with the transcription's own word timings.
+                "as_transcribed_words_scored",
+                "as_transcribed_words_right",
+                "as_transcribed_short_turns_right",
             ]
         )
         for s in rows:
+            as_timed: List[object] = (
+                [
+                    s.whisper_timing.words_scored,
+                    s.whisper_timing.words_right,
+                    s.whisper_timing.short_turns_right,
+                ]
+                if s.whisper_timing is not None
+                else ["", "", ""]
+            )
             writer.writerow(
                 [
                     s.name,
@@ -643,6 +736,7 @@ def write_csv(scores: Sequence[CaseScore], path: PathLike) -> Path:
                     round(s.der, 4),
                     s.speakers_reference,
                     s.speakers_found,
+                    *as_timed,
                 ]
             )
     return path

@@ -249,3 +249,68 @@ def test_nemotron_model_with_another_digest_is_not_bundled(nemotron_fetch, monke
     monkeypatch.setattr(fetch_assets, "NEMOTRON_SHA256", "0" * 64)
     with pytest.raises(SystemExit, match="does not match its pinned digest"):
         fetch_assets.fetch_nemotron()
+
+
+@pytest.fixture
+def alignment_fetch(tmp_path, monkeypatch):
+    import sys
+    import types
+    from pathlib import Path
+
+    from whispers import asset_lock
+
+    weights = b"onnx-weights"
+    calls = []
+    monkeypatch.setattr(fetch_assets, "ASSETS", tmp_path / "whispers_assets")
+    monkeypatch.setattr(fetch_assets, "LOCK", asset_lock.empty())
+    monkeypatch.setattr(fetch_assets, "save_lock", lambda: None)
+    monkeypatch.setattr(fetch_assets, "ALIGNMENT_SIZE", len(weights))
+    monkeypatch.setattr(fetch_assets, "_hub_revision", lambda repo: "head123")
+
+    def hf_hub_download(repo_id, filename, revision, local_dir):
+        calls.append((repo_id, filename, revision))
+        target = Path(local_dir) / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(weights if filename.endswith(".onnx") else b"{}")
+        return str(target)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(hf_hub_download=hf_hub_download),
+    )
+    return {"out": tmp_path / "whispers_assets" / "alignment", "calls": calls}
+
+
+def test_alignment_bundle_holds_model_vocabulary_and_record(alignment_fetch):
+    import json
+
+    from whispers.hashing import sha256_bytes
+
+    fetch_assets.fetch_alignment()
+    out = alignment_fetch["out"]
+    assert (out / "model.onnx").read_bytes() == b"onnx-weights"
+    assert (out / "vocab.json").is_file()
+    record = json.loads((out / "alignment.json").read_text(encoding="utf-8"))
+    assert record["model"]["revision"] == "head123"
+    assert record["model"]["sha256"] == sha256_bytes(b"onnx-weights")
+    assert record["model"]["licence"] == "Apache-2.0"
+    # The revision the build resolved is what every later build gets.
+    assert fetch_assets.LOCK["huggingface"][fetch_assets.ALIGNMENT_REPO] == "head123"
+
+
+def test_alignment_follows_the_pinned_revision(alignment_fetch):
+    fetch_assets.LOCK["huggingface"][fetch_assets.ALIGNMENT_REPO] = "pinned456"
+    fetch_assets.fetch_alignment()
+    assert {revision for _repo, _file, revision in alignment_fetch["calls"]} == {
+        "pinned456"
+    }
+
+
+def test_an_alignment_model_of_another_size_is_not_bundled(
+    alignment_fetch, monkeypatch
+):
+    monkeypatch.setattr(fetch_assets, "ALIGNMENT_SIZE", 1)
+    with pytest.raises(SystemExit, match="is not 1 bytes"):
+        fetch_assets.fetch_alignment()
+    assert fetch_assets.ALIGNMENT_REPO not in fetch_assets.LOCK["huggingface"]

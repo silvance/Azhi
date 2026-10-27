@@ -328,6 +328,25 @@ Leave it on **Auto** unless you have a reason. In a bundle with both:
 **Grouping sensitivity** only applies to sherpa, and only when you have not
 given a count. Higher merges more (fewer speakers), lower splits more.
 
+### Sharpen English word timings
+
+Appears under *Speaker separation* only in a copy built with it, and is on
+there. A quick reply's first word is sometimes timed a little early, inside the
+end of the other person's turn, and goes to them: "Who" belongs to the next
+speaker but is shown against the last. With this on, a second model finds
+where each English word starts and ends before the words are given to
+speakers. The words themselves never change, only their times.
+
+- **English only**, and not when translating. For anything else the status
+  says the timings were left as transcribed.
+- A word it cannot spell — a number written as digits, a symbol — keeps the
+  transcription's time.
+- It is a **trial**: it was added to fix one kind of mistake and has not been
+  measured on recordings like yours. The [test set](test-set.md) scores it
+  against the words as transcribed, so you can see whether it helps.
+
+The report names the model and how many words it re-timed.
+
 ### Operation profiles
 
 *Advanced options* → **Operation profile** keeps your settings, and the voices
@@ -519,6 +538,16 @@ reference profile. The page is three numbered steps, in order:
 3. **Result** — what was found. While it is being measured, **Cancel** beside
    the progress bar stops it; nothing is compared or recorded.
 
+### Straight from a transcript
+
+Click a speaker's name in the transcript and choose **Compare '…' to speaker
+profiles…**. This page opens with that recording, the speaker's lines filled in
+as **Only these parts of the recording**, and searches every profile at once.
+It uses the lines as the transcript has them now, your corrections included,
+so correct the speaker tags first. The comparison record says whose lines
+they were. The result reads exactly as any other search: similarity bands and
+leads to look into, never an identification.
+
 ### Reading the result
 
 The result is a **similarity band**, not a verdict:
@@ -573,6 +602,28 @@ later be read as cleaner than it was.
 (`base.en` or `small.en`) so it keeps up. **Chunk length** trades latency
 against smoothness: shorter is more live but choppier. The transcript can be
 saved to a file as it goes.
+
+**Show who is speaking** (in a copy that can separate speakers) labels the
+live transcript by speaker, a little behind the words. Telling one voice from
+another takes more than a few seconds of each, so:
+
+- New lines appear at once marked **[…]**. About every 20 seconds the last ten
+  minutes are gone over and those lines get a speaker.
+- **An earlier line can change speaker** on a later pass, because by then more
+  of each voice has been heard. The saved file is rewritten to match; what the
+  file held before the session is kept at the top.
+- When you press **Stop**, the end is checked once more. The status says when
+  that is done.
+- Give **People speaking** if you know it, as on the Transcribe page. **Method**
+  is the same choice too.
+- It runs beside the transcription on the same processor. On a slow machine,
+  both fall further behind; use the smallest model that is good enough.
+- Someone who has said nothing for more than ten minutes may come back under a
+  new speaker number.
+
+The Live page does not keep the audio. For a transcript you need to rely on,
+record the stream as well, and transcribe the recording on the Transcribe page
+afterwards: that hears all of it at once.
 
 This is the one page that uses the network, and only where you tell it to: it
 reads the **Stream URL** you give it, or waits for an incoming connection when

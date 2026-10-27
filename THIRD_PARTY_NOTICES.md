@@ -16,6 +16,11 @@ bundle goes anywhere new.
   `dropbox-dash/faster-whisper-large-v3-turbo` (formerly
   `mobiuslabsgmbh/...`). MIT; the notice is reproduced below.
 - **faster-whisper** (SYSTRAN) and **CTranslate2** (OpenNMT). MIT.
+- **wav2vec2-base-960h** (Facebook AI), in the ONNX export published by
+  onnx-community (`onnx-community/wav2vec2-base-960h-ONNX`), only in a build
+  made with `alignment=yes`; it re-times English words. Apache-2.0. The
+  revision and digest are in `whispers_assets/alignment/alignment.json`.
+- **ONNX Runtime** (Microsoft), which runs it and the voice-activity model. MIT.
 
 ## Speaker separation and voice comparison
 

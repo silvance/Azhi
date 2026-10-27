@@ -3,24 +3,38 @@
 Point it at a stream ffmpeg can read - e.g. a GoPro pushing RTMP to a local RTMP
 server - and it transcribes short segments as they arrive (see
 :mod:`whispers.live`). Kept deliberately simple: a URL, a model, Start/Stop, and a
-live-updating transcript.
+live-updating transcript. Optionally, who is speaking is worked out behind the
+words (:mod:`whispers.live_speakers`) and the transcript relabelled as it goes.
 """
 
 from __future__ import annotations
 
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import IO, Optional
+from typing import IO, List, Optional
 
+from .. import speaker_count
+from ..atomicio import write_text_atomic
+from ..diarization import chosen_backend
+from ..diarization import is_available as diarization_available
 from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber, test_connection
+from ..live_speakers import SpeakerReviewer
 from ..resources import bundled_models, is_bundle
-from ..transcription import MODEL_SIZES, ModelUnavailable, resolve_model_choice
+from ..speaker_names import cluster_index
+from ..transcription import (
+    MODEL_SIZES,
+    ModelUnavailable,
+    Segment,
+    resolve_model_choice,
+)
 from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
 from .theme import SPACE_LG, SPACE_SM, SPACE_XS, Style, theme
+from .transcribe_tab import ENGINE_CHOICES, ENGINE_LABELS, engine_labels
 from .widgets import (
     Card,
     PageHeader,
@@ -66,9 +80,22 @@ class LiveTab:
         self.save_var = tk.BooleanVar(value=False)
         self.save_path_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="Idle")
+        # Who is speaking, worked out behind the words. Off by default: it is a
+        # second model running beside the first, on the same processor.
+        self.speakers_var = tk.BooleanVar(value=False)
+        self.people_var = tk.StringVar(value="")
+        self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
 
         self._live: Optional[LiveTranscriber] = None
         self._save_fh: Optional[IO[str]] = None
+        self._reviewer: Optional[SpeakerReviewer] = None
+        # With speakers on, the file is rewritten from the transcript each time
+        # it changes: what it held before this session, then this session.
+        self._save_path: Optional[Path] = None
+        self._save_prefix = ""
+        self._save_failed = False
+        # Lines that ended before Clear was pressed are not shown again.
+        self._hide_before = 0.0
 
         self._build()
 
@@ -164,9 +191,12 @@ class LiveTab:
             style=Style.CHECK,
         ).grid(row=8, column=1, columnspan=2, sticky="w", pady=(4, 0))
 
+        if diarization_available():
+            self._build_speaker_rows(settings, row=9)
+
         # Optional: append the live transcript to a file as it comes in.
         save_row = ttk.Frame(settings, style=Style.CARD_INNER)
-        save_row.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        save_row.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         save_row.columnconfigure(1, weight=1)
         ttk.Checkbutton(
             save_row,
@@ -230,6 +260,47 @@ class LiveTab:
 
         self._update_save_state()
         bind_wheel(canvas, container)
+
+    def _build_speaker_rows(self, settings: ttk.Frame, *, row: int) -> None:
+        ttk.Checkbutton(
+            settings,
+            text="Show who is speaking",
+            variable=self.speakers_var,
+            style=Style.CHECK,
+        ).grid(row=row, column=1, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
+        ttk.Label(settings, text="People speaking", style=Style.FIELD_LABEL).grid(
+            row=row + 1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        people = ttk.Frame(settings, style=Style.CARD_INNER)
+        people.grid(row=row + 1, column=1, columnspan=2, sticky="w")
+        ttk.Entry(people, textvariable=self.people_var, width=6).pack(side="left")
+        ttk.Label(
+            people, text="leave empty to let it work it out", style=Style.META
+        ).pack(side="left", padx=(SPACE_SM, 0))
+        ttk.Label(settings, text="Method", style=Style.FIELD_LABEL).grid(
+            row=row + 2, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        ttk.Combobox(
+            settings,
+            textvariable=self.engine_var,
+            values=engine_labels(),
+            state="readonly",
+            width=34,
+        ).grid(row=row + 2, column=1, sticky="w", pady=4)
+        ttk.Label(
+            settings,
+            text=(
+                "Speakers are worked out a little behind the words: about every "
+                "20 seconds the last ten minutes are gone over again, and an "
+                "earlier line can change speaker as more of each voice is heard. "
+                "Lines marked [\u2026] have not been gone over yet. After Stop, "
+                "the end is checked once more. It runs beside the transcription, "
+                "so on a slow machine both fall further behind."
+            ),
+            wraplength=560,
+            justify="left",
+            style=Style.META,
+        ).grid(row=row + 3, column=1, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
 
     def _popout_failed(self, detail: str) -> None:
         """Tk refused to give the panel a window. Say so where the eye is."""
@@ -299,16 +370,55 @@ class LiveTab:
             self.status_var.set(str(exc))
             return
 
+        speakers = self.speakers_var.get() and diarization_available()
+        people: Optional[int] = None
+        if speakers and self.people_var.get().strip():
+            people = speaker_count.parse(self.people_var.get().strip())
+            if people is None:
+                self.status_var.set(
+                    "People speaking should be a number from 1 to "
+                    f"{speaker_count.MAX_SPEAKERS}, or empty to work it out."
+                )
+                return
+
         # Open the save file (append) if requested.
         self._save_fh = None
+        self._save_path = None
+        self._save_failed = False
         if self.save_var.get() and self.save_path_var.get().strip():
+            path = Path(self.save_path_var.get().strip())
             try:
-                self._save_fh = open(
-                    self.save_path_var.get().strip(), "a", encoding="utf-8"
-                )
-            except OSError as exc:
+                if speakers:
+                    # Rewritten as labels change; what was there is kept above.
+                    self._save_prefix = (
+                        path.read_text(encoding="utf-8") if path.is_file() else ""
+                    )
+                    self._save_path = path
+                else:
+                    self._save_fh = open(path, "a", encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
                 self.status_var.set(friendly_error(exc))
                 return
+
+        if self._reviewer is not None:
+            # The last session's final check is still going: this one's lines
+            # must not be drawn over by it.
+            self._reviewer.cancel()
+            self._reviewer = None
+        reviewer: Optional[SpeakerReviewer] = None
+        if speakers:
+            self._hide_before = 0.0
+            reviewer = SpeakerReviewer(
+                on_change=self._on_speakers_change,
+                backend=chosen_backend(
+                    ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+                ),
+                num_speakers=people,
+                on_status=self._on_status,
+                on_error=self._on_speaker_error,
+                on_finished=self._on_speakers_finished,
+            )
+            self._reviewer = reviewer
 
         self._live = LiveTranscriber(
             source,
@@ -317,6 +427,7 @@ class LiveTab:
             segment_seconds=self._parse_segment_seconds(),
             vad_filter=self.vad_var.get(),
             listen=self.listen_var.get(),
+            speakers=reviewer,
         )
         try:
             self._live.start(
@@ -328,6 +439,9 @@ class LiveTab:
             self.status_var.set(friendly_error(exc))
             self._close_save_fh()
             self._live = None
+            if reviewer is not None:
+                reviewer.cancel()
+                self._reviewer = None
             return
         self.start_button.configure(state="disabled")
         self.test_button.configure(state="disabled")
@@ -357,11 +471,17 @@ class LiveTab:
         self.start_button.configure(state="normal")
         self.test_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
-        self.status_var.set("Stopped.")
+        self.status_var.set(
+            "Stopped. Checking the speakers once more…"
+            if self._reviewer is not None
+            else "Stopped."
+        )
 
     # -- Callbacks (from background threads) -------------------------------
 
     def _on_text(self, text: str) -> None:
+        if self._reviewer is not None:
+            return  # drawn, and saved, from the speaker reviewer's lines
         append_line(self.transcript, text)
         fh = self._save_fh
         if fh is not None:
@@ -376,6 +496,65 @@ class LiveTab:
 
     def _on_error(self, exc: Exception) -> None:
         self.root.after(0, lambda: self.status_var.set(friendly_error(exc)))
+
+    def _on_speaker_error(self, exc: Exception) -> None:
+        message = (
+            f"Could not work out who is speaking: {friendly_error(exc)} "
+            "The words are unaffected."
+        )
+        self.root.after(0, lambda: self.status_var.set(message))
+
+    def _on_speakers_finished(self) -> None:
+        reviewer = self._reviewer
+
+        def _done() -> None:
+            if reviewer is not None and reviewer is self._reviewer:
+                self._reviewer = None
+                if self._live is None:
+                    self.status_var.set("Stopped. Speakers checked to the end.")
+
+        self.root.after(0, _done)
+
+    def _on_speakers_change(
+        self, labelled: List[Segment], until: float, pending: List[Segment]
+    ) -> None:
+        # Called with the reviewer's lock held: hand on, draw on the UI thread.
+        reviewer = self._reviewer
+        self.root.after(0, lambda: self._show_speakers(reviewer, labelled, pending))
+
+    def _show_speakers(
+        self,
+        reviewer: Optional[SpeakerReviewer],
+        labelled: List[Segment],
+        pending: List[Segment],
+    ) -> None:
+        if reviewer is None or reviewer is not self._reviewer:
+            return  # from a session that has since been replaced
+        text = speaker_text(labelled, pending, hide_before=self._hide_before)
+        widget = self.transcript
+        at_end = widget.yview()[1] >= 0.999
+        top = widget.yview()[0]
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", text)
+        widget.configure(state="disabled")
+        if at_end:
+            widget.see("end")
+        else:
+            widget.yview_moveto(top)
+        self._save_speaker_text(text)
+
+    def _save_speaker_text(self, text: str) -> None:
+        if self._save_path is None or self._save_failed:
+            return
+        try:
+            write_text_atomic(self._save_path, self._save_prefix + text)
+        except OSError as exc:
+            # Said once; the transcript on screen carries on regardless.
+            self._save_failed = True
+            self.status_var.set(
+                f"The live transcript is not being saved: {friendly_error(exc)}"
+            )
 
     def _close_save_fh(self) -> None:
         if self._save_fh is not None:
@@ -397,6 +576,8 @@ class LiveTab:
         self.status_var.set("Transcript copied to clipboard.")
 
     def _clear(self) -> None:
+        if self._reviewer is not None:
+            self._hide_before = self._reviewer.seconds
         self.transcript.configure(state="normal")
         self.transcript.delete("1.0", "end")
         self.transcript.configure(state="disabled")
@@ -411,6 +592,8 @@ class LiveTab:
                 live.stop()
             except Exception:  # noqa: BLE001 - never block closing
                 pass
+        if self._reviewer is not None:
+            self._reviewer.cancel()
         self._close_save_fh()
 
     # Kept for API parity with the other tabs (no persisted settings here).
@@ -419,3 +602,22 @@ class LiveTab:
 
     def apply_settings(self, data: "dict[str, object]") -> None:
         return None
+
+
+def speaker_text(
+    labelled: List[Segment], pending: List[Segment], *, hide_before: float = 0.0
+) -> str:
+    """The live transcript: lines given to speakers, then lines not yet."""
+    lines = []
+    for segment in labelled:
+        if segment.end > hide_before and segment.text.strip():
+            lines.append(f"[{_speaker_label(segment.speaker)}] {segment.text.strip()}")
+    for segment in pending:
+        if segment.end > hide_before and segment.text.strip():
+            lines.append(f"[\u2026] {segment.text.strip()}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _speaker_label(speaker: Optional[str]) -> str:
+    number = cluster_index(speaker) if speaker else None
+    return f"Speaker {number + 1}" if number is not None else "Unknown speaker"

@@ -24,6 +24,11 @@ def write_json_atomic(path: PathLike, payload: Mapping[str, object]) -> Path:
     one. Errors propagate: losing an operational profile silently is worse than
     a visible failure.
     """
+    return write_text_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def write_text_atomic(path: PathLike, text: str) -> Path:
+    """Write ``text`` to ``path`` atomically, as :func:`write_json_atomic` does."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     handle, tmp_name = tempfile.mkstemp(
@@ -32,7 +37,7 @@ def write_json_atomic(path: PathLike, payload: Mapping[str, object]) -> Path:
     tmp = Path(tmp_name)
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp, out)

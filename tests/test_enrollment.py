@@ -526,3 +526,17 @@ def test_subtract_spans_removes_only_the_covered_parts():
     ]
     assert subtract_spans([(0.0, 10.0)], []) == [(0.0, 10.0)]
     assert subtract_spans([(0.0, 10.0)], [(20.0, 30.0)]) == [(0.0, 10.0)]
+
+
+def test_formatted_ranges_read_back_as_the_same_spans():
+    from whispers.enrollment import format_time_ranges, parse_time_ranges
+
+    spans = [(0.5, 2.25), (65.0, 67.125), (3725.5, 3730.0)]
+    text = format_time_ranges(spans)
+    assert text == "0:00.50-0:02.25, 1:05.00-1:07.12, 1:02:05.50-1:02:10.00"
+    back = parse_time_ranges(text)
+    assert [(round(a, 2), round(b, 2)) for a, b in back] == [
+        (0.5, 2.25),
+        (65.0, 67.12),
+        (3725.5, 3730.0),
+    ]

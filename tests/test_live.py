@@ -136,3 +136,51 @@ def test_test_connection_timeout(monkeypatch):
     ok, message = live.test_connection("rtmp://slow", listen=True)
     assert ok is False
     assert "timeout" in message.lower()
+
+
+def test_each_chunk_goes_to_the_speaker_reviewer_with_word_times(tmp_path, monkeypatch):
+    from whispers.transcription import Segment, TranscriptionResult, Word
+
+    asked = []
+
+    def fake_transcribe(path, **kwargs):
+        asked.append(kwargs["word_timestamps"])
+        return TranscriptionResult(
+            text=f"text {Path(path).stem}",
+            language="en",
+            language_probability=1.0,
+            duration=1.0,
+            segments=[Segment(0.1, 0.9, "x", words=[Word(0.1, 0.9, " x")])],
+        )
+
+    class Reviewer:
+        def __init__(self):
+            self.chunks = []
+            self.finished = False
+
+        def add(self, wav, segments):
+            self.chunks.append((wav.name, [s.text for s in segments]))
+            return 0.0
+
+        def finish(self):
+            self.finished = True
+
+    class Done:
+        """ffmpeg, already finished: every chunk on disk is final."""
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(live, "transcribe_audio", fake_transcribe)
+    reviewer = Reviewer()
+    transcriber = live.LiveTranscriber("rtmp://x", speakers=reviewer)
+    transcriber._tmpdir = tmp_path
+    transcriber._proc = Done()
+    for name in ("seg_00000.wav", "seg_00001.wav"):
+        (tmp_path / name).write_bytes(b"")
+    texts = []
+    transcriber._run_watch(texts.append, None, None)
+    assert asked == [True, True]
+    assert reviewer.chunks == [("seg_00000.wav", ["x"]), ("seg_00001.wav", ["x"])]
+    assert reviewer.finished
+    assert texts == ["text seg_00000", "text seg_00001"]

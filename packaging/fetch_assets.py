@@ -545,6 +545,67 @@ def fetch_nemotron() -> None:
     print(f"nemotron -> {out}")
 
 
+# English word timings: facebook/wav2vec2-base-960h (Apache-2.0), as exported
+# to ONNX by onnx-community. The full-precision file: a quantised one would be a
+# quarter of the size, but nobody has measured what it does to letter timings.
+ALIGNMENT_REPO = "onnx-community/wav2vec2-base-960h-ONNX"
+ALIGNMENT_FILES = {"onnx/model.onnx": "model.onnx", "vocab.json": "vocab.json"}
+ALIGNMENT_SIZE = 377911891
+
+
+def fetch_alignment() -> None:
+    """Download the English word-timing model into ``whispers_assets/alignment``.
+
+    At the revision the lock names, or the hub's current one, pinned for every
+    build after; ``alignment.json`` records the repository, revision, digest
+    and licence of exactly what was fetched.
+    """
+    from huggingface_hub import hf_hub_download
+
+    out = ASSETS / "alignment"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    revision = asset_lock.revision_for(LOCK, ALIGNMENT_REPO) or _hub_revision(
+        ALIGNMENT_REPO
+    )
+    if not revision:
+        raise SystemExit(f"could not resolve a revision of {ALIGNMENT_REPO}")
+    digests = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for remote, local in ALIGNMENT_FILES.items():
+            print(f"downloading {ALIGNMENT_REPO}/{remote} @ {revision}")
+            fetched = Path(
+                hf_hub_download(
+                    repo_id=ALIGNMENT_REPO,
+                    filename=remote,
+                    revision=revision,
+                    local_dir=tmp,
+                )
+            )
+            shutil.copyfile(fetched, out / local)
+            digests[local] = sha256_file_or_none(out / local)
+    if (out / "model.onnx").stat().st_size != ALIGNMENT_SIZE:
+        raise SystemExit(f"{ALIGNMENT_REPO} model.onnx is not {ALIGNMENT_SIZE} bytes")
+    _pin_repo(ALIGNMENT_REPO, revision)
+    record = {
+        "model": {
+            "repo": ALIGNMENT_REPO,
+            "revision": revision,
+            "file": "onnx/model.onnx",
+            "sha256": digests["model.onnx"],
+            "base_model": "facebook/wav2vec2-base-960h",
+            "licence": "Apache-2.0",
+        },
+        "vocab_sha256": digests["vocab.json"],
+    }
+    (out / "alignment.json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8"
+    )
+    save_lock()
+    print(f"alignment -> {out}")
+
+
 # Argos Translate source languages to bundle (each translates -> English). The
 # intel-leaning set; all are present in the Argos index (Pashto has no Argos pack).
 # Override on the command line / via the workflow input.
@@ -744,7 +805,7 @@ def main(argv: List[str]) -> None:
         raise SystemExit(
             "usage: fetch_assets.py [ffmpeg | models <names> | embedding <model> | "
             "segmentation | diarization <embedding> | pyannote | nemotron | "
-            "enhancement | argos <codes> | tesseract <codes>]"
+            "alignment | enhancement | argos <codes> | tesseract <codes>]"
         )
     command = argv[0]
     if command == "ffmpeg":
@@ -764,6 +825,8 @@ def main(argv: List[str]) -> None:
         fetch_pyannote()
     elif command == "nemotron":
         fetch_nemotron()
+    elif command == "alignment":
+        fetch_alignment()
     elif command == "enhancement":
         fetch_enhancement()
     elif command == "argos":

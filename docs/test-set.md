@@ -152,6 +152,20 @@ wrong person were lost:
 Quick replies with no transcribed words are counted separately: the
 transcription never heard them, so no speaker separation can help.
 
+In a copy built with **Sharpen English word timings**, English recordings are
+scored the way the application handles them, with the words re-timed. A last
+table scores the same words as transcribed, so the two can be compared without
+a second run (again, the figures are only an illustration):
+
+```
+Word timings (2 English recording(s)): ...
+                         Words to right person  Short turns kept
+  Re-timed (as above)             94.9% of 952          17 of 20
+  As transcribed                  93.6% of 950          14 of 20
+```
+
+`scores.csv` has the as-transcribed figures in its last three columns.
+
 ## 6. Handling the results
 
 The results folder holds a `cache` folder with each recording's transcript
