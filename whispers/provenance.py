@@ -103,6 +103,14 @@ class TranscriptionProvenance:
     # that made it can be read back rather than guessed at.
     listening_copy: str = ""
     listening_filters: str = ""
+    # Word times re-fitted by the English letter model (whispers/alignment.py)
+    # before speakers were attached: the model and rule, the model file's
+    # hash, and how many of the words it re-timed. Empty when the words kept
+    # the transcription's own times - or the record predates this.
+    word_timing: str = ""
+    word_timing_model_sha256: str = ""
+    words_retimed: Optional[int] = None
+    words_total: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -119,6 +127,10 @@ class TranscriptionProvenance:
             "denoiser_sha256": self.denoiser_sha256,
             "listening_copy": self.listening_copy,
             "listening_filters": self.listening_filters,
+            "word_timing": self.word_timing,
+            "word_timing_model_sha256": self.word_timing_model_sha256,
+            "words_retimed": self.words_retimed,
+            "words_total": self.words_total,
         }
 
     @classmethod
@@ -139,6 +151,10 @@ class TranscriptionProvenance:
             denoiser_sha256=str(data.get("denoiser_sha256") or ""),
             listening_copy=str(data.get("listening_copy") or ""),
             listening_filters=str(data.get("listening_filters") or ""),
+            word_timing=str(data.get("word_timing") or ""),
+            word_timing_model_sha256=str(data.get("word_timing_model_sha256") or ""),
+            words_retimed=_count(data.get("words_retimed")),
+            words_total=_count(data.get("words_total")),
         )
 
 
@@ -449,6 +465,18 @@ class AnalysisProvenance:
                 f"Language: {self.transcription.language_setting} "
                 f"(detected: {self.transcription.detected_language or 'n/a'})",
             ]
+            if self.transcription.word_timing:
+                timing = self.transcription
+                counted = (
+                    f" ({timing.words_retimed} of {timing.words_total} words)"
+                    if timing.words_retimed is not None and timing.words_total
+                    else ""
+                )
+                lines += [
+                    f"Word timings re-fitted by: {timing.word_timing}{counted}",
+                    "Word-timing model SHA-256: "
+                    f"{timing.word_timing_model_sha256 or 'not recorded'}",
+                ]
         if self.diarization:
             diar = self.diarization
             version = f" {diar.engine_version}" if diar.engine_version else ""
@@ -479,6 +507,11 @@ class AnalysisProvenance:
             f"Speaker margin threshold: {self.thresholds.recognition_margin:.2f}",
         ]
         return lines
+
+
+def _count(value: Any) -> Optional[int]:
+    """A stored count, or None when absent or not a whole number."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _build_kwargs(data: Dict[str, Any]) -> Dict[str, Any]:

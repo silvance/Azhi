@@ -237,3 +237,37 @@ def test_shipped_copy_runs_it_from_the_application_entry(tmp_path, monkeypatch):
         app.main(["--score-test-set", str(testset), "--out", str(out), "--rescore"])
     assert excinfo.value.code == 0
     assert (out / "summary.txt").is_file()
+
+
+def test_retimed_words_are_scored_beside_the_words_as_transcribed(
+    tmp_path, monkeypatch, capsys
+):
+    # Bob's quick reply was transcribed starting inside Alice's turn; the
+    # aligner put it where Bob said it.
+    monkeypatch.setattr(ev, "_offline", lambda: None)
+    testset = tmp_path / "testset"
+    testset.mkdir()
+    (testset / "call.wav").write_bytes(b"not read when rescoring")
+    (testset / "call.txt").write_text("0\t3\tAlice\n3.2\t3.8\tBob\n")
+    out = tmp_path / "results"
+    found = [turn(0, 3, "SPEAKER_00"), turn(3.2, 3.8, "SPEAKER_01")]
+    as_transcribed = [Segment(0, 3.8, "w0 w1", words=_words((0, 2), (2.6, 3.3)))]
+    retimed = [Segment(0, 3.8, "w0 w1", words=_words((0, 2), (3.25, 3.6)))]
+    ev.save_hypothesis(
+        out / "cache" / "call.json", as_transcribed, found, {"model": "m"}, retimed
+    )
+    assert ev.main([str(testset), "--out", str(out), "--rescore"]) == 0
+    rows = list(csv.DictReader((out / "scores.csv").open(encoding="utf-8")))
+    assert rows[0]["short_turns_right"] == "1"
+    assert rows[0]["as_transcribed_short_turns_right"] == "0"
+    summary = (out / "summary.txt").read_text(encoding="utf-8")
+    assert "Re-timed (as above)" in summary and "As transcribed" in summary
+
+
+def test_a_run_without_the_aligner_has_no_timing_comparison(tmp_path, monkeypatch):
+    monkeypatch.setattr(ev, "_offline", lambda: None)
+    testset, out = _cached_run(tmp_path)
+    assert ev.main([str(testset), "--out", str(out), "--rescore"]) == 0
+    assert "As transcribed" not in (out / "summary.txt").read_text(encoding="utf-8")
+    rows = list(csv.DictReader((out / "scores.csv").open(encoding="utf-8")))
+    assert rows[0]["as_transcribed_words_right"] == ""

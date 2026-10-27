@@ -81,3 +81,57 @@ def test_translate_with_a_model_that_cannot_is_refused_before_it_runs(app):
     assert page.progress_label_var.get() == "Choose a model that can translate"
     page.task_var.set("transcribe")
     assert "cannot translate" not in page.model_status_var.get()
+
+
+def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
+    from whispers import alignment
+    from whispers.provenance import TranscriptionProvenance
+    from whispers.transcription import Segment, TranscriptionResult, Word
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(alignment, "available", lambda: True)
+    monkeypatch.setattr(alignment, "describe_method", lambda: "aligner@rev, rule")
+    monkeypatch.setattr(alignment, "model_sha256", lambda: "a" * 64)
+    calls = []
+
+    def align_segments(segments, wav, **_kwargs):
+        calls.append(wav)
+        return alignment.AlignmentSummary(words=3, retimed=2)
+
+    monkeypatch.setattr(alignment, "align_segments", align_segments)
+    import whispers.gui.app as app_mod
+
+    root = tb.Window(themename="darkly")
+    try:
+        page = app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True).transcribe
+        # Offered, and on, where the build carries the model.
+        assert page.retime_var.get() is True
+        assert "retime_words" in page.get_settings()
+
+        def result(language):
+            words = [Word(0.0, 0.5, " Hi")]
+            return TranscriptionResult(
+                text="Hi",
+                language=language,
+                language_probability=1.0,
+                duration=1.0,
+                segments=[Segment(0.0, 0.5, "Hi", words=words)],
+            )
+
+        record = TranscriptionProvenance()
+        page._retime_words(result("ru"), tmp_path / "a.wav", "transcribe", record)
+        page._retime_words(result("en"), tmp_path / "a.wav", "translate", record)
+        assert calls == [] and record.word_timing == ""
+        page._retime_words(result("en"), tmp_path / "a.wav", "transcribe", record)
+        assert calls == [tmp_path / "a.wav"]
+        assert (record.word_timing, record.words_retimed, record.words_total) == (
+            "aligner@rev, rule",
+            2,
+            3,
+        )
+        page.retime_var.set(False)
+        page._retime_words(result("en"), tmp_path / "a.wav", "transcribe", record)
+        assert len(calls) == 1
+    finally:
+        root.destroy()

@@ -120,6 +120,12 @@ def _model_entries() -> List[Dict[str, Any]]:
     for library in ("bin/nemo_speech_asr_c.dll", "lib/libnemo_speech_asr_c.so.1"):
         _add("nemo-speech-library", nemotron / library, "tool")
 
+    _add(
+        "wav2vec2-base-960h",
+        ASSETS / "alignment" / "model.onnx",
+        "word-alignment",
+    )
+
     for name in ("ffmpeg", "ffmpeg.exe"):
         _add("ffmpeg", ASSETS / "ffmpeg" / name, "tool")
     return entries

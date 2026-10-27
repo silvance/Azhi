@@ -17,6 +17,10 @@ Expected layout of an assets directory::
             bin/ or lib/         (the runtime's C library and what it loads)
             Nemotron-3-Diarization.q8_0.gguf
             nemotron.json
+        alignment/               (optional English word timings)
+            model.onnx
+            vocab.json
+            alignment.json
 """
 
 from __future__ import annotations
@@ -238,6 +242,37 @@ def bundled_nemotron_info() -> Dict[str, object]:
     """
     for base in asset_dirs():
         note = base / NEMOTRON_DIRNAME / "nemotron.json"
+        if note.is_file():
+            try:
+                data = json.loads(note.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {}
+            return data if isinstance(data, dict) else {}
+    return {}
+
+
+ALIGNMENT_DIRNAME = "alignment"
+
+
+def bundled_aligner() -> Optional[Path]:
+    """The English word-timing model's folder (``model.onnx``, ``vocab.json``)."""
+    for base in asset_dirs():
+        directory = base / ALIGNMENT_DIRNAME
+        if (directory / "model.onnx").is_file() and (
+            directory / "vocab.json"
+        ).is_file():
+            return directory
+    return None
+
+
+def bundled_aligner_info() -> Dict[str, object]:
+    """What the build recorded about the word-timing model (``alignment.json``).
+
+    Repository, revision, file, digest and licence, as downloaded; ``{}`` when
+    nothing was recorded.
+    """
+    for base in asset_dirs():
+        note = base / ALIGNMENT_DIRNAME / "alignment.json"
         if note.is_file():
             try:
                 data = json.loads(note.read_text(encoding="utf-8"))

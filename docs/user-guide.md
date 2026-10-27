@@ -328,6 +328,25 @@ Leave it on **Auto** unless you have a reason. In a bundle with both:
 **Grouping sensitivity** only applies to sherpa, and only when you have not
 given a count. Higher merges more (fewer speakers), lower splits more.
 
+### Sharpen English word timings
+
+Appears under *Speaker separation* only in a copy built with it, and is on
+there. A quick reply's first word is sometimes timed a little early, inside the
+end of the other person's turn, and goes to them: "Who" belongs to the next
+speaker but is shown against the last. With this on, a second model finds
+where each English word starts and ends before the words are given to
+speakers. The words themselves never change, only their times.
+
+- **English only**, and not when translating. For anything else the status
+  says the timings were left as transcribed.
+- A word it cannot spell — a number written as digits, a symbol — keeps the
+  transcription's time.
+- It is a **trial**: it was added to fix one kind of mistake and has not been
+  measured on recordings like yours. The [test set](test-set.md) scores it
+  against the words as transcribed, so you can see whether it helps.
+
+The report names the model and how many words it re-timed.
+
 ### Operation profiles
 
 *Advanced options* → **Operation profile** keeps your settings, and the voices

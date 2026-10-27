@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from .. import enhance, folder_batch, listening, output_names, speaker_count
+from .. import alignment, enhance, folder_batch, listening, output_names, speaker_count
 from ..acceleration import (
     Device,
     build_supports_cuda,
@@ -311,6 +311,10 @@ class TranscribeTab:
         # transcribe-only build cannot fail on a box it was never given.
         self.diarize_var = tk.BooleanVar(value=diarization_available())
         self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
+        # Re-time English words with the bundled letter model before they are
+        # given to speakers (whispers/alignment.py). Only offered where the
+        # build carries it; on by default there, as that is why it was added.
+        self.retime_var = tk.BooleanVar(value=alignment.available())
         # The count handed to the diarizer ("" = work it out). Written by the
         # dropdown below, and the value a profile and a run record.
         self.num_speakers_var = tk.StringVar(value="")
@@ -862,6 +866,26 @@ class TranscribeTab:
             wraplength=560,
             justify="left",
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
+        if alignment.available():
+            ttk.Checkbutton(
+                frame,
+                text="Sharpen English word timings (trial)",
+                variable=self.retime_var,
+                style=Style.CHECK,
+            ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
+            ttk.Label(
+                frame,
+                text=(
+                    "Before words are given to speakers, a second model finds "
+                    "where each English word starts and ends, so a one-word "
+                    "reply is less often put inside the turn before it. The "
+                    "words themselves are not changed. English transcriptions "
+                    "only; not used when translating."
+                ),
+                style=Style.MUTED,
+                wraplength=560,
+                justify="left",
+            ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
 
     def _build_profile_card(self, parent: tk.Misc) -> None:
         card = Card(
@@ -2062,13 +2086,20 @@ class TranscribeTab:
                 )
 
             if self.diarize_var.get():
-                # Kept as transcribed, before any speaker is attached to it, so
-                # the split can be done again from the same words rather than
-                # from the output of the last split. It belongs to the result on
-                # screen, which in a batch is the one that finished most
-                # recently.
-                undiarized = copy.deepcopy(result.segments) if set_view else None
-                self._diarize_into(result, src, voice_path, voice_is_normalized)
+                # Kept as transcribed (and re-timed), before any speaker is
+                # attached to it, so the split can be done again from the same
+                # words rather than from the output of the last split. It
+                # belongs to the result on screen, which in a batch is the one
+                # that finished most recently.
+                undiarized = self._diarize_into(
+                    result,
+                    src,
+                    voice_path,
+                    voice_is_normalized,
+                    task=task,
+                    provenance=provenance.transcription,
+                    keep_words=set_view,
+                )
                 provenance.diarization = DiarizationProvenance.from_bundle(
                     engine=self._diar_engine_used,
                     expected_speaker_count=self._parse_num_speakers(),
@@ -2128,7 +2159,11 @@ class TranscribeTab:
         source: Path,
         media_path: Path,
         media_is_normalized: bool,
-    ) -> None:
+        *,
+        task: str = "transcribe",
+        provenance: Optional[TranscriptionProvenance] = None,
+        keep_words: bool = False,
+    ) -> Optional[List[Segment]]:
         # ``media_path`` here is the audio voices may be measured from: the
         # original, normalised, and never the cleaned copy even when the words
         # came from one. Everything below - the speaker split, recognising
@@ -2146,16 +2181,18 @@ class TranscribeTab:
                 source, progress=lambda msg: append_line(self.status, msg)
             )
             diar_temp = diar_wav
-        # The bar is sitting at 100% from the transcription that just finished.
-        self._begin_phase("Identifying speakers…")
-        # Settled once, here, and handed to diarize() as a concrete engine: the
-        # record names the same one. Reading the setting again afterwards named
-        # whatever Method said when the run finished - and Method can be
-        # changed while a run is going.
-        self._diar_engine_used = chosen_backend(
-            ENGINE_CHOICES.get(self.engine_var.get(), "auto")
-        )
         try:
+            self._retime_words(result, diar_wav, task, provenance)
+            undiarized = copy.deepcopy(result.segments) if keep_words else None
+            # The bar is sitting at 100% from the step that just finished.
+            self._begin_phase("Identifying speakers…")
+            # Settled once, here, and handed to diarize() as a concrete engine:
+            # the record names the same one. Reading the setting again
+            # afterwards named whatever Method said when the run finished - and
+            # Method can be changed while a run is going.
+            self._diar_engine_used = chosen_backend(
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+            )
             speaker_segments = diarize(
                 diar_wav,
                 backend=self._diar_engine_used,
@@ -2186,6 +2223,38 @@ class TranscribeTab:
                     diar_temp.unlink()
                 except OSError:
                     pass
+        return undiarized
+
+    def _retime_words(
+        self,
+        result: TranscriptionResult,
+        wav: Path,
+        task: str,
+        provenance: Optional[TranscriptionProvenance],
+    ) -> None:
+        """Re-time English words from the 16 kHz WAV, when asked and able."""
+        if not self.retime_var.get() or not alignment.available():
+            return
+        if not alignment.applies(result.language, task):
+            append_line(
+                self.status,
+                "Word timings left as transcribed: sharpening them is for "
+                "English transcriptions only.",
+            )
+            return
+        self._begin_phase("Sharpening word timings…")
+        summary = alignment.align_segments(
+            result.segments,
+            wav,
+            progress=lambda msg: append_line(self.status, msg),
+            on_progress=lambda f: self._set_progress(f, "Sharpening word timings"),
+            cancelled=self._cancel_event.is_set,
+        )
+        if provenance is not None:
+            provenance.word_timing = alignment.describe_method()
+            provenance.word_timing_model_sha256 = alignment.model_sha256() or ""
+            provenance.words_retimed = summary.retimed
+            provenance.words_total = summary.words
 
     # -- Output / export ---------------------------------------------------
 
@@ -3445,6 +3514,7 @@ class TranscribeTab:
             "highlight_conf": self.highlight_conf_var,
             "diarize": self.diarize_var,
             "engine": self.engine_var,
+            "retime_words": self.retime_var,
             # The count, and the answer it came from. Both are stored: the count
             # is what a run and a profile use, and the answer is what tells a
             # later launch that the question was put and answered.
