@@ -82,6 +82,7 @@ from ..transcription import (
     DEFAULT_MODEL,
     MODEL_PREFERENCE,
     MODEL_SIZES,
+    UNTRANSLATED_SHARE,
     CancelledError,
     ModelUnavailable,
     Segment,
@@ -90,6 +91,8 @@ from ..transcription import (
     is_video,
     resolve_model_choice,
     transcribe_audio,
+    translation_refusal,
+    untranslated_share,
     usable_model_folder,
 )
 from ..voiceprints import SpeakerEmbedder, Voiceprint, enroll_spans, recognize
@@ -344,6 +347,8 @@ class TranscribeTab:
         self._unsaved_edits = 0
         # Recordings this run's silence filter mostly passed over, in order.
         self._skipped_much: "List[SkippedRun]" = []
+        # Files a translation came back from in the original language.
+        self._untranslated: List[str] = []
         # Queued recordings that were not there when the run reached them.
         self._missing_files: "List[str]" = []
         # Recordings this run could not transcribe, and why. A batch carries on
@@ -420,6 +425,7 @@ class TranscribeTab:
         # A model can also arrive from a saved profile or last session's
         # settings, so the dropdown follows the value rather than owning it.
         self.model_var.trace_add("write", self._sync_model_choice)
+        self.task_var.trace_add("write", self._update_model_status)
         self._update_model_status()
 
         # Initialise the enabled/disabled state of dependent fields.
@@ -1517,6 +1523,10 @@ class TranscribeTab:
         model = self._selected_model()
         if not model:
             self.model_status_var.set("")
+        elif self.task_var.get() == "translate" and translation_refusal(model):
+            # Said beside the model, not only after Run: turbo and the .en
+            # models write the original language when asked to translate.
+            self.model_status_var.set("⚠ cannot translate — use medium or large-v3")
         elif model in self._bundled_models:
             self.model_status_var.set("✓ in this build (works offline)")
         elif usable_model_folder(model):
@@ -1585,6 +1595,16 @@ class TranscribeTab:
             self._announce("error", str(exc))
             self.progress_label_var.set("Choose a model this copy has")
             return
+        refusal = (
+            translation_refusal(self._selected_model())
+            if self.task_var.get() == "translate"
+            else None
+        )
+        if refusal:
+            self._show_settings(True)
+            self._announce("error", refusal)
+            self.progress_label_var.set("Choose a model that can translate")
+            return
         # Collapse the settings so the transcript and progress get the space.
         self._collapse_all_settings()
         self._claim_busy()
@@ -1623,6 +1643,7 @@ class TranscribeTab:
         # against audio from this run's diarized file(s).
         self._clear_session_wav()
         self._skipped_much = []
+        self._untranslated = []
         self._missing_files = []
         self._failed_files = []
         self._failed_saves = []
@@ -1734,6 +1755,16 @@ class TranscribeTab:
             else:
                 final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
             kind, message = self._completion_message(done, total, saved)
+            if self._untranslated:
+                note = (
+                    "This came back in the original language, not English: the "
+                    "model did not translate it."
+                    if total == 1
+                    else f"{len(self._untranslated)} file(s) came back in the "
+                    "original language, not English: the model did not "
+                    "translate them (see Status)."
+                )
+                kind, message = "warning", f"{message} {note}"
             if kind == "success" and saved_in:
                 # A run that saved should say where: "complete" alone left the
                 # operator to guess, or to assume a folder that held nothing.
@@ -2010,6 +2041,19 @@ class TranscribeTab:
                 f"({result.language_probability:.0%}), "
                 f"duration: {result.duration:.1f}s",
             )
+            if (
+                task == "translate"
+                and untranslated_share(result.segments) > UNTRANSLATED_SHARE
+            ):
+                # Checked on what came back, not only on the model chosen: a
+                # model that can translate does not always do so.
+                self._untranslated.append(src.name)
+                append_line(
+                    self.status,
+                    f"{src.name}: most of this came back in the original "
+                    f"language ({result.language}), not English - the model "
+                    "did not translate it.",
+                )
 
             if self.diarize_var.get():
                 # Kept as transcribed, before any speaker is attached to it, so

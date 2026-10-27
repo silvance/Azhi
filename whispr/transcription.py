@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .resources import find_ffmpeg, is_bundle
 from .speaker_names import LEAD_LEGEND, any_leads
@@ -125,6 +125,66 @@ def vad_options() -> "Dict[str, Any]":
         "min_silence_duration_ms": VAD_MIN_SILENCE_MS,
         "speech_pad_ms": VAD_SPEECH_PAD_MS,
     }
+
+
+def translation_refusal(model: str) -> Optional[str]:
+    """Why ``model`` cannot translate into English, or None when it can.
+
+    The translate task needs a multilingual model trained for it, and three
+    kinds were offered for it that are not. ``turbo`` (large-v3-turbo) was
+    fine-tuned on transcription only: asked to translate, it writes the original
+    language - a Chinese recording set to translate came back in Chinese, with
+    nothing to say so. The ``.en`` models are English-only, and distil-whisper
+    models were distilled from transcription. Judged by name, which is what a
+    bundled model or a copied model folder carries.
+    """
+    name = Path((model or "").strip()).name.lower()
+    if "turbo" in name:
+        return (
+            "The turbo model was not trained to translate: asked to, it writes "
+            "the original language. Choose medium or large-v3 to translate "
+            "into English."
+        )
+    if name.endswith(".en"):
+        return (
+            "English-only models cannot translate. Choose medium or large-v3 "
+            "to translate into English."
+        )
+    if name.startswith("distil"):
+        return (
+            "Distilled models cannot translate. Choose medium or large-v3 to "
+            "translate into English."
+        )
+    return None
+
+
+def untranslated_share(segments: "Sequence[Segment]") -> float:
+    """Of the letters in a translation, the share not in the Latin alphabet.
+
+    A model that ignores the translate task writes the original language, and
+    for the languages this is pointed at that is another script. Counted per
+    character, so a dense script weighs more than its share of the meaning: a
+    figure for spotting a translation that did not happen, not a measure of
+    how much did.
+    """
+    import unicodedata
+
+    latin = other = 0
+    for segment in segments:
+        for char in segment.text:
+            if not char.isalpha():
+                continue
+            if unicodedata.name(char, "").startswith("LATIN"):
+                latin += 1
+            else:
+                other += 1
+    total = latin + other
+    return other / total if total else 0.0
+
+
+# More than this share of a "translation" outside the Latin alphabet, and the
+# operator is told it was not translated.
+UNTRANSLATED_SHARE = 0.5
 
 
 DEFAULT_MODEL = "medium"

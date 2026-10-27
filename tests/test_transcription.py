@@ -322,3 +322,42 @@ def test_an_unfiltered_run_does_not_claim_a_filtered_duration(monkeypatch, tmp_p
     _, result = _run(monkeypatch, tmp_path, vad_filter=False)
     assert result.duration_after_vad is None
     assert result.kept_fraction is None
+
+
+# -- translating needs a model that was trained to ----------------------------
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "turbo",
+        "base.en",
+        "medium.en",
+        "/models/faster-whisper-large-v3-turbo",
+        "distil-large-v3",
+    ],
+)
+def test_models_that_cannot_translate_are_named(model):
+    from whispr.transcription import translation_refusal
+
+    reason = translation_refusal(model)
+    assert reason and "medium or large-v3" in reason
+
+
+@pytest.mark.parametrize("model", ["medium", "large-v3", "small", "/models/large-v3"])
+def test_multilingual_models_can_translate(model):
+    from whispr.transcription import translation_refusal
+
+    assert translation_refusal(model) is None
+
+
+def test_a_translation_left_in_chinese_is_spotted():
+    from whispr.transcription import UNTRANSLATED_SHARE, Segment, untranslated_share
+
+    chinese = [
+        Segment(0, 2, "他们就不许摘了之后呢然后杭州的查克索六几年的时候去那个武夷山")
+    ]
+    english = [Segment(0, 2, "Then in the sixties he went to Wuyi Mountain (武夷山).")]
+    assert untranslated_share(chinese) > UNTRANSLATED_SHARE
+    assert untranslated_share(english) < UNTRANSLATED_SHARE
+    assert untranslated_share([Segment(0, 1, "85 60 ...")]) == 0.0
