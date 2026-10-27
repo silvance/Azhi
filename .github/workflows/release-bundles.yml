@@ -62,8 +62,8 @@ jobs:
     steps:
       - id: matrix
         run: |
-          linux='{"os":"ubuntu-latest","artifact":"whispr-linux-x86_64"}'
-          windows='{"os":"windows-latest","artifact":"whispr-windows-x86_64"}'
+          linux='{"os":"ubuntu-latest","artifact":"whispers-linux-x86_64"}'
+          windows='{"os":"windows-latest","artifact":"whispers-windows-x86_64"}'
           case "${{ github.event.inputs.platform || 'both' }}" in
             linux) include="[$linux]" ;;
             windows) include="[$windows]" ;;
@@ -169,9 +169,9 @@ jobs:
       - name: Install OCR Python deps
         if: env.OCR_LANGS != ''
         run: pip install -c packaging/lockfile.txt pytesseract pypdfium2 pillow "numpy<2"
-      - name: Install whispr package
-        # --no-deps: the GUI doesn't need the whisper engine's torch dep; pyannote
-        # (when selected) already provided CPU torch above.
+      - name: Install the Whispers package
+        # --no-deps: everything it needs was installed above, pinned by the
+        # lockfile; pip resolving again could only move a version.
         run: pip install --no-deps .
       # Everything is installed by now, including the optional engines this build
       # selected. A version that drifted from the lock means the bundle would not
@@ -219,21 +219,28 @@ jobs:
           --build-id "${{ github.run_id }}-${{ github.run_attempt }}"
           --commit "${{ github.sha }}"
       - name: Build bundle
-        run: pyinstaller --noconfirm packaging/whispr.spec
+        run: pyinstaller --noconfirm packaging/whispers.spec
       # The guide has to travel with the tool. An air-gapped machine cannot be
       # sent a link, so a bundle that ships without it leaves the operator with
       # an executable and nothing to read. Copied in before the inventory so it
-      # is covered by `whispr --verify` like everything else that shipped.
+      # is covered by `Whispers --verify` like everything else that shipped.
       - name: Include the user guide
         shell: bash
-        run: cp docs/user-guide.md "dist/whispr/USER-GUIDE.md"
+        run: cp docs/user-guide.md "dist/Whispers/USER-GUIDE.md"
+      # The licence and every notice the bundled software and models require,
+      # beside the program, before the inventory so --verify covers them.
+      - name: Ship the licence and third-party notices
+        shell: bash
+        run: |
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/Whispers/
+          python packaging/collect_licences.py dist/Whispers
       # Record what this build shipped, so the copy that reaches an air-gapped
-      # machine can be checked against it with `whispr --verify`. A bundle is
+      # machine can be checked against it with `Whispers --verify`. A bundle is
       # thousands of files carried on removable media; when one goes missing the
       # application fails at whichever piece it reaches first, which is a
       # different piece on different runs and tells the operator nothing.
       - name: Record bundle inventory
-        run: python packaging/write_inventory.py dist/whispr
+        run: python packaging/write_inventory.py dist/Whispers
       # Prove the executable actually starts before shipping it. PyInstaller
       # exiting 0 only means it wrote a directory; a bundle missing one stdlib
       # extension builds cleanly and then dies on the operator's desktop with a
@@ -242,20 +249,20 @@ jobs:
       - name: Verify the bundle starts (Linux)
         if: runner.os == 'Linux'
         run: |
-          ./dist/whispr/whispr --self-test
-          ./dist/whispr/whispr --verify
+          ./dist/Whispers/Whispers --self-test
+          ./dist/Whispers/Whispers --verify
       - name: Verify the bundle starts (Windows)
         if: runner.os == 'Windows'
         run: |
-          & .\dist\whispr\whispr.exe --self-test
+          & .\dist\Whispers\Whispers.exe --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\dist\whispr\whispr.exe --verify
+          & .\dist\Whispers\Whispers.exe --verify
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}
-          path: dist/whispr
+          path: dist/Whispers
           if-no-files-found: error
           retention-days: 14
       # The weights this build resolved. When packaging/assets.lock.json was
@@ -275,10 +282,10 @@ jobs:
       # --- Publish a downloadable GitHub Release (only when a tag is resolved) ---
       - name: Package bundle (Linux)
         if: steps.rel.outputs.tag != '' && runner.os == 'Linux'
-        run: tar -czf "${{ matrix.artifact }}.tar.gz" -C dist whispr
+        run: tar -czf "${{ matrix.artifact }}.tar.gz" -C dist Whispers
       - name: Package bundle (Windows)
         if: steps.rel.outputs.tag != '' && runner.os == 'Windows'
-        run: Compress-Archive -Path dist/whispr -DestinationPath "${{ matrix.artifact }}.zip"
+        run: Compress-Archive -Path dist/Whispers -DestinationPath "${{ matrix.artifact }}.zip"
       - name: Publish to GitHub Release
         if: steps.rel.outputs.tag != ''
         shell: bash
@@ -290,7 +297,7 @@ jobs:
         run: |
           TAG="${{ steps.rel.outputs.tag }}"
           FILE=$(ls ${{ matrix.artifact }}.* | head -n1)
-          NOTES="Offline Whispers desktop bundle. Download the archive for your OS, unzip, and run whispr (whispr.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`whispr --verify\` (\`whispr.exe --verify\` on Windows) from a terminal. It compares every file against what this build shipped and names anything missing or altered - a copy damaged in transit is the usual cause of a startup error, and it can fail in a different place on each run. \`--self-test\` then prints what this copy can do, as does the in-app **System status** button."
+          NOTES="Offline Whispers desktop bundle. Download the archive for your OS, unzip, and run Whispers (Whispers.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`./Whispers --verify\` (\`Whispers.exe --verify\` on Windows) from a terminal. It compares every file against what this build shipped and names anything missing or altered - a copy damaged in transit is the usual cause of a startup error, and it can fail in a different place on each run. \`--self-test\` then prints what this copy can do, as does the in-app **System status** button."
           gh release create "$TAG" --repo "${{ github.repository }}" \
             --title "Whispers $TAG" --notes "$NOTES" "$FILE" \
           || gh release upload "$TAG" "$FILE" --clobber --repo "${{ github.repository }}"

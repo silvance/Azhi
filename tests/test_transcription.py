@@ -1,7 +1,7 @@
 import pytest
 
-from whispr import transcription
-from whispr.transcription import (
+from whispers import transcription
+from whispers.transcription import (
     Segment,
     TranscriptionResult,
     Word,
@@ -338,7 +338,7 @@ def test_an_unfiltered_run_does_not_claim_a_filtered_duration(monkeypatch, tmp_p
     ],
 )
 def test_models_that_cannot_translate_are_named(model):
-    from whispr.transcription import translation_refusal
+    from whispers.transcription import translation_refusal
 
     reason = translation_refusal(model)
     assert reason and "medium or large-v3" in reason
@@ -346,13 +346,13 @@ def test_models_that_cannot_translate_are_named(model):
 
 @pytest.mark.parametrize("model", ["medium", "large-v3", "small", "/models/large-v3"])
 def test_multilingual_models_can_translate(model):
-    from whispr.transcription import translation_refusal
+    from whispers.transcription import translation_refusal
 
     assert translation_refusal(model) is None
 
 
 def test_a_translation_left_in_chinese_is_spotted():
-    from whispr.transcription import UNTRANSLATED_SHARE, Segment, untranslated_share
+    from whispers.transcription import UNTRANSLATED_SHARE, Segment, untranslated_share
 
     chinese = [
         Segment(0, 2, "他们就不许摘了之后呢然后杭州的查克索六几年的时候去那个武夷山")

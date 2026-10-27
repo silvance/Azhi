@@ -3,8 +3,13 @@ import os
 
 import pytest
 
-from whispr import thresholds
-from whispr.settings import SettingsError, load_settings, settings_path, update_settings
+from whispers import thresholds
+from whispers.settings import (
+    SettingsError,
+    load_settings,
+    settings_path,
+    update_settings,
+)
 
 
 @pytest.fixture
@@ -101,7 +106,7 @@ def test_a_failed_save_is_reported_not_swallowed(config, monkeypatch):
     def refuse(*_args, **_kwargs):
         raise PermissionError(13, "Access is denied")
 
-    monkeypatch.setattr("whispr.settings.write_json_atomic", refuse)
+    monkeypatch.setattr("whispers.settings.write_json_atomic", refuse)
     with pytest.raises(SettingsError) as caught:
         update_settings("transcribe", {"a": 1})
     assert "could not be saved" in str(caught.value)
@@ -117,10 +122,58 @@ def test_saving_is_atomic(config, monkeypatch):
     def crash(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr("whispr.atomicio.os.replace", crash)
+    monkeypatch.setattr("whispers.atomicio.os.replace", crash)
     with pytest.raises(SettingsError):
         update_settings("transcribe", {"a": 2})
-    monkeypatch.setattr("whispr.atomicio.os.replace", real_replace)
+    monkeypatch.setattr("whispers.atomicio.os.replace", real_replace)
     assert load_settings() == {"transcribe": {"a": 1}}
     leftovers = [p for p in config.parent.iterdir() if p.suffix == ".tmp"]
     assert leftovers == [], "no half-written temporary file left behind"
+
+
+# -- what earlier versions saved, before the program was renamed ---------------
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows always used the Whispers folder")
+def test_an_earlier_versions_settings_folder_is_moved_not_copied(tmp_path, monkeypatch):
+    old = tmp_path / "whispr"
+    (old / "speakers").mkdir(parents=True)
+    (old / "settings.json").write_text('{"transcribe": {"model": "medium"}}')
+    (old / "speakers" / "subject.whispr-speaker.json").write_text("{}")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = settings_path()
+    assert path == tmp_path / "whispers" / "settings.json"
+    assert load_settings() == {"transcribe": {"model": "medium"}}
+    assert (tmp_path / "whispers" / "speakers" / "subject.whispr-speaker.json").exists()
+    # Voice profiles are in one place, never two.
+    assert not old.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows always used the Whispers folder")
+def test_a_folder_that_cannot_be_moved_is_used_where_it_is(tmp_path, monkeypatch):
+    old = tmp_path / "whispr"
+    old.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        type(old), "rename", lambda self, target: (_ for _ in ()).throw(OSError)
+    )
+    assert settings_path() == old / "settings.json"
+
+
+def test_old_file_endings_are_renamed_once_and_listed_once(tmp_path):
+    from whispers.settings import adopt_old_files
+
+    (tmp_path / "a.whispr-speaker.json").write_text("old a")
+    (tmp_path / "b.whispers-speaker.json").write_text("new b")
+    # Both names for c: the new one wins, the old one is left untouched.
+    (tmp_path / "c.whispr-speaker.json").write_text("old c")
+    (tmp_path / "c.whispers-speaker.json").write_text("new c")
+    found = adopt_old_files(tmp_path, ".whispers-speaker.json", ".whispr-speaker.json")
+    assert [p.name for p in found] == [
+        "a.whispers-speaker.json",
+        "b.whispers-speaker.json",
+        "c.whispers-speaker.json",
+    ]
+    assert (tmp_path / "a.whispers-speaker.json").read_text() == "old a"
+    assert (tmp_path / "c.whispr-speaker.json").read_text() == "old c"
+    assert adopt_old_files(tmp_path / "missing", ".x", ".y") == []

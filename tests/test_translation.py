@@ -2,8 +2,8 @@ import importlib.util
 
 import pytest
 
-from whispr import translation
-from whispr.translation import detect_language
+from whispers import translation
+from whispers.translation import detect_language
 
 
 def test_chunk_text_rejoins_and_bounds():

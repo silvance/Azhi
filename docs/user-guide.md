@@ -46,13 +46,13 @@ damaged in transit fails in confusing ways, and it is worth ruling out first.
 Open a terminal in the extracted folder and run:
 
 ```
-whispr.exe --verify
+Whispers.exe --verify
 ```
 
 It should report that the copy matches the build. Then:
 
 ```
-whispr.exe --self-test
+Whispers.exe --self-test
 ```
 
 This prints what this copy can actually do. Read two lines in particular:
@@ -391,7 +391,7 @@ Under the transcript:
   which settings, and a fingerprint of the source file. This is the one to
   export when the result may be questioned later.
 - **Save project…** — writes everything, including your speaker names and
-  corrections, to a `.whispr.json` file. **Open project…** brings it back so
+  corrections, to a `.whispers.json` file. **Open project…** brings it back so
   you can carry on in a later session.
 
 Save a project whenever you have put real work into corrections. Re-doing them
@@ -598,7 +598,7 @@ rules out half the possibilities in one look.
 | Two people came out as five | **Redo speaker separation…** with the right count. Next time, set the count before running. |
 | A model is not in this build | **System status** lists the ones that are. Pick one of those. |
 | It looks like it has frozen | Look for a dialog waiting for an answer — including on your other monitor. |
-| Odd failures, files that will not open | Run `whispr.exe --verify`. A bundle damaged in transit fails differently every run. |
+| Odd failures, files that will not open | Run `Whispers.exe --verify`. A bundle damaged in transit fails differently every run. |
 
 The **Status** tab holds the technical detail for anything that went wrong. It
 is the right thing to copy when reporting a problem.

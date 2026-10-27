@@ -1,7 +1,7 @@
 import pytest
 
-import whispr.profiles as profiles
-from whispr.profiles import (
+import whispers.profiles as profiles
+from whispers.profiles import (
     Profile,
     ProfileSaveError,
     add_learned_voice,
@@ -15,7 +15,7 @@ from whispr.profiles import (
     save_profile,
     store_profile_settings,
 )
-from whispr.voiceprints import Voiceprint
+from whispers.voiceprints import Voiceprint
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -77,7 +77,7 @@ def test_names_with_odd_characters_persist(tmp_path, monkeypatch):
 def test_export_then_read_round_trip(tmp_path):
     prof = Profile(name="Op Falcon", settings={"model": "medium.en"})
     prof.voiceprint_for("Alpha").add([1.0, 0.0])
-    out = tmp_path / "falcon.whispr-profile.json"
+    out = tmp_path / "falcon.whispers-profile.json"
     export_profile(prof, out)
 
     loaded = read_profile_file(out)
@@ -88,7 +88,7 @@ def test_export_then_read_round_trip(tmp_path):
 
 def test_import_lands_in_profiles_dir(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
-    src = tmp_path / "shared.whispr-profile.json"
+    src = tmp_path / "shared.whispers-profile.json"
     export_profile(Profile(name="Shared", settings={"engine": "sherpa"}), src)
     # Simulate the GUI import: read the file, then save into this machine's dir.
     imported = read_profile_file(src)
@@ -146,7 +146,7 @@ def test_a_failed_save_raises_instead_of_reporting_success(tmp_path, monkeypatch
     def refuse(*_args, **_kwargs):
         raise PermissionError(13, "Access is denied")
 
-    monkeypatch.setattr("whispr.profiles.write_json_atomic", refuse)
+    monkeypatch.setattr("whispers.profiles.write_json_atomic", refuse)
     with pytest.raises(ProfileSaveError) as caught:
         save_profile(Profile(name="Op Alpha"))
     assert "could not be saved" in str(caught.value)
@@ -162,7 +162,7 @@ def test_a_save_that_dies_part_way_leaves_the_old_profile(tmp_path, monkeypatch)
     def crash(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr("whispr.atomicio.os.replace", crash)
+    monkeypatch.setattr("whispers.atomicio.os.replace", crash)
     with pytest.raises(ProfileSaveError):
         save_profile(Profile(name="Op Alpha"))
     monkeypatch.undo()

@@ -1,21 +1,21 @@
 import json
 
-from whispr import atomicio
-from whispr.buildinfo import UNKNOWN, BuildInfo, build_info
-from whispr.hashing import sha256_bytes, sha256_file, sha256_file_or_none, short
-from whispr.project import (
+from whispers import atomicio
+from whispers.buildinfo import UNKNOWN, BuildInfo, build_info
+from whispers.hashing import sha256_bytes, sha256_file, sha256_file_or_none, short
+from whispers.project import (
     SCHEMA_VERSION,
     load_project,
     load_project_record,
     save_project,
 )
-from whispr.provenance import (
+from whispers.provenance import (
     AnalysisProvenance,
     DiarizationProvenance,
     SourceRecord,
     TranscriptionProvenance,
 )
-from whispr.transcription import Segment, TranscriptionResult
+from whispers.transcription import Segment, TranscriptionResult
 
 # Known-answer vector, so a refactor of the hashing helper cannot silently
 # change what a recorded provenance hash means.
@@ -141,7 +141,7 @@ def test_provenance_records_matching_thresholds(tmp_path):
 
 
 def test_build_info_reports_unknown_without_a_manifest(monkeypatch):
-    import whispr.buildinfo as bi
+    import whispers.buildinfo as bi
 
     monkeypatch.setattr(bi, "load_manifest", lambda: {})
     info = bi.build_info()
@@ -151,7 +151,7 @@ def test_build_info_reports_unknown_without_a_manifest(monkeypatch):
 
 
 def test_build_info_uses_manifest_when_present(monkeypatch):
-    import whispr.buildinfo as bi
+    import whispers.buildinfo as bi
 
     monkeypatch.setattr(
         bi,
@@ -194,7 +194,7 @@ def _result():
 
 def test_project_saves_and_loads_provenance(tmp_path):
     provenance = _provenance(tmp_path)
-    path = tmp_path / "case.whispr.json"
+    path = tmp_path / "case.whispers.json"
     save_project(path, _result(), {"SPEAKER_00": "Alpha"}, "op.wav", provenance)
 
     record = load_project_record(path)
@@ -207,7 +207,7 @@ def test_project_saves_and_loads_provenance(tmp_path):
 
 
 def test_project_written_file_records_schema_and_hash(tmp_path):
-    path = tmp_path / "case.whispr.json"
+    path = tmp_path / "case.whispers.json"
     save_project(path, _result(), None, "op.wav", _provenance(tmp_path))
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["schema_version"] == SCHEMA_VERSION
@@ -216,7 +216,7 @@ def test_project_written_file_records_schema_and_hash(tmp_path):
 
 def test_schema_1_project_still_loads(tmp_path):
     """A pre-provenance project must keep working, reporting no provenance."""
-    legacy = tmp_path / "old.whispr.json"
+    legacy = tmp_path / "old.whispers.json"
     legacy.write_text(
         json.dumps(
             {
@@ -249,7 +249,7 @@ def test_schema_1_project_still_loads(tmp_path):
 
 
 def test_project_without_provenance_saves_cleanly(tmp_path):
-    path = tmp_path / "plain.whispr.json"
+    path = tmp_path / "plain.whispers.json"
     save_project(path, _result(), None, "op.wav")
     record = load_project_record(path)
     assert record.has_provenance is False
@@ -258,14 +258,14 @@ def test_project_without_provenance_saves_cleanly(tmp_path):
 
 def test_project_save_is_atomic(tmp_path, monkeypatch):
 
-    path = tmp_path / "case.whispr.json"
+    path = tmp_path / "case.whispers.json"
     save_project(path, _result(), None, "op.wav")
     original = path.read_text(encoding="utf-8")
 
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
-    # The atomic writer lives in whispr.atomicio; fail its replace step.
+    # The atomic writer lives in whispers.atomicio; fail its replace step.
     monkeypatch.setattr(atomicio.os, "replace", _boom)
     try:
         save_project(path, _result(), None, "changed.wav")

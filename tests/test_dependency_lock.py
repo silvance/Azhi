@@ -7,7 +7,7 @@ nobody field-tested, and nothing in the bundle would say so.
 
 import pytest
 
-from whispr.asset_lock import (
+from whispers.asset_lock import (
     digest_for,
     empty,
     mismatch,
@@ -16,7 +16,7 @@ from whispr.asset_lock import (
     revision_for,
     summary,
 )
-from whispr.dependencies import (
+from whispers.dependencies import (
     TRACKED_PACKAGES,
     canonical,
     drift,

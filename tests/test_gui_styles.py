@@ -26,13 +26,13 @@ pytestmark = pytest.mark.skipif(
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    import whispr.gui.app as app_mod
+    import whispers.gui.app as app_mod
 
     # Build the speaker pages too, without needing the model file.
     monkeypatch.setattr(app_mod, "bundled_embedding_model", lambda: Path("e.onnx"))
     root = tb.Window(themename="darkly")
     try:
-        yield app_mod.WhisprApp(root, drag_and_drop=False, bootstrap=True)
+        yield app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True)
     finally:
         root.destroy()
 
@@ -49,7 +49,7 @@ def _styles(widget):
 
 
 def test_custom_styles_survive_ttkbootstrap(app):
-    from whispr.gui.theme import Style
+    from whispers.gui.theme import Style
 
     seen = _styles(app.root)
     for name in (

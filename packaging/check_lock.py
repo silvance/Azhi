@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from whispr.dependencies import (  # noqa: E402
+from whispers.dependencies import (  # noqa: E402
     TRACKED_PACKAGES,
     canonical,
     drift,

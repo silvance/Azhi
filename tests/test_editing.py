@@ -1,9 +1,9 @@
-from whispr.editing import (
+from whispers.editing import (
     coalesce_segments,
     split_segment_on_span,
     split_segment_on_word,
 )
-from whispr.transcription import Segment, Word
+from whispers.transcription import Segment, Word
 
 
 def _seg(words, speaker):

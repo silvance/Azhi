@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-import whispr.speaker_profiles as sp
-from whispr import atomicio
-from whispr.speaker_profiles import (
+import whispers.speaker_profiles as sp
+from whispers import atomicio
+from whispers.speaker_profiles import (
     SAMPLE_LEARNED,
     SAMPLE_REFERENCE,
     EmbeddingModelIdentity,
@@ -81,7 +81,7 @@ def test_save_is_atomic_no_partial_file_on_failure(tmp_path, monkeypatch):
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
-    # The atomic writer lives in whispr.atomicio; fail its replace step.
+    # The atomic writer lives in whispers.atomicio; fail its replace step.
     monkeypatch.setattr(atomicio.os, "replace", _boom)
     with pytest.raises(ProfileError):
         save_speaker_profile(profile, path)
@@ -198,11 +198,11 @@ def test_missing_hash_needs_confirmation():
 
 
 def test_import_legacy_voiceprint_file(tmp_path):
-    legacy = tmp_path / "old.whispr-voiceprint.json"
+    legacy = tmp_path / "old.whispers-voiceprint.json"
     legacy.write_text(
         json.dumps(
             {
-                "kind": "whispr-voiceprint",
+                "kind": "whispers-voiceprint",
                 "name": "Falcon",
                 "vectors": [[1.0, 0.0], [0.9, 0.1]],
                 "source_profile": "Op One",
@@ -221,7 +221,7 @@ def test_import_legacy_voiceprint_file(tmp_path):
 
 
 def test_import_legacy_operation_profile_yields_one_subject_per_voice(tmp_path):
-    legacy = tmp_path / "op.whispr-profile.json"
+    legacy = tmp_path / "op.whispers-profile.json"
     legacy.write_text(
         json.dumps(
             {
@@ -242,7 +242,7 @@ def test_import_legacy_operation_profile_yields_one_subject_per_voice(tmp_path):
 
 
 def test_legacy_profile_is_not_silently_discarded(tmp_path):
-    legacy = tmp_path / "empty.whispr-profile.json"
+    legacy = tmp_path / "empty.whispers-profile.json"
     legacy.write_text(json.dumps({"name": "Op", "voiceprints": []}), encoding="utf-8")
     with pytest.raises(ProfileError, match="no enrolled voices"):
         load_profile_file(legacy)
@@ -263,11 +263,11 @@ def test_unknown_shape_raises(tmp_path):
 
 
 def test_future_schema_version_refused(tmp_path):
-    future = tmp_path / "future.whispr-speaker.json"
+    future = tmp_path / "future.whispers-speaker.json"
     future.write_text(
         json.dumps(
             {
-                "kind": "whispr-speaker-profile",
+                "kind": "whispers-speaker-profile",
                 "schema_version": sp.SCHEMA_VERSION + 1,
                 "display_name": "X",
             }
@@ -588,3 +588,19 @@ def test_a_new_subject_is_saved_as_given(tmp_path, monkeypatch):
     stored, added = sp.add_samples(subject, [new], new_subject=True)
     assert added == [new]
     assert [p.display_name for p in list_speaker_profiles()] == ["New person"]
+
+
+def test_profiles_saved_before_the_rename_are_still_listed(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setattr(sp, "speakers_dir", lambda: tmp_path)
+    profile = sp.SpeakerProfile(display_name="Subject A")
+    data = profile.to_dict()
+    assert data["kind"] == "whispers-speaker-profile"
+    data["kind"] = "whispr-speaker-profile"  # what an earlier version wrote
+    (tmp_path / f"subject-a-{profile.subject_id}.whispr-speaker.json").write_text(
+        json.dumps(data), encoding="utf-8"
+    )
+    listed = sp.list_speaker_profiles()
+    assert [p.display_name for p in listed] == ["Subject A"]
+    assert (tmp_path / f"subject-a-{profile.subject_id}.whispers-speaker.json").exists()

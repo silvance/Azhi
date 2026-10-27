@@ -4,8 +4,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from whispr import enrollment
-from whispr.enrollment import (
+from whispers import enrollment
+from whispers.enrollment import (
     EnrollmentResult,
     enroll_from_wav,
     enrolled_spans,
@@ -17,7 +17,7 @@ from whispr.enrollment import (
     subtract_spans,
     windows,
 )
-from whispr.speaker_profiles import (
+from whispers.speaker_profiles import (
     SAMPLE_LEARNED,
     SAMPLE_REFERENCE,
     EmbeddingModelIdentity,
@@ -291,26 +291,26 @@ def test_spans_by_speaker_name_ignores_undiarized_segments():
 
 
 def test_parse_time_ranges_mm_ss():
-    from whispr.enrollment import parse_time_ranges
+    from whispers.enrollment import parse_time_ranges
 
     assert parse_time_ranges("0:10-0:45, 1:20-2:00") == [(10.0, 45.0), (80.0, 120.0)]
 
 
 def test_parse_time_ranges_plain_seconds_and_hours():
-    from whispr.enrollment import parse_time_ranges
+    from whispers.enrollment import parse_time_ranges
 
     assert parse_time_ranges("5-12") == [(5.0, 12.0)]
     assert parse_time_ranges("1:00:00-1:00:30") == [(3600.0, 3630.0)]
 
 
 def test_parse_time_ranges_separators():
-    from whispr.enrollment import parse_time_ranges
+    from whispers.enrollment import parse_time_ranges
 
     assert parse_time_ranges("1-2; 3-4\n5-6") == [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)]
 
 
 def test_parse_time_ranges_rejects_bad_input():
-    from whispr.enrollment import parse_time_ranges
+    from whispers.enrollment import parse_time_ranges
 
     for bad in ("", "10", "abc-def", "10-5", "1:2:3:4-9"):
         with pytest.raises(ValueError):
@@ -322,7 +322,7 @@ def test_parse_time_ranges_rejects_bad_input():
 
 def test_a_ready_wav_is_used_as_is_without_ffmpeg(wav, monkeypatch):
     """A 16 kHz mono 16-bit WAV needs no conversion - and no ffmpeg."""
-    import whispr.transcription as transcription
+    import whispers.transcription as transcription
 
     def _no_ffmpeg(*args, **kwargs):
         raise AssertionError("convert_to_wav should not be called for a ready WAV")
@@ -335,7 +335,7 @@ def test_a_ready_wav_is_used_as_is_without_ffmpeg(wav, monkeypatch):
 
 
 def test_the_hash_is_of_the_source_the_operator_chose(wav):
-    from whispr.hashing import sha256_file
+    from whispers.hashing import sha256_file
 
     _prepared, digest, _temporary = enrollment.prepare_source(wav)
     assert digest == sha256_file(wav)

@@ -2,8 +2,8 @@ import importlib.util
 
 import pytest
 
-from whispr.export import text_to_docx, transcript_to_docx
-from whispr.transcription import Segment, TranscriptionResult
+from whispers.export import text_to_docx, transcript_to_docx
+from whispers.transcription import Segment, TranscriptionResult
 
 _HAS_DOCX = importlib.util.find_spec("docx") is not None
 

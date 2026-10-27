@@ -1,5 +1,5 @@
-from whispr.project import PROJECT_SUFFIX, load_project, save_project
-from whispr.transcription import Segment, TranscriptionResult, Word
+from whispers.project import PROJECT_SUFFIX, load_project, save_project
+from whispers.transcription import Segment, TranscriptionResult, Word
 
 
 def _result():
@@ -83,8 +83,8 @@ def test_round_trip_preserves_non_diarized(tmp_path):
 
 import json  # noqa: E402
 
-from whispr.project import load_project_record  # noqa: E402
-from whispr.speaker_names import as_lead, is_lead  # noqa: E402
+from whispers.project import load_project_record  # noqa: E402
+from whispers.speaker_names import as_lead, is_lead  # noqa: E402
 
 
 def _older_project(tmp_path, names, version=2):
