@@ -371,6 +371,10 @@ speaker change is split at the boundary. A smoothing pass then absorbs stray
 sub-second fragments where a word has landed on a sliver of someone else's turn —
 but leaves a short reply alone when the diarizer itself heard that person over
 most of it, so a quick "Yes." is not handed back to whoever asked the question.
+Finally, a new speaker's first word or two that landed just before the change
+(the transcription's timing swallows the pause, the diarizer hears the new voice
+a moment late) goes with the rest of the sentence it begins — "…for me? **Who**
+else would you answer for?" — when it carries the previous sentence's speaker.
 
 ### Profiles that learn speaker voices
 

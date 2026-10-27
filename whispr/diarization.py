@@ -782,6 +782,91 @@ def _merge_short_runs(
     return _coalesce(runs)
 
 
+# A sentence ends at a word ending in one of these (after closing quotes and
+# brackets): the punctuation Whisper writes, including the CJK forms.
+_SENTENCE_END = (".", "?", "!", "\u2026", "\u3002", "\uff1f", "\uff01")
+
+# At most this many words, lasting at most this long, move to the rest of
+# their sentence: an edge, not a turn.
+SENTENCE_EDGE_WORDS = 2
+SENTENCE_EDGE_SECONDS = 1.2
+
+
+def _ends_sentence(word: Word) -> bool:
+    return word.word.strip().rstrip("\"')]}\u201d\u2019").endswith(_SENTENCE_END)
+
+
+def _snap_sentence_edges(runs: List[_Run]) -> List[_Run]:
+    """Give a sentence's stray first word or two to the rest of it.
+
+    At a change of speaker the new person's first word tends to land just
+    before the change: the transcription starts a word where the previous one
+    ended, swallowing the pause, and the diarizer notices the new voice a
+    fraction of a second late. "...for me? Who | else would you answer for?"
+    came out with "Who" on the first speaker's line. The words alone settle
+    it: "Who" begins a sentence whose every other word went to the second
+    speaker, and carries the first speaker - the speaker of the sentence
+    before. That is what a leak looks like, and only that is moved: at most
+    :data:`SENTENCE_EDGE_WORDS` words lasting at most
+    :data:`SENTENCE_EDGE_SECONDS`, at the start of a sentence, carrying the
+    previous sentence's speaker, when the rest of the sentence is longer and one
+    other speaker. A reply that is a sentence of its own - "Yes." - is never
+    touched.
+
+    Only the start of a sentence: that is the way the timing errs. Moving a
+    sentence's last word to the speaker of the next was tried as well; on the
+    real conversations it was measured on, every word it moved had been right
+    where it was - people do hand over mid-sentence.
+    """
+    words = [word for run in runs for word in run.words]
+    labels = [run.speaker for run in runs for _ in run.words]
+    sentences: List[List[int]] = []
+    current: List[int] = []
+    for i, word in enumerate(words):
+        current.append(i)
+        if _ends_sentence(word):
+            sentences.append(current)
+            current = []
+    if current:
+        sentences.append(current)
+    original = list(labels)
+
+    def runs_of(indices: List[int]) -> List[List[int]]:
+        grouped: List[List[int]] = []
+        for i in indices:
+            if grouped and original[grouped[-1][-1]] == original[i]:
+                grouped[-1].append(i)
+            else:
+                grouped.append([i])
+        return grouped
+
+    def movable(edge: List[int], rest: List[int], neighbour: Optional[str]) -> bool:
+        return (
+            neighbour is not None
+            and original[edge[0]] == neighbour
+            and original[rest[0]] is not None
+            and len(edge) <= SENTENCE_EDGE_WORDS
+            and len(rest) > len(edge)
+            and words[edge[-1]].end - words[edge[0]].start <= SENTENCE_EDGE_SECONDS
+        )
+
+    for n, sentence in enumerate(sentences):
+        grouped = runs_of(sentence)
+        if len(grouped) < 2:
+            continue
+        before = original[sentences[n - 1][-1]] if n > 0 else None
+        if movable(grouped[0], grouped[1], before):
+            for i in grouped[0]:
+                labels[i] = original[grouped[1][0]]
+    snapped: List[_Run] = []
+    for word, label in zip(words, labels):
+        if snapped and snapped[-1].speaker == label:
+            snapped[-1].words.append(word)
+        else:
+            snapped.append(_Run(speaker=label, words=[word]))
+    return snapped
+
+
 def assign_speakers(
     segments: List[Segment],
     speaker_segments: Sequence[SpeakerSegment],
@@ -793,7 +878,9 @@ def assign_speakers(
     same-speaker words are grouped into runs - so a single Whisper segment that
     spans a speaker change is split correctly. A smoothing pass
     (:func:`_merge_short_runs`) then absorbs stray fragments the diarizer did
-    not itself support. Each surviving run becomes one segment.
+    not itself support, and :func:`_snap_sentence_edges` returns a word that
+    leaked across a change of speaker to the sentence it begins. Each surviving
+    run becomes one segment.
     Segments without word timestamps fall back to whole-segment overlap.
     """
     out: List[Segment] = []
@@ -801,7 +888,7 @@ def assign_speakers(
     index = _TurnIndex(speaker_segments)
 
     def _emit_pending() -> None:
-        for run in _merge_short_runs(pending, index):
+        for run in _snap_sentence_edges(_merge_short_runs(pending, index)):
             text = "".join(w.word for w in run.words).strip()
             if not text:
                 continue

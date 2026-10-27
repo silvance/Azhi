@@ -439,3 +439,108 @@ def test_redoing_twice_with_the_same_count_gives_the_same_split():
     assert [(s.start, s.end, s.text, s.speaker) for s in first] == [
         (s.start, s.end, s.text, s.speaker) for s in second
     ]
+
+
+# -- a word that leaked across a change of speaker ----------------------------
+
+
+def _sentence_case(texts_and_times, turns):
+    words = [Word(start=a, end=b, word=f" {text}") for text, a, b in texts_and_times]
+    segment = Segment(
+        start=words[0].start,
+        end=words[-1].end,
+        text="".join(w.word for w in words),
+        words=words,
+    )
+    speakers = [SpeakerSegment(start=a, end=b, speaker=s) for a, b, s in turns]
+    return [(s.speaker, s.text) for s in assign_speakers([segment], speakers)]
+
+
+def test_first_word_of_a_reply_that_landed_before_the_change_goes_with_its_sentence():
+    # "Who" starts where "me?" ended (the pause swallowed) and the diarizer
+    # hears the new voice a little late, so "Who" sits in the first turn.
+    out = _sentence_case(
+        [
+            ("Best", 0.0, 0.3),
+            ("sandwich?", 0.3, 0.9),
+            ("You", 1.0, 1.2),
+            ("mean", 1.2, 1.4),
+            ("like,", 1.4, 1.7),
+            ("for", 1.7, 1.9),
+            ("me?", 1.9, 2.2),
+            ("Who", 2.2, 2.6),
+            ("else", 2.6, 2.9),
+            ("would", 2.9, 3.1),
+            ("you", 3.1, 3.2),
+            ("answer", 3.2, 3.5),
+            ("for?", 3.5, 3.8),
+        ],
+        [(0.0, 2.65, "SPEAKER_01"), (2.65, 4.0, "SPEAKER_00")],
+    )
+    assert out == [
+        ("SPEAKER_01", "Best sandwich? You mean like, for me?"),
+        ("SPEAKER_00", "Who else would you answer for?"),
+    ]
+
+
+def test_last_word_of_a_sentence_after_the_change_is_left_where_it_fell():
+    # Only the start of a sentence is moved: on real conversations moving the
+    # end did more harm than good, because people do hand over mid-sentence.
+    out = _sentence_case(
+        [
+            ("You", 0.0, 0.2),
+            ("mean", 0.2, 0.4),
+            ("for", 0.4, 0.6),
+            ("me?", 0.6, 0.9),
+            ("Who", 1.0, 1.2),
+            ("else?", 1.2, 1.5),
+        ],
+        [(0.0, 0.7, "SPEAKER_01"), (0.7, 1.6, "SPEAKER_00")],
+    )
+    assert out == [("SPEAKER_01", "You mean for"), ("SPEAKER_00", "me? Who else?")]
+
+
+def test_a_reply_that_is_its_own_sentence_is_left_alone():
+    out = _sentence_case(
+        [
+            ("Are", 0.0, 0.2),
+            ("you", 0.2, 0.4),
+            ("coming?", 0.4, 0.9),
+            ("Yes.", 1.0, 1.3),
+            ("I'll", 1.4, 1.6),
+            ("drive.", 1.6, 2.0),
+        ],
+        [(0.0, 0.95, "A"), (0.95, 1.35, "B"), (1.35, 2.1, "A")],
+    )
+    assert out == [("A", "Are you coming?"), ("B", "Yes."), ("A", "I'll drive.")]
+
+
+def test_a_change_of_more_than_two_words_inside_a_sentence_stands():
+    out = _sentence_case(
+        [
+            ("Well", 0.0, 0.3),
+            ("I", 0.3, 0.4),
+            ("think", 0.4, 0.7),
+            ("that", 0.7, 0.9),
+            ("we", 0.9, 1.0),
+            ("should", 1.0, 1.3),
+            ("go.", 1.3, 1.6),
+        ],
+        [(0.0, 0.75, "A"), (0.75, 1.7, "B")],
+    )
+    assert out == [("A", "Well I think"), ("B", "that we should go.")]
+
+
+def test_an_edge_that_does_not_match_the_neighbouring_speaker_stands():
+    # "Right" carries B, but the sentence before was A's: not a leak from it.
+    out = _sentence_case(
+        [
+            ("Sure.", 0.0, 0.4),
+            ("Right", 0.5, 0.8),
+            ("we", 0.9, 1.0),
+            ("go", 1.0, 1.2),
+            ("now.", 1.2, 1.5),
+        ],
+        [(0.0, 0.45, "A"), (0.45, 0.85, "B"), (0.85, 1.6, "C")],
+    )
+    assert out == [("A", "Sure."), ("B", "Right"), ("C", "we go now.")]
