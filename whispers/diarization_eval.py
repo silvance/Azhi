@@ -707,6 +707,15 @@ def write_csv(scores: Sequence[CaseScore], path: PathLike) -> Path:
             ]
         )
         for s in rows:
+            as_timed: List[object] = (
+                [
+                    s.whisper_timing.words_scored,
+                    s.whisper_timing.words_right,
+                    s.whisper_timing.short_turns_right,
+                ]
+                if s.whisper_timing is not None
+                else ["", "", ""]
+            )
             writer.writerow(
                 [
                     s.name,
@@ -727,15 +736,7 @@ def write_csv(scores: Sequence[CaseScore], path: PathLike) -> Path:
                     round(s.der, 4),
                     s.speakers_reference,
                     s.speakers_found,
-                    *(
-                        [
-                            s.whisper_timing.words_scored,
-                            s.whisper_timing.words_right,
-                            s.whisper_timing.short_turns_right,
-                        ]
-                        if s.whisper_timing is not None
-                        else ["", "", ""]
-                    ),
+                    *as_timed,
                 ]
             )
     return path
