@@ -5,8 +5,8 @@ press the button. Whatever these defaults are is, in practice, what the tool
 does - so they are pinned here rather than left to drift.
 """
 
-from whispr import diarization, resources
-from whispr.transcription import DEFAULT_MODEL, MODEL_PREFERENCE, MODEL_SIZES
+from whispers import diarization, resources
+from whispers.transcription import DEFAULT_MODEL, MODEL_PREFERENCE, MODEL_SIZES
 
 
 def test_the_default_model_is_the_thorough_one():

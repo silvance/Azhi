@@ -1,9 +1,9 @@
 import pytest
 
-from whispr import app, diagnostics, diarization
-from whispr.buildinfo import BuildInfo
-from whispr.diagnostics import Check, format_report, gather
-from whispr.hashing import sha256_file
+from whispers import app, diagnostics, diarization
+from whispers.buildinfo import BuildInfo
+from whispers.diagnostics import Check, format_report, gather
+from whispers.hashing import sha256_file
 
 
 def test_gather_returns_checks_covering_each_area():
@@ -238,7 +238,7 @@ def test_self_test_shows_the_thresholds_in_force(monkeypatch, tmp_path):
 
 
 # -- headless self-test -----------------------------------------------------
-# `whispr --self-test` is what the release build runs against the frozen
+# `Whispers --self-test` is what the release build runs against the frozen
 # executable to prove it starts. It must never need a display: a bundle that
 # only fails once a window opens is a bundle nobody checks.
 
@@ -282,7 +282,7 @@ def test_self_test_reports_a_reduced_build_rather_than_failing(monkeypatch):
 
 
 def _cache(tmp_path, monkeypatch, *, ref=True):
-    from whispr import hub_cache
+    from whispers import hub_cache
 
     hub = tmp_path / "hub"
     for repo in hub_cache.PYANNOTE_REPOS:

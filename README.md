@@ -1,177 +1,30 @@
-# Whisper
+# Whispers
 
-[[Blog]](https://openai.com/blog/whisper)
-[[Paper]](https://arxiv.org/abs/2212.04356)
-[[Model card]](https://github.com/silvance/whisper.py/blob/main/model-card.md)
-[[Colab example]](https://colab.research.google.com/github/silvance/whisper.py/blob/main/notebooks/LibriSpeech.ipynb)
+Whispers is an offline desktop application for transcribing recordings,
+working out who spoke when, and comparing a voice against reference profiles.
+It is built for investigative and intelligence triage on air-gapped Windows and
+Linux machines: nothing it does reaches the network, and a voice comparison is a
+lead for an analyst to review - never an identification.
 
-Whisper is a general-purpose speech recognition model. It is trained on a large dataset of diverse audio and is also a multitasking model that can perform multilingual speech recognition, speech translation, and language identification.
-
-> **About this fork.** This repository (`silvance-whisper`) is a maintained fork of
-> [openai/whisper](https://github.com/openai/whisper). The model architecture and weights are
-> unchanged from upstream; this fork focuses on packaging and developer-tooling improvements
-> (a single `ruff` lint/format pipeline, `mypy` type checking, a modernized CI matrix, and a
-> single source of truth for dependencies in `pyproject.toml`). All original credit belongs to
-> OpenAI; see [LICENSE](LICENSE).
->
-> **Two packages, mind the spelling.** `whisper/` is the upstream OpenAI library (the
-> transcription engine), kept intact. `whispr/` (no "e") is this fork's addition: a desktop
-> GUI for transcription + speaker diarization, built on faster-whisper and pyannote — it does
-> not modify or even import `whisper/`. See [Graphical interface](#graphical-interface-whispr).
-
-
-## Approach
-
-![Approach](https://raw.githubusercontent.com/silvance/whisper.py/main/approach.png)
-
-A Transformer sequence-to-sequence model is trained on various speech processing tasks, including multilingual speech recognition, speech translation, spoken language identification, and voice activity detection. These tasks are jointly represented as a sequence of tokens to be predicted by the decoder, allowing a single model to replace many stages of a traditional speech-processing pipeline. The multitask training format uses a set of special tokens that serve as task specifiers or classification targets.
-
-
-## Setup
-
-The original models were trained and tested with Python 3.9.9 and [PyTorch](https://pytorch.org/) 1.10.1; this fork supports Python 3.9-3.13 and recent PyTorch versions. The codebase also depends on a few Python packages, most notably [OpenAI's tiktoken](https://github.com/openai/tiktoken) for their fast tokenizer implementation. The following command will pull and install the latest commit from this repository, along with its Python dependencies:
-
-    pip install git+https://github.com/silvance/whisper.py.git
-
-To update the package to the latest version of this repository, please run:
-
-    pip install --upgrade --no-deps --force-reinstall git+https://github.com/silvance/whisper.py.git
-
-This fork is published as `silvance-whisper`; the importable package name remains `whisper`, so existing code (`import whisper`) keeps working unchanged.
-
-It also requires the command-line tool [`ffmpeg`](https://ffmpeg.org/) to be installed on your system, which is available from most package managers:
-
-```bash
-# on Ubuntu or Debian
-sudo apt update && sudo apt install ffmpeg
-
-# on Arch Linux
-sudo pacman -S ffmpeg
-
-# on MacOS using Homebrew (https://brew.sh/)
-brew install ffmpeg
-
-# on Windows using Chocolatey (https://chocolatey.org/)
-choco install ffmpeg
-
-# on Windows using Scoop (https://scoop.sh/)
-scoop install ffmpeg
-```
-
-You may need [`rust`](http://rust-lang.org) installed as well, in case [tiktoken](https://github.com/openai/tiktoken) does not provide a pre-built wheel for your platform. If you see installation errors during the `pip install` command above, please follow the [Getting started page](https://www.rust-lang.org/learn/get-started) to install Rust development environment. Additionally, you may need to configure the `PATH` environment variable, e.g. `export PATH="$HOME/.cargo/bin:$PATH"`. If the installation fails with `No module named 'setuptools_rust'`, you need to install `setuptools_rust`, e.g. by running:
-
-```bash
-pip install setuptools-rust
-```
-
-
-## Available models and languages
-
-There are six model sizes, four with English-only versions, offering speed and accuracy tradeoffs.
-Below are the names of the available models and their approximate memory requirements and inference speed relative to the large model.
-The relative speeds below are measured by transcribing English speech on a A100, and the real-world speed may vary significantly depending on many factors including the language, the speaking speed, and the available hardware.
-
-|  Size  | Parameters | English-only model | Multilingual model | Required VRAM | Relative speed |
-|:------:|:----------:|:------------------:|:------------------:|:-------------:|:--------------:|
-|  tiny  |    39 M    |     `tiny.en`      |       `tiny`       |     ~1 GB     |      ~10x      |
-|  base  |    74 M    |     `base.en`      |       `base`       |     ~1 GB     |      ~7x       |
-| small  |   244 M    |     `small.en`     |      `small`       |     ~2 GB     |      ~4x       |
-| medium |   769 M    |    `medium.en`     |      `medium`      |     ~5 GB     |      ~2x       |
-| large  |   1550 M   |        N/A         |      `large`       |    ~10 GB     |       1x       |
-| turbo  |   809 M    |        N/A         |      `turbo`       |     ~6 GB     |      ~8x       |
-
-The `.en` models for English-only applications tend to perform better, especially for the `tiny.en` and `base.en` models. We observed that the difference becomes less significant for the `small.en` and `medium.en` models.
-Additionally, the `turbo` model is an optimized version of `large-v3` that offers faster transcription speed with a minimal degradation in accuracy.
-
-Whisper's performance varies widely depending on the language. The figure below shows a performance breakdown of `large-v3` and `large-v2` models by language, using WERs (word error rates) or CER (character error rates, shown in *Italic*) evaluated on the Common Voice 15 and Fleurs datasets. Additional WER/CER metrics corresponding to the other models and datasets can be found in Appendix D.1, D.2, and D.4 of [the paper](https://arxiv.org/abs/2212.04356), as well as the BLEU (Bilingual Evaluation Understudy) scores for translation in Appendix D.3.
-
-![WER breakdown by language](https://raw.githubusercontent.com/silvance/whisper.py/main/language-breakdown.svg)
-
-## Command-line usage
-
-The following command will transcribe speech in audio files, using the `turbo` model:
-
-```bash
-whisper audio.flac audio.mp3 audio.wav --model turbo
-```
-
-The default setting (which selects the `turbo` model) works well for transcribing English. However, **the `turbo` model is not trained for translation tasks**. If you need to **translate non-English speech into English**, use one of the **multilingual models** (`tiny`, `base`, `small`, `medium`, `large`) instead of `turbo`. 
-
-For example, to transcribe an audio file containing non-English speech, you can specify the language:
-
-```bash
-whisper japanese.wav --language Japanese
-```
-
-To **translate** speech into English, use:
-
-```bash
-whisper japanese.wav --model medium --language Japanese --task translate
-```
-
-> **Note:** The `turbo` model will return the original language even if `--task translate` is specified. Use `medium` or `large` for the best translation results.
-
-Run the following to view all available options:
-
-```bash
-whisper --help
-```
-
-See [tokenizer.py](https://github.com/silvance/whisper.py/blob/main/whisper/tokenizer.py) for the list of all available languages.
-
-
-## Python usage
-
-Transcription can also be performed within Python: 
-
-```python
-import whisper
-
-model = whisper.load_model("turbo")
-result = model.transcribe("audio.mp3")
-print(result["text"])
-```
-
-Internally, the `transcribe()` method reads the entire file and processes the audio with a sliding 30-second window, performing autoregressive sequence-to-sequence predictions on each window.
-
-Below is an example usage of `whisper.detect_language()` and `whisper.decode()` which provide lower-level access to the model.
-
-```python
-import whisper
-
-model = whisper.load_model("turbo")
-
-# load audio and pad/trim it to fit 30 seconds
-audio = whisper.load_audio("audio.mp3")
-audio = whisper.pad_or_trim(audio)
-
-# make log-Mel spectrogram and move to the same device as the model
-mel = whisper.log_mel_spectrogram(audio, n_mels=model.dims.n_mels).to(model.device)
-
-# detect the spoken language
-_, probs = model.detect_language(mel)
-print(f"Detected language: {max(probs, key=probs.get)}")
-
-# decode the audio
-options = whisper.DecodingOptions()
-result = whisper.decode(model, mel, options)
-
-# print the recognized text
-print(result.text)
-```
-
-## Graphical interface (Whispers)
-
-> **Using the tool rather than building it?** [`docs/user-guide.md`](docs/user-guide.md)
+> **Using it rather than building it?** [`docs/user-guide.md`](docs/user-guide.md)
 > is the guide for operators: what each page is for, in the order you would work
-> in, and what the results do and do not mean. This section is the technical
+> in, and what the results do and do not mean. This README is the technical
 > account of the same thing.
 
-This fork ships **Whispers**, a small desktop GUI for transcribing audio/video
-files (and translating text) without the command line. It is built for CPU-only hosts: instead of the
-PyTorch model above it uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-(a CTranslate2 backend) with int8 quantization, which is considerably faster and
-lighter on CPU.
+**What it runs on.** Transcription uses OpenAI's Whisper speech-recognition
+models through [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+(CTranslate2). Speaker separation uses pyannote.audio, sherpa-onnx or,
+optionally, NVIDIA's Nemotron 3 Diarization; translation uses Argos Translate,
+and OCR Tesseract. Reports name the exact models a result came from. Licences:
+[`LICENSE`](LICENSE) for Whispers, [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+for everything it ships.
+
+## The application
+
+Whispers transcribes audio and video files (and translates text) without the
+command line. It is built for CPU-only hosts: transcription runs through
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) with
+int8 quantization, which is fast and light on a CPU.
 
 **Processing hardware** (under *Options*) is *Auto* by default: an NVIDIA GPU is
 used when CTranslate2 can see one, and the CPU otherwise. CPU remains fully
@@ -185,8 +38,8 @@ install, no download, no network. **System status** reports what this machine ha
 Install the optional GUI extras and launch it:
 
 ```bash
-pip install "silvance-whisper[gui]"
-whispr            # or: python -m whispr
+pip install ".[gui]"
+whispers            # or: python -m whispers
 ```
 
 In the window, pick a recording, choose a model, pick the **task** — *transcribe*
@@ -248,7 +101,7 @@ the bundled ffmpeg and played with the OS's built-in audio, so it works offline.
 
 **Save & reopen a project.** Transcription and the manual speaker fixes are real
 work, so **Save project…** writes the result, your speaker names and corrections,
-and the source path to a `.whispr.json` file; **Open project…** loads it back so
+and the source path to a `.whispers.json` file; **Open project…** loads it back so
 you can keep editing (and re-listening) in a later session.
 
 **Batch.** Drop a whole folder onto the window — or use **Add a folder…** — and
@@ -334,10 +187,10 @@ swap.
 
 - **pyannote.audio** (`speaker-diarization-3.1`, PyTorch) — much better on hard /
   low-quality / overlapping audio. Loads from a bundled offline model cache at
-  `whispr_assets/pyannote` (no network or token needed at runtime; see below).
+  `whispers_assets/pyannote` (no network or token needed at runtime; see below).
 - **sherpa-onnx** (ONNX / CPU, no PyTorch) — lighter and faster, with no PyTorch
   to load; a good choice for clean audio. Needs a segmentation model and a speaker
-  embedding model at `whispr_assets/diarization/segmentation.onnx` and
+  embedding model at `whispers_assets/diarization/segmentation.onnx` and
   `.../embedding.onnx` (embedding is NeMo TitaNet-large, English).
 
 - **Nemotron** (trial; NVIDIA Nemotron 3 Diarization through the
@@ -464,7 +317,7 @@ never the duration of a selection that was only partly usable.
 
 **Sharing and comparing speakers.** A profile can be moved between machines with
 **Export…** / **Import…** (the whole profile — settings and learned voices — as one
-`*.whispr-profile.json`; import warns before overwriting a same-named profile).
+`*.whispers-profile.json`; import warns before overwriting a same-named profile).
 
 Comparing one voice with another is done on the **Compare Speakers** page, against
 a subject built on **Speaker Profiles**, and nowhere else. It reports a
@@ -502,10 +355,10 @@ profile cannot prove which model produced it.
 
 The unit tests exercise software behaviour on synthetic vectors. They say nothing
 about whether the system can tell two people apart — that needs real recordings of
-known speakers. `whispr.validation` is the offline harness for measuring it:
+known speakers. `whispers.validation` is the offline harness for measuring it:
 
 ```bash
-python -m whispr.validation /path/to/corpus --out validation-results
+python -m whispers.validation /path/to/corpus --out validation-results
 ```
 
 The corpus is either a directory of per-speaker folders
@@ -521,7 +374,7 @@ comparisons, and writes:
 - `roc.csv` — ROC data (false-accept vs genuine-accept)
 - `validation.png` — plots, if matplotlib is installed (never a bundle dependency)
 
-**The operational thresholds in `whispr/thresholds.py` are conservative defaults,
+**The operational thresholds in `whispers/thresholds.py` are conservative defaults,
 not calibrated values.** They should be replaced with figures measured on
 recordings representative of the intended deployment — language, channel,
 microphone, noise and speech duration all move these numbers substantially. Until
@@ -531,12 +384,12 @@ that has been done, treat similarity results as directional only.
 
 Speaker labels are weakest in quick exchanges — one-word replies, interruptions,
 overlapping speech — and how weak depends on the deployment's own audio.
-`whispr.diarization_eval` scores the transcript against recordings an analyst
+`whispers.diarization_eval` scores the transcript against recordings an analyst
 has labelled by ear (Audacity label exports or RTTM), offline:
 
 ```bash
-whispr --score-test-set /path/to/testset --out results     # shipped copy
-python -m whispr.diarization_eval /path/to/testset --out results
+Whispers --score-test-set /path/to/testset --out results     # shipped copy
+python -m whispers.diarization_eval /path/to/testset --out results
 ```
 
 It reports, per recording and pooled: the share of words shown against the
@@ -580,7 +433,7 @@ a mic close to the speaker beats the camera's on-board mic.
 The transcription backend is also usable directly from Python:
 
 ```python
-from whispr import transcribe_audio
+from whispers import transcribe_audio
 
 result = transcribe_audio(
     "recording.mp3", model_size="base", task="transcribe", language=None
@@ -620,8 +473,8 @@ fetched at runtime.
 
 **Build the bundles** with the `release-bundles` GitHub Actions workflow
 (Actions → *release-bundles* → *Run workflow*, or push a `bundle-v*` tag). It
-builds on hosted Windows and Linux runners and uploads `whispr-windows-x86_64` and
-`whispr-linux-x86_64` artifacts. The build runners use the internet; the target
+builds on hosted Windows and Linux runners and uploads `whispers-windows-x86_64` and
+`whispers-linux-x86_64` artifacts. The build runners use the internet; the target
 machines never do. You choose which models to bundle via the **`models`** input —
 a comma-separated list such as `base.en,small,medium.en,large-v3`. **Only the
 models you list here are in the build**; the app's Model dropdown still shows every
@@ -662,13 +515,13 @@ on and its SHA-256; speaker profiles and comparisons are only valid between
 builds that share that exact model.
 
 **Getting a large bundle (bypassing the 2 GB release cap).** Every run already
-uploads the full per-OS bundle as an **Actions artifact** (`dist/whispr`), and
+uploads the full per-OS bundle as an **Actions artifact** (`dist/Whispers`), and
 artifacts are **not** subject to the 2 GB per-file limit that Release assets are —
 so to ship `medium.en`/`large-v3` and the full translation/OCR stacks, just *Run
 workflow* with your chosen `models` and **leave `release_tag` empty**. Download the
-`whispr-linux-x86_64` / `whispr-windows-x86_64` artifact from the run's **Summary**
+`whispers-linux-x86_64` / `whispers-windows-x86_64` artifact from the run's **Summary**
 page, and copy it to the air-gapped machine. The artifact downloads as a single
-`.zip`; unzip it once to get the runnable `whispr` bundle folder. Two caveats vs. a
+`.zip`; unzip it once to get the runnable `Whispers` bundle folder. Two caveats vs. a
 Release: only someone signed in with repo access can download an artifact, and it's
 retained for 14 days by default (raise `retention-days` in the workflow if you need
 longer). The **`translate_langs`** input controls which offline text-translation
@@ -683,9 +536,9 @@ skip OCR), so OCR also runs air-gapped.
 page (a permanent, public download — unlike the temporary, login-only Actions
 *artifacts*), give the **`release_tag`** input a version (e.g. `v1.0.0`) when you
 *Run workflow*, or push a `bundle-v*` tag. The per-OS bundle is archived
-(`whispr-windows-x86_64.zip`, `whispr-linux-x86_64.tar.gz`) and attached to a
+(`whispers-windows-x86_64.zip`, `whispers-linux-x86_64.tar.gz`) and attached to a
 GitHub Release at that tag; visitors then download it, unzip, and run
-`whispr` / `whispr.exe` — no install or network. **Mind the size:** a release
+`Whispers` / `Whispers.exe` — no install or network. **Mind the size:** a release
 asset is capped at ~2 GB, so a public release should be a lean build (e.g.
 `models=base.en`, `diarizer=sherpa`, empty `translate_langs`/`ocr_langs`) — the
 full multi-GB bundle won't upload as a single asset. (Re-running the same tag
@@ -697,7 +550,7 @@ setting **`models=base.en`**, **`translate_langs=`** and **`ocr_langs=`** (both
 empty): this drops the multi-GB models and the ~1 GB Argos/translation and OCR
 stacks while keeping full transcription and diarization. The GUI detects that no translation engine is
 present and **hides the Translate tab**, so the app opens as a clean,
-single-purpose transcriber. (Even on a full bundle, set the `WHISPR_MODE=transcribe`
+single-purpose transcriber. (Even on a full bundle, set the `WHISPERS_MODE=transcribe`
 environment variable to force the transcriber-only view — e.g. on a locked-down
 shortcut.)
 
@@ -711,7 +564,7 @@ the processing hardware. Run it before copying a bundle to an air-gapped machine
 
 **Auditable, and pinned.** Two files do two different jobs.
 
-`packaging/build_manifest.py` writes `whispr_assets/build_manifest.json` with the
+`packaging/build_manifest.py` writes `whispers_assets/build_manifest.json` with the
 build id, git commit, timestamp, platform, resolved dependency versions and a
 SHA-256 for every bundled model, so a result can always be traced back to the
 exact bundle that produced it — and two bundles can be compared file by file.
@@ -753,7 +606,7 @@ commit the lock it uploads as `<artifact>-assets-lock`. An update nobody chose i
 what this prevents; an update somebody chose is one commit.
 
 Freezing the bundle you tested and recording its SHA-256 is still worth doing —
-`whispr --verify` checks a copy against `bundle-inventory.json` — but it is no
+`Whispers --verify` checks a copy against `bundle-inventory.json` — but it is no
 longer the only defence against a rebuild drifting.
 
 Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
@@ -778,33 +631,31 @@ To build locally instead on a connected machine of each OS:
 
 ```bash
 # sherpa-onnx diarizer (smaller, no token)
-pip install "silvance-whisper[gui,bundle]"
+pip install "whispers[gui,bundle]"
 python packaging/fetch_assets.py ffmpeg
 python packaging/fetch_assets.py models small,medium,large-v3
 python packaging/fetch_assets.py diarization
-pyinstaller --noconfirm packaging/whispr.spec      # output in dist/whispr/
+pyinstaller --noconfirm packaging/whispers.spec      # output in dist/Whispers/
 
 # pyannote diarizer (best quality; adds CPU PyTorch, needs a token)
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-pip install "silvance-whisper[gui,bundle,pyannote]"
+pip install "whispers[gui,bundle,pyannote]"
 python packaging/fetch_assets.py ffmpeg
 python packaging/fetch_assets.py models small,medium,large-v3
 HF_TOKEN=hf_... python packaging/fetch_assets.py pyannote
-pyinstaller --noconfirm packaging/whispr.spec      # output in dist/whispr/
+pyinstaller --noconfirm packaging/whispers.spec      # output in dist/Whispers/
 ```
 
 **Deploy:** download/copy the bundle folder onto a USB drive, copy it to the
-air-gapped PC, and run the `whispr` executable inside (`whispr.exe` on Windows; on
-Linux you may need `chmod +x whispr`). The bundled models appear at the top of the
+air-gapped PC, and run the `Whispers` executable inside (`Whispers.exe` on Windows; on
+Linux you may need `chmod +x Whispers`). The bundled models appear at the top of the
 **Model** dropdown and are used without any download; the bundled `ffmpeg` is found
-automatically. (Set the `WHISPR_ASSETS` environment variable to point at a
-`whispr_assets/` directory if you keep models/ffmpeg outside the bundle.)
+automatically. (Set the `WHISPERS_ASSETS` environment variable to point at a
+`whispers_assets/` directory if you keep models/ffmpeg outside the bundle.)
 
-## More examples
+## Licence
 
-Please use the [🙌 Show and tell](https://github.com/openai/whisper/discussions/categories/show-and-tell) category in Discussions for sharing more example usages of Whisper and third-party extensions such as web demos, integrations with other tools, ports for different platforms, etc.
-
-
-## License
-
-Whisper's code and model weights are released under the MIT License. See [LICENSE](https://github.com/silvance/whisper.py/blob/main/LICENSE) for further details.
+Whispers is released under the MIT licence - see [`LICENSE`](LICENSE). The
+models and libraries it runs on keep their own licences; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and a bundle's `licenses/`
+folder for every Python package it contains.

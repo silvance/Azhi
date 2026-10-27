@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from whispr import diarization, hub_cache, resources, thresholds
-from whispr.provenance import AnalysisProvenance, DiarizationProvenance
+from whispers import diarization, hub_cache, resources, thresholds
+from whispers.provenance import AnalysisProvenance, DiarizationProvenance
 
 
 @pytest.fixture
@@ -62,7 +62,7 @@ def test_the_record_never_says_auto(monkeypatch, sherpa_files):
 
 def test_a_sherpa_run_names_its_models_by_what_they_are(monkeypatch, sherpa_files):
     """The readable name the build recorded, and the hash of the file used."""
-    from whispr.hashing import sha256_file
+    from whispers.hashing import sha256_file
 
     monkeypatch.setattr(diarization, "_pyannote_usable_offline", lambda: False)
     seg, emb = sherpa_files

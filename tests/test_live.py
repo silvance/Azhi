@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from whispr import live
-from whispr.live import LiveTranscriber, LiveTranscriptionError
+from whispers import live
+from whispers.live import LiveTranscriber, LiveTranscriptionError
 
 
 class _FakeResult:

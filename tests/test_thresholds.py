@@ -2,8 +2,8 @@
 
 import pytest
 
-from whispr import thresholds
-from whispr.thresholds import DEFAULTS, SETTINGS_KEY, Thresholds, from_settings
+from whispers import thresholds
+from whispers.thresholds import DEFAULTS, SETTINGS_KEY, Thresholds, from_settings
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +53,7 @@ def test_unknown_keys_are_ignored():
 
 def _configure(monkeypatch, payload):
     monkeypatch.setattr(thresholds, "_active", None)
-    import whispr.settings as settings
+    import whispers.settings as settings
 
     monkeypatch.setattr(settings, "load_settings", lambda: payload)
 
@@ -61,7 +61,7 @@ def _configure(monkeypatch, payload):
 def test_active_reads_the_settings_file_and_then_caches_it(monkeypatch):
     calls = []
 
-    import whispr.settings as settings
+    import whispers.settings as settings
 
     def _load():
         calls.append(1)

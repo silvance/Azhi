@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from whispr import playback
-from whispr.playback import (
+from whispers import playback
+from whispers.playback import (
     PlaybackError,
     SegmentPlayer,
     _player_args,

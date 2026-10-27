@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from whispr import comparison_log
-from whispr.comparison_log import (
+from whispers import comparison_log
+from whispers.comparison_log import (
     KIND_GALLERY,
     KIND_PROFILE,
     ComparisonRecord,
@@ -17,9 +17,9 @@ from whispr.comparison_log import (
     save_comparison,
     subjects_in,
 )
-from whispr.matching import ComparisonResult, GalleryMatch, GalleryResult
-from whispr.speaker_profiles import ProfileError
-from whispr.thresholds import NO_LEAD_LABEL, NOT_ASSESSED_LABEL, OUTCOME_UNKNOWN_LABEL
+from whispers.matching import ComparisonResult, GalleryMatch, GalleryResult
+from whispers.speaker_profiles import ProfileError
+from whispers.thresholds import NO_LEAD_LABEL, NOT_ASSESSED_LABEL, OUTCOME_UNKNOWN_LABEL
 
 
 @pytest.fixture(autouse=True)
@@ -134,7 +134,7 @@ def test_record_pins_what_the_reference_profile_was_at_the_time():
     contradiction rather than as a reference profile that has since gained
     samples.
     """
-    from whispr.speaker_profiles import EnrollmentSample, SpeakerProfile
+    from whispers.speaker_profiles import EnrollmentSample, SpeakerProfile
 
     profile = SpeakerProfile(display_name="A. Subject")
     for _ in range(3):
@@ -172,7 +172,7 @@ def test_record_names_the_build_that_decided_it():
 
 
 def test_gallery_record_keeps_the_margin_over_the_runner_up():
-    from whispr.voiceprints import MatchDecision
+    from whispers.voiceprints import MatchDecision
 
     result = GalleryResult(
         matches=[
@@ -312,13 +312,13 @@ def test_round_trip_through_dict_keeps_the_ranking():
 
 # -- Which build produced this score ---------------------------------------
 #
-# The history recorded app_version, which is inherited from upstream Whisper
-# and reads the same on every Whispers release. So every entry claimed the
-# same application version and none of them named the build that actually ran.
+# The history recorded only app_version, which before the rename was the forked
+# library's version and read the same on every release. So every entry claimed
+# the same application version and none of them named the build that ran.
 
 
 def test_a_new_record_carries_the_build_that_made_it(monkeypatch):
-    from whispr import buildinfo, comparison_log
+    from whispers import buildinfo, comparison_log
 
     monkeypatch.setattr(
         comparison_log,
@@ -334,7 +334,7 @@ def test_a_new_record_carries_the_build_that_made_it(monkeypatch):
 
 
 def test_the_build_survives_a_round_trip_through_json():
-    from whispr.comparison_log import ComparisonRecord
+    from whispers.comparison_log import ComparisonRecord
 
     record = ComparisonRecord(build_id="4242-1", git_commit="abc1234")
     back = ComparisonRecord.from_dict(record.to_dict())
@@ -343,7 +343,7 @@ def test_the_build_survives_a_round_trip_through_json():
 
 def test_a_record_written_before_this_change_still_loads():
     """Schema 1 entries never recorded a build; empty is the truthful answer."""
-    from whispr.comparison_log import ComparisonRecord
+    from whispers.comparison_log import ComparisonRecord
 
     old = ComparisonRecord(app_version="1.2.3").to_dict()
     del old["build_id"], old["git_commit"]
@@ -355,7 +355,7 @@ def test_a_record_written_before_this_change_still_loads():
 
 def test_an_unidentified_build_records_nothing_rather_than_unknown(monkeypatch):
     """ "unknown" in a provenance field reads as a value; blank reads as absent."""
-    from whispr import comparison_log
+    from whispers import comparison_log
 
     app, build_id, commit = comparison_log._identity()
     assert build_id in ("", None) or build_id != "unknown"
@@ -367,7 +367,7 @@ def test_the_exported_csv_names_the_build():
     import tempfile
     from pathlib import Path
 
-    from whispr.comparison_log import ComparisonRecord, export_csv
+    from whispers.comparison_log import ComparisonRecord, export_csv
 
     with tempfile.TemporaryDirectory() as tmp:
         out = export_csv(
@@ -387,7 +387,7 @@ def test_the_exported_csv_names_the_build():
 
 
 def _search(*, accepted, inadequate="", top=0.71):
-    from whispr.voiceprints import MatchDecision
+    from whispers.voiceprints import MatchDecision
 
     return GalleryResult(
         matches=[
@@ -464,7 +464,7 @@ def test_the_csv_carries_the_decision(tmp_path):
 
 
 def test_no_gallery_wording_says_match():
-    from whispr.thresholds import NO_LEAD_EXPLAINED
+    from whispers.thresholds import NO_LEAD_EXPLAINED
 
     lines = _search(accepted=False).summary_lines()
     assert NO_LEAD_EXPLAINED in lines
@@ -482,3 +482,16 @@ def test_the_three_ways_a_search_can_have_no_lead_are_filed_apart():
     labels = {NO_LEAD_LABEL, NOT_ASSESSED_LABEL, OUTCOME_UNKNOWN_LABEL}
     assert len(labels) == 3
     assert "All subjects" not in labels
+
+
+def test_records_saved_before_the_rename_are_still_listed(tmp_path):
+    record = comparison_log.record_from_comparison(_result())
+    path = comparison_log.save_comparison(record)
+    old = path.with_name(
+        path.name.replace(".whispers-comparison.json", ".whispr-comparison.json")
+    )
+    path.rename(old)
+    listed = comparison_log.list_comparisons()
+    assert [r.record_id for r in listed] == [record.record_id]
+    assert comparison_log.delete_comparison(record)
+    assert comparison_log.list_comparisons() == []

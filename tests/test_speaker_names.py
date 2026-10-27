@@ -7,7 +7,7 @@ their work when it had in fact guessed - and in this application the guess is
 a person's name on somebody else's words.
 """
 
-from whispr.speaker_names import as_lead, cluster_index, preset_names
+from whispers.speaker_names import as_lead, cluster_index, preset_names
 
 
 def test_typed_names_are_matched_in_label_order_on_a_first_run():

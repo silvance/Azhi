@@ -1,0 +1,3497 @@
+"""The Transcribe tab: settings, the transcription run, and the transcript pane.
+
+Wraps :mod:`whispers.transcription` (faster-whisper) and
+:mod:`whispers.diarization`. The interactive transcript (speaker/word corrections)
+is delegated to :class:`whispers.gui.transcript_view.TranscriptView`; this module
+owns the settings UI and drives the background run.
+"""
+
+from __future__ import annotations
+
+import copy
+import os
+import shutil
+import tempfile
+import threading
+import tkinter as tk
+import traceback
+from pathlib import Path
+from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter.scrolledtext import ScrolledText
+from typing import Callable, Dict, List, Optional, Set, Tuple
+
+from .. import enhance, folder_batch, listening, output_names, speaker_count
+from ..acceleration import (
+    Device,
+    build_supports_cuda,
+    cuda_available,
+    default_mode,
+    describe_hardware,
+    fallback_to_cpu,
+    offered_modes,
+)
+from ..acceleration import resolve as resolve_device
+from ..diarization import assign_speakers, chosen_backend, diarize
+from ..diarization import is_available as diarization_available
+from ..enrollment import enroll_from_media, enroll_from_wav, spans_by_speaker_name
+from ..export import transcript_to_docx
+from ..playback import PlaybackError, SegmentPlayer, playback_available
+from ..profiles import (
+    OLD_PROFILE_SUFFIX,
+    PROFILE_SUFFIX,
+    Profile,
+    ProfileSaveError,
+    add_learned_voice,
+    delete_profile,
+    existing_profile_name,
+    export_profile,
+    list_profiles,
+    load_profile,
+    read_profile_file,
+    save_profile,
+    store_profile_settings,
+)
+from ..project import (
+    OLD_PROJECT_SUFFIX,
+    PROJECT_SUFFIX,
+    load_project_record,
+    save_project,
+)
+from ..provenance import (
+    AnalysisProvenance,
+    DiarizationProvenance,
+    SourceRecord,
+    TranscriptionProvenance,
+    transcription_model_sha256,
+)
+from ..reports import write_analysis_report
+from ..resources import bundled_embedding_model, bundled_models, is_bundle
+from ..run_summary import (
+    FailedRun,
+    SkippedRun,
+    completion,
+    much_was_skipped,
+    per_file_note,
+)
+from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
+from ..speaker_count import UNSET as SPEAKERS_UNSET
+from ..speaker_names import LEAD_LEGEND, any_leads, is_lead, preset_names
+from ..speaker_profiles import (
+    SAMPLE_LEARNED,
+    ProfileError,
+    add_samples,
+    find_speaker_profile_by_name,
+)
+from ..thresholds import active as active_thresholds
+from ..transcription import (
+    AUDIO_EXTENSIONS,
+    DEFAULT_MODEL,
+    MODEL_PREFERENCE,
+    MODEL_SIZES,
+    UNTRANSLATED_SHARE,
+    CancelledError,
+    ModelUnavailable,
+    Segment,
+    TranscriptionResult,
+    convert_to_wav,
+    is_video,
+    resolve_model_choice,
+    transcribe_audio,
+    translation_refusal,
+    untranslated_share,
+    usable_model_folder,
+)
+from ..voiceprints import SpeakerEmbedder, Voiceprint, enroll_spans, recognize
+from .dialogs import active_window
+from .errors import friendly_error
+from .popout import PanelWindow
+from .redo_speakers import ask_redo_speakers
+from .save_speaker import SaveSpeakerChoice, ask_save_speaker
+from .theme import (
+    SPACE_LG,
+    SPACE_MD,
+    SPACE_SM,
+    SPACE_XL,
+    SPACE_XS,
+    Style,
+    theme,
+)
+from .transcript_view import TranscriptView
+from .widgets import (
+    Card,
+    Disclosure,
+    FileDropZone,
+    PageHeader,
+    StatusBanner,
+    append_line,
+    bind_wheel,
+    danger_button,
+    primary_button,
+    register_drop,
+    scroll_into_view,
+    scrollable_body,
+    secondary_button,
+    style_text_widget,
+    subtle_button,
+)
+
+# A handful of common languages for the dropdown; "Auto" lets Whisper detect.
+COMMON_LANGUAGES = [
+    "Auto",
+    "en",
+    "es",
+    "fr",
+    "de",
+    "it",
+    "pt",
+    "nl",
+    "ru",
+    "ar",
+    "zh",
+    "ja",
+    "ko",
+    "hi",
+]
+
+# Diarization engine choices: dropdown label -> diarize() backend. "Auto" uses
+# pyannote when it's available, else sherpa. pyannote is best on hard/overlapping
+# audio; sherpa is lighter and faster and fine for clean audio.
+# Nemotron is offered only by a build that includes it, and Auto never picks
+# it: it has not been measured on this deployment's recordings yet.
+ENGINE_CHOICES = {
+    "Auto (pyannote if available)": "auto",
+    "pyannote - most accurate": "pyannote",
+    "sherpa - faster, for clean audio": "sherpa",
+    "Nemotron - trial, counts speakers": "nemotron",
+}
+ENGINE_LABELS = list(ENGINE_CHOICES)
+
+
+def engine_labels() -> List[str]:
+    """The Method choices this build can offer."""
+    from ..diarization import available_backends
+
+    ready = available_backends()
+    return [
+        label
+        for label, engine in ENGINE_CHOICES.items()
+        if engine != "nemotron" or "nemotron" in ready
+    ]
+
+
+# What each model size means to someone choosing one. The size stays visible -
+# an operator who knows the names still needs to see them, and a report has to
+# name the model that ran - but "small.en" is not a description of anything.
+# Deliberately relative words: none of these promises an accuracy figure.
+MODEL_DESCRIPTIONS = {
+    "tiny": "Fastest",
+    "tiny.en": "Fastest",
+    "base": "Fast",
+    "base.en": "Fast",
+    "small": "Balanced",
+    "small.en": "Balanced",
+    "medium": "More thorough",
+    "medium.en": "More thorough",
+    "large": "Most thorough, slowest",
+    "large-v3": "Most thorough, slowest",
+    "turbo": "Thorough and quick",
+}
+
+
+def _model_label(model: str) -> str:
+    """``small.en`` -> ``Balanced — small.en``; a folder path shows as itself."""
+    description = MODEL_DESCRIPTIONS.get(model)
+    return f"{description} — {model}" if description else model
+
+
+# The hardware dropdown shows friendly labels; the run needs the mode behind one.
+# Built from what this build actually offers, not from every mode that exists:
+# a bundle has the CUDA libraries stripped out of it, so a GPU choice there is a
+# control that does nothing.
+_DEVICE_MODES = {label: mode for mode, label in offered_modes()}
+
+
+def _device_label(mode: str) -> str:
+    for candidate, label in offered_modes():
+        if candidate == mode:
+            return label
+    return offered_modes()[0][1]
+
+
+def _derived_voice_refusal(source: "Optional[Path]") -> Optional[str]:
+    """Why a voice must not be measured from ``source``, or None if it may.
+
+    A transcript can be made from a cleaned or listening copy on purpose -
+    they are for reading and listening - but nothing measured from one can go
+    into a voiceprint or a subject's reference audio. Speaker Profiles already
+    refused such a file; the Transcribe page's own routes to enrolment did not.
+    """
+    if source is None:
+        return None
+    kind = listening.derived_kind(source)
+    if kind is None:
+        return None
+    return (
+        f"This transcript was made from a {kind}, not the recording. Voices are "
+        "never measured from processed audio, because processing changes the "
+        "detail a voiceprint measures. Transcribe the original recording to "
+        "save or learn a voice."
+    )
+
+
+class _SkipWrite(Exception):
+    """The output folder is already known to be gone; do not try to write."""
+
+
+class TranscribeTab:
+    """Builds and drives the Transcribe tab inside ``parent``."""
+
+    def __init__(
+        self,
+        parent: ttk.Frame,
+        root: tk.Misc,
+        *,
+        dnd_ok: bool,
+    ) -> None:
+        self.parent = parent
+        self.root = root
+        # This page's own: one signal shared by every page meant Cancel here
+        # stopped a Live session, and starting a translation cleared a
+        # transcription's pending cancel.
+        self._cancel_event = threading.Event()
+        self._dnd_ok = dnd_ok
+        # True from the moment a run or redo is asked for until it has ended,
+        # set and cleared on the UI thread. The buttons are switched off from
+        # the worker via after(), which left a window in which a second click
+        # started a second run, and nothing else checked at all.
+        self._busy = False
+
+        # Bundled (offline) models take priority so the app works air-gapped;
+        # the order preferred is DEFAULT_MODEL first, and why is stated there.
+        self._bundled_models = bundled_models()
+        default_model = DEFAULT_MODEL
+        if self._bundled_models:
+            for preferred in MODEL_PREFERENCE:
+                if preferred in self._bundled_models:
+                    default_model = preferred
+                    break
+            else:
+                default_model = next(iter(self._bundled_models))
+
+        self.input_file_var = tk.StringVar()
+        self.output_dir_var = tk.StringVar()
+        self.write_output_var = tk.BooleanVar(value=True)
+        self.model_var = tk.StringVar(value=default_model)
+        # What the dropdown shows. model_var stays the raw model name, because
+        # that is what a run, a saved profile and a report all record.
+        self.model_choice_var = tk.StringVar(value=_model_label(default_model))
+        self._syncing_model = False
+        # Live note under the Model box: whether the current pick is in this build.
+        self.model_status_var = tk.StringVar(value="")
+        self.task_var = tk.StringVar(value="transcribe")
+        self.language_var = tk.StringVar(value="Auto")
+        self.vad_var = tk.BooleanVar(value=True)
+        # Off by default, and only offered where the model is bundled. What it
+        # is for, and the case it is not for, is in whispers/enhance.py.
+        self.denoise_var = tk.BooleanVar(value=False)
+        self.listening_var = tk.BooleanVar(value=False)
+        self.listening_strength_var = tk.StringVar(value=listening.STANDARD)
+        # Whether clicking a line plays the span through the listening filters.
+        # Separate from writing a copy: most of the use for this is replaying
+        # one hard line over and over, which needs no file at all.
+        self.listening_playback_var = tk.BooleanVar(value=False)
+        # Compute device for transcription. CPU is the supported
+        # baseline; a GPU only makes the same work finish sooner.
+        self.device_var = tk.StringVar(value=_device_label(default_mode()))
+        self.convert_video_var = tk.BooleanVar(value=True)
+        # On by default wherever this build can actually do it. Nearly every
+        # recording this is pointed at has more than one voice in it, and who
+        # said what is half the answer - an operator should not have to know to
+        # ask for it. Left off when no engine is bundled, so the first run of a
+        # transcribe-only build cannot fail on a box it was never given.
+        self.diarize_var = tk.BooleanVar(value=diarization_available())
+        self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
+        # The count handed to the diarizer ("" = work it out). Written by the
+        # dropdown below, and the value a profile and a run record.
+        self.num_speakers_var = tk.StringVar(value="")
+        # What the operator answered. Starts unanswered on purpose: a run with
+        # "Identify who is speaking" on does not start until this says something.
+        self.speaker_count_var = tk.StringVar(value=SPEAKERS_UNSET)
+        # Whether a Run was turned away for want of that answer, so the notice
+        # comes down as soon as it is given.
+        self._awaiting_speaker_count = False
+        # Optional per-speaker names, created to match the speaker count and
+        # applied to the diarized transcript (Speaker 1 -> first speaker, etc.).
+        self.speaker_name_vars: List[tk.StringVar] = []
+        self.sensitivity_var = tk.StringVar(value="0.5")
+        self.srt_var = tk.BooleanVar(value=False)
+        # Put a blank line between segments in the transcript (and saved .txt).
+        self.blank_lines_var = tk.BooleanVar(value=True)
+        # Optional vocabulary hint (names/jargon) to prime the decoder.
+        self.vocab_var = tk.StringVar(value="")
+        # Colour low-confidence words/segments so they can be verified.
+        self.highlight_conf_var = tk.BooleanVar(value=False)
+        self.progress_label_var = tk.StringVar(value="Idle")
+
+        # State for the last result, so speakers can be renamed after a run. The
+        # transcript view shares these (same objects) and mutates them in place.
+        self._result: Optional[TranscriptionResult] = None
+        self._result_source: Optional[Path] = None
+        self._result_outdir: Optional[Path] = None
+        self._speaker_names: Dict[str, str] = {}
+        # The transcript as the model produced it, before a speaker was put to
+        # any of it. Redoing the split works from this, never from the last
+        # split's output, so a second attempt is not built on the first.
+        self._undiarized_segments: Optional[List[Segment]] = None
+        # What the last diarized run was told, and what it came back with.
+        self._speaker_choice_used = SPEAKERS_UNSET
+        self._diarized_count = 0
+        # Speaker tags changed by hand since that run - what redoing it spends.
+        self._speaker_edits = 0
+        # Corrections not yet kept anywhere (a project, a Word file or the
+        # output folder), so closing the window can ask first.
+        self._unsaved_edits = 0
+        # Recordings this run's silence filter mostly passed over, in order.
+        self._skipped_much: "List[SkippedRun]" = []
+        # Files a translation came back from in the original language.
+        self._untranslated: List[str] = []
+        # Queued recordings that were not there when the run reached them.
+        self._missing_files: "List[str]" = []
+        # Recordings this run could not transcribe, and why. A batch carries on
+        # past one of these: a folder left running overnight must not be lost
+        # to a single unreadable file at position three.
+        self._failed_files: "List[FailedRun]" = []
+        # Recordings that were transcribed but whose output could not be
+        # written. Transcribed and saved are different claims, and a run that
+        # produced nothing on disk must not report itself as finished.
+        self._failed_saves: "List[FailedRun]" = []
+        # source -> the name its output is written under, unique within the run.
+        self._output_names: "Dict[Path, str]" = {}
+        # Traceability for the displayed result: source hash, models, settings.
+        self._result_provenance: Optional[AnalysisProvenance] = None
+
+        # Optional batch queue; when non-empty, Run transcribes all of these
+        # instead of the single "Audio / video file" above.
+        self._batch_files: List[Path] = []
+        # What the last folder walk turned up, so the queue can say what it
+        # left out as well as what it took.
+        self._batch_found = folder_batch.Found()
+        self.batch_files_var = tk.StringVar(value="")
+
+        # Active operation profile (saved settings + learned speaker voiceprints),
+        # and whether to recognise/learn voices for it. See whispers.profiles /
+        # whispers.voiceprints.
+        self.profile_var = tk.StringVar(value="")
+        self.learn_var = tk.BooleanVar(value=True)
+        self._profile: Optional[Profile] = None
+        # Names recognised from voiceprints on the last diarized run (voice::Name).
+        self._recognized_names: Dict[str, str] = {}
+        # The speaker-separation engine the last split actually ran.
+        self._diar_engine_used = "auto"
+        # A 16 kHz mono copy of the last diarized audio, kept so corrections can
+        # enrol voiceprints after the run; removed on the next run and on close.
+        self._session_wav: Optional[Path] = None
+        # Set by the app so saving a speaker refreshes the Speaker Profiles page.
+        self.on_profiles_changed: Optional[Callable[[], None]] = None
+        # Lazily-built speaker-embedding extractor; False once it has failed to
+        # load (e.g. sherpa-onnx/model missing) so we don't retry every edit.
+        self._embedder: "Optional[SpeakerEmbedder] | bool" = None
+
+        # Offline segment playback (click a line to re-listen). Disabled cleanly
+        # when neither ffmpeg nor an OS player is available.
+        self._player = SegmentPlayer()
+        self._playback_ok = playback_available()
+
+        self._build()
+
+    # -- UI construction ---------------------------------------------------
+
+    def _build(self) -> None:
+        transcribe_canvas, container = scrollable_body(self.parent)
+        self._page_canvas = transcribe_canvas
+        self._page = container
+
+        PageHeader(
+            container,
+            "Transcribe",
+            "Turn an audio or video recording into searchable text.",
+        ).pack(fill="x", pady=(0, SPACE_LG))
+
+        # Everything the operator sets before running, in one region that can be
+        # put away once there is a transcript to read.
+        self._settings_area = ttk.Frame(container, style=Style.PAGE)
+        self._settings_area.pack(fill="x")
+
+        self._build_recording_card(self._settings_area)
+        self._build_basic_options(self._settings_area)
+        self._build_advanced_options(self._settings_area)
+        self._build_action_row(container)
+        self._build_results(container)
+
+        # A model can also arrive from a saved profile or last session's
+        # settings, so the dropdown follows the value rather than owning it.
+        self.model_var.trace_add("write", self._sync_model_choice)
+        self.task_var.trace_add("write", self._update_model_status)
+        self._update_model_status()
+
+        # Initialise the enabled/disabled state of dependent fields.
+        self._update_output_state()
+        self._update_speaker_state()
+        # Mouse-wheel scrolls the page (the scrollbar always works regardless).
+        bind_wheel(transcribe_canvas, container)
+        # Drop a recording anywhere it would plausibly be dropped.
+        for target in (self._drop_zone, self.transcript_view.widget, self.status):
+            register_drop(self.root, self._dnd_ok, target, self._on_drop_media)
+
+    # -- Recording ---------------------------------------------------------
+
+    def _build_recording_card(self, parent: tk.Misc) -> None:
+        card = Card(parent, "Recording")
+        card.pack(fill="x")
+        self._drop_zone = FileDropZone(
+            card.body,
+            self.input_file_var,
+            self.choose_file,
+            # A folder is now as good as a file here, and an operator who is
+            # not told will keep opening them to drag the contents out.
+            prompt="Drop an audio or video file here — or a whole folder of them",
+        )
+        self._drop_zone.pack(fill="x")
+
+        # Batch stays available, but a queue is the exception: it sits under the
+        # single file it would otherwise compete with.
+        batch = ttk.Frame(card.body, style=Style.CARD_INNER)
+        batch.pack(fill="x", pady=(SPACE_MD, 0))
+        subtle_button(batch, "Add a folder…", self._add_batch_folder).pack(side="left")
+        subtle_button(batch, "Add several files…", self._add_batch_files).pack(
+            side="left", padx=(SPACE_SM, 0)
+        )
+        self._batch_clear = subtle_button(batch, "Clear list", self._clear_batch_files)
+        self._batch_row = batch
+        ttk.Label(
+            card.body,
+            textvariable=self.batch_files_var,
+            style=Style.META,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        self._update_batch_label()
+
+    # -- Basic options -----------------------------------------------------
+
+    def _build_basic_options(self, parent: tk.Misc) -> None:
+        """Only what most operators need, in the words they would use."""
+        card = Card(parent, "Options")
+        card.pack(fill="x", pady=(SPACE_MD, 0))
+        body = card.body
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Language", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        ttk.Combobox(
+            body,
+            textvariable=self.language_var,
+            values=COMMON_LANGUAGES,
+            width=18,
+        ).grid(row=0, column=1, sticky="w", pady=SPACE_XS)
+
+        ttk.Label(body, text="Quality", style=Style.FIELD_LABEL).grid(
+            row=1, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        model_row = ttk.Frame(body, style=Style.CARD_INNER)
+        model_row.grid(row=1, column=1, sticky="ew", pady=SPACE_XS)
+        self.model_combo = ttk.Combobox(
+            model_row,
+            textvariable=self.model_choice_var,
+            values=self._model_labels(),
+            state="readonly",
+            width=34,
+        )
+        self.model_combo.pack(side="left")
+        self.model_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_model_choice()
+        )
+        subtle_button(model_row, "Use a model folder…", self.choose_model_dir).pack(
+            side="left", padx=(SPACE_SM, 0)
+        )
+        ttk.Label(body, textvariable=self.model_status_var, style=Style.META).grid(
+            row=2, column=1, sticky="w"
+        )
+
+        ttk.Checkbutton(
+            body,
+            text="Identify who is speaking",
+            variable=self.diarize_var,
+            command=self._update_speaker_state,
+            style=Style.CHECK,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
+        ttk.Label(
+            body,
+            text="Splits the transcript by speaker, so each line says who said it.",
+            style=Style.META,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=(SPACE_XL, 0))
+
+        self._build_speaker_count_row(body, row=5)
+
+        ttk.Checkbutton(
+            body,
+            text="Save a copy to a folder",
+            variable=self.write_output_var,
+            command=self._update_output_state,
+            style=Style.CHECK,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
+        output_row = ttk.Frame(body, style=Style.CARD_INNER)
+        output_row.grid(row=7, column=0, columnspan=2, sticky="ew", padx=(SPACE_XL, 0))
+        output_row.columnconfigure(0, weight=1)
+        self.output_dir_entry = ttk.Entry(output_row, textvariable=self.output_dir_var)
+        self.output_dir_entry.grid(row=0, column=0, sticky="ew")
+        self.output_dir_button = secondary_button(
+            output_row, "Choose folder…", self.choose_output_dir
+        )
+        self.output_dir_button.grid(row=0, column=1, padx=(SPACE_SM, 0))
+
+    def _build_speaker_count_row(self, parent: tk.Misc, *, row: int) -> None:
+        """Ask how many people are on the recording, before anything runs.
+
+        This used to be a blank box in Advanced options, which meant that in
+        practice it was always blank. Left to itself the engine over-splits a
+        long, poor-quality call - a two-handed phone call came back as five
+        speakers - and the only remedy was to transcribe the whole thing again.
+        Asking costs one click; not asking cost an afternoon.
+        """
+        # Kept so the question can be taken away entirely when there is nothing
+        # to separate - a greyed-out control still reads as something you were
+        # supposed to fill in.
+        self._speaker_count_row = holder = ttk.Frame(parent, style=Style.CARD_INNER)
+        holder.grid(
+            row=row,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=(SPACE_XL, 0),
+            pady=(SPACE_SM, 0),
+        )
+        frame = ttk.Frame(holder, style=Style.CARD_INNER)
+        frame.pack(anchor="w", fill="x")
+        ttk.Label(
+            frame, text="How many people are speaking?", style=Style.FIELD_LABEL
+        ).pack(side="left", padx=(0, SPACE_MD))
+        self.speaker_count_combo = ttk.Combobox(
+            frame,
+            textvariable=self.speaker_count_var,
+            values=speaker_count.choices(),
+            state="readonly",
+            width=22,
+        )
+        self.speaker_count_combo.pack(side="left")
+        self.speaker_count_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_speaker_count_selected()
+        )
+        self.speaker_count_hint = ttk.Label(
+            holder,
+            text=(
+                "Say how many voices to expect and they stay apart. “Not sure” "
+                "lets the tool decide, which on a long or muffled recording can "
+                "split one person into several."
+            ),
+            style=Style.MUTED,
+            wraplength=560,
+            justify="left",
+        )
+        self.speaker_count_hint.pack(anchor="w", pady=(SPACE_XS, 0))
+
+    # -- Advanced ----------------------------------------------------------
+
+    def _build_advanced_options(self, parent: tk.Misc) -> None:
+        """Everything that assumes you already know what it means.
+
+        Nothing is removed - an operator who understands diarization engines or
+        compute devices still has them - but nobody needs to walk past them to
+        transcribe a recording.
+        """
+        self._advanced = Disclosure(parent, "Advanced options")
+        self._advanced.pack(fill="x", pady=(SPACE_MD, 0))
+        body = self._advanced.body
+
+        audio = Card(body, "Audio and output")
+        audio.pack(fill="x")
+        ttk.Checkbutton(
+            audio.body,
+            text="Skip silence",
+            variable=self.vad_var,
+            style=Style.CHECK,
+        ).pack(anchor="w")
+        ttk.Label(
+            audio.body,
+            text=(
+                "Passes over long gaps so a recording finishes sooner. On very "
+                "quiet or distant speech it can still cut a little; turn it off "
+                "if a recording matters more than the time it takes."
+            ),
+            style=Style.MUTED,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(0, SPACE_XS))
+        if enhance.available():
+            ttk.Checkbutton(
+                audio.body,
+                text="Reduce steady background noise",
+                variable=self.denoise_var,
+                style=Style.CHECK,
+            ).pack(anchor="w", pady=(SPACE_XS, 0))
+            ttk.Label(
+                audio.body,
+                text=f"{enhance.HELPS_WITH} {enhance.DOES_NOT}",
+                style=Style.MUTED,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w", pady=(0, SPACE_XS))
+            ttk.Label(
+                audio.body,
+                text=(
+                    "The recording itself is never changed — a cleaned copy is "
+                    f"written beside the output. {enhance.NOT_FOR_COMPARISON}"
+                ),
+                style=Style.MUTED,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w", pady=(0, SPACE_XS))
+        ttk.Checkbutton(
+            audio.body,
+            text="Save a copy that is easier to listen to",
+            variable=self.listening_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Label(
+            audio.body,
+            text=f"{listening.HELPS_WITH} {listening.DOES_NOT}",
+            style=Style.MUTED,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(0, SPACE_XS))
+        strength_row = ttk.Frame(audio.body, style=Style.CARD_INNER)
+        strength_row.pack(anchor="w", pady=(0, SPACE_XS))
+        ttk.Label(strength_row, text="Strength:", style=Style.META).pack(side="left")
+        ttk.Combobox(
+            strength_row,
+            textvariable=self.listening_strength_var,
+            values=list(listening.STRENGTHS),
+            state="readonly",
+            width=12,
+        ).pack(side="left", padx=(SPACE_XS, 0))
+        ttk.Label(
+            audio.body,
+            text=(
+                "The recording itself is never changed — a separate listening "
+                f"copy is written beside the output. {listening.NOT_FOR_COMPARISON}"
+            ),
+            style=Style.MUTED,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(0, SPACE_XS))
+        if self._playback_ok:
+            ttk.Checkbutton(
+                audio.body,
+                text="Use those filters when playing a line back",
+                variable=self.listening_playback_var,
+                style=Style.CHECK,
+            ).pack(anchor="w", pady=(SPACE_XS, 0))
+            ttk.Label(
+                audio.body,
+                text=(
+                    "Affects only what comes out of the speakers, and needs no "
+                    "saved copy. Turn it off to hear the same line raw — which "
+                    "is the only way to tell whether the filters are helping "
+                    "you or just making a different sound."
+                ),
+                style=Style.META,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w", pady=(0, SPACE_XS))
+        ttk.Checkbutton(
+            audio.body,
+            text="Convert video to audio first (ffmpeg)",
+            variable=self.convert_video_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Checkbutton(
+            audio.body,
+            text="Also save .srt subtitles",
+            variable=self.srt_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Checkbutton(
+            audio.body,
+            text="Blank line between segments (easier to read and paste)",
+            variable=self.blank_lines_var,
+            command=self._rerender_transcript,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Checkbutton(
+            audio.body,
+            text="Highlight low-confidence words (red, underlined: verify these)",
+            variable=self.highlight_conf_var,
+            command=self._rerender_transcript,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+
+        language = Card(body, "Language and vocabulary")
+        language.pack(fill="x", pady=(SPACE_MD, 0))
+        language.body.columnconfigure(1, weight=1)
+        ttk.Label(language.body, text="Task", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        ttk.Combobox(
+            language.body,
+            textvariable=self.task_var,
+            values=["transcribe", "translate"],
+            state="readonly",
+            width=18,
+        ).grid(row=0, column=1, sticky="w", pady=SPACE_XS)
+        ttk.Label(language.body, text="Expected words", style=Style.FIELD_LABEL).grid(
+            row=1, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        ttk.Entry(language.body, textvariable=self.vocab_var).grid(
+            row=1, column=1, sticky="ew", pady=SPACE_XS
+        )
+        ttk.Label(
+            language.body,
+            text="Names, places, jargon or callsigns to expect, so they are spelled right.",
+            style=Style.META,
+        ).grid(row=2, column=1, sticky="w")
+
+        hardware = Card(body, "Processing hardware")
+        hardware.pack(fill="x", pady=(SPACE_MD, 0))
+        row = ttk.Frame(hardware.body, style=Style.CARD_INNER)
+        row.pack(fill="x")
+        choices = offered_modes()
+        if len(choices) > 1:
+            ttk.Combobox(
+                row,
+                textvariable=self.device_var,
+                values=[label for _, label in choices],
+                state="readonly",
+                width=34,
+            ).pack(side="left")
+        else:
+            # One choice is not a choice. A dropdown with a single entry invites
+            # someone to open it looking for the GPU option and wonder where it
+            # went, so the one device is stated instead.
+            ttk.Label(row, text=choices[0][1], style=Style.FIELD_LABEL).pack(
+                side="left"
+            )
+        ttk.Label(hardware.body, text=describe_hardware(), style=Style.META).pack(
+            anchor="w", pady=(SPACE_XS, 0)
+        )
+        if not build_supports_cuda():
+            ttk.Label(
+                hardware.body,
+                text=(
+                    "This build runs on the processor. Graphics-card support is "
+                    "not included in it, so fitting one would not make it "
+                    "faster — that would need a differently built copy."
+                ),
+                style=Style.META,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w")
+        elif not cuda_available():
+            ttk.Label(
+                hardware.body,
+                text="The processor runs everything; a graphics card only makes it faster.",
+                style=Style.META,
+            ).pack(anchor="w")
+
+        self._build_speaker_advanced(body)
+        self._build_profile_card(body)
+
+    def _build_speaker_advanced(self, parent: tk.Misc) -> None:
+        card = Card(
+            parent,
+            "Speaker separation",
+            "Used when “Identify who is speaking” is on.",
+        )
+        card.pack(fill="x", pady=(SPACE_MD, 0))
+        frame = card.body
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Method", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        self.engine_combo = ttk.Combobox(
+            frame,
+            textvariable=self.engine_var,
+            values=engine_labels(),
+            state="readonly",
+            width=34,
+        )
+        self.engine_combo.grid(row=0, column=1, sticky="w", pady=SPACE_XS)
+
+        ttk.Label(
+            frame,
+            text="How many people are speaking is asked in Options, above.",
+            style=Style.META,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=SPACE_XS)
+        # Choosing a count reveals a name field per speaker (filled in below).
+        self.num_speakers_var.trace_add("write", self._on_num_speakers_changed)
+
+        ttk.Label(
+            frame,
+            text="Grouping sensitivity (higher = fewer speakers)",
+            style=Style.FIELD_LABEL,
+        ).grid(row=2, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS)
+        self.sensitivity_entry = ttk.Entry(
+            frame, textvariable=self.sensitivity_var, width=8
+        )
+        self.sensitivity_entry.grid(row=2, column=1, sticky="w", pady=SPACE_XS)
+
+        # Dynamic per-speaker name fields, rebuilt when the count changes.
+        self.speaker_names_frame = ttk.Frame(frame, style=Style.CARD_INNER)
+        self.speaker_names_frame.grid(
+            row=3, column=0, columnspan=2, sticky="ew", pady=(SPACE_SM, 0)
+        )
+        ttk.Label(
+            frame,
+            text=(
+                "In the transcript you can click a speaker tag to rename or move a "
+                "whole line, click a word to move it, or drag a highlighted run of "
+                "words onto another speaker."
+            ),
+            style=Style.META,
+            wraplength=560,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
+
+    def _build_profile_card(self, parent: tk.Misc) -> None:
+        card = Card(
+            parent,
+            "Operation profile",
+            "Remembers these settings and the voices you correct, per operation.",
+        )
+        card.pack(fill="x", pady=(SPACE_MD, 0))
+        frame = card.body
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Profile", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        self.profile_combo = ttk.Combobox(
+            frame,
+            textvariable=self.profile_var,
+            values=[""] + list_profiles(),
+            state="readonly",
+            width=26,
+        )
+        self.profile_combo.grid(row=0, column=1, sticky="w", pady=SPACE_XS)
+        self.profile_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_profile_selected()
+        )
+
+        buttons = ttk.Frame(frame, style=Style.CARD_INNER)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
+        for text, command in (
+            ("New…", self._new_profile),
+            ("Save", self._save_profile_settings),
+            ("Export…", self._export_profile),
+            ("Import…", self._import_profile),
+        ):
+            subtle_button(buttons, text, command).pack(side="left", padx=(0, SPACE_SM))
+        danger_button(buttons, "Delete profile…", self._delete_profile).pack(
+            side="left"
+        )
+
+        ttk.Checkbutton(
+            frame,
+            text="Recognise and learn speaker voices for this profile",
+            variable=self.learn_var,
+            style=Style.CHECK,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
+        ttk.Label(
+            frame,
+            text=(
+                "With speaker identification on, each speaker is compared with "
+                "the voices this profile has learned, and a similar one is shown "
+                "as a suggestion marked \u201c(unconfirmed\u00a0voice\u00a0lead)\u201d for you to "
+                "confirm. Confirming or correcting a name teaches it that voice "
+                "for next time; it does not change the words themselves."
+            ),
+            style=Style.MUTED,
+            wraplength=560,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
+
+    # -- The action ---------------------------------------------------------
+
+    def _build_action_row(self, parent: tk.Misc) -> None:
+        """One obvious thing to do, and an honest account of it while it runs."""
+        actions = ttk.Frame(parent, style=Style.PAGE)
+        actions.pack(fill="x", pady=(SPACE_LG, 0))
+        self._action_row = actions
+        self.run_button = primary_button(
+            actions, "Transcribe recording", self.run_in_thread
+        )
+        self.run_button.pack(side="left")
+        self.cancel_button = secondary_button(actions, "Cancel", self._cancel)
+        self.cancel_button.configure(state="disabled")
+        self.cancel_button.pack(side="left", padx=(SPACE_SM, 0))
+        self.toggle_settings_button = subtle_button(
+            actions, "Hide settings", self._toggle_all_settings
+        )
+        self.toggle_settings_button.pack(side="right")
+
+        progress = ttk.Frame(parent, style=Style.PAGE)
+        progress.pack(fill="x", pady=(SPACE_SM, 0))
+        # Determinate and empty until a run starts: created indeterminate and
+        # never started, it showed a stuck block at Idle.
+        self.progress_bar = ttk.Progressbar(progress, mode="determinate", value=0)
+        self.progress_bar.pack(fill="x")
+        ttk.Label(
+            progress, textvariable=self.progress_label_var, style=Style.PAGE_SUBTITLE
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        # Inserted above the results, so a failure is read before the
+        # empty transcript that follows it.
+        self.banner = StatusBanner(parent)
+
+    # -- Results ------------------------------------------------------------
+
+    def _build_results(self, parent: tk.Misc) -> None:
+        """The transcript is the product; after a run it gets the page."""
+        self._panel = PanelWindow(
+            parent,
+            title="Transcript",
+            window_title="Whispers — Transcript",
+            note=(
+                "The transcript is open in its own window — resize or maximise "
+                "it on whichever screen suits."
+            ),
+            pack_options={"fill": "both", "expand": True, "pady": (SPACE_XL, 0)},
+            on_error=self._popout_failed,
+        )
+        results = self._panel.card
+        self.banner.insert_before(self._panel.host)
+        self._results_card = results
+
+        self.result_summary_var = tk.StringVar(value="")
+        summary_row = ttk.Frame(results.body, style=Style.CARD_INNER)
+        summary_row.pack(fill="x")
+        ttk.Label(
+            summary_row, textvariable=self.result_summary_var, style=Style.MUTED
+        ).pack(side="left")
+        # Inside the card on purpose: popped out, the button travels with the
+        # transcript, so the way back is on the window the operator is looking at.
+        self.popout_button = self._panel.toggle_button(summary_row)
+        self.popout_button.pack(side="right")
+
+        # The completion caveat again, inside the card. The banner lives on the
+        # page, and the card can be off on another screen - an operator watching
+        # the transcript for the whole run would otherwise never learn that most
+        # of the recording was passed over. Same failure as a warning replaced
+        # by a success banner, arrived at a different way.
+        self.result_caveat_var = tk.StringVar(value="")
+        self._result_caveat = ttk.Label(
+            results.body,
+            textvariable=self.result_caveat_var,
+            style=Style.WARNING,
+            wraplength=760,
+            justify="left",
+        )
+
+        # What "(unconfirmed voice lead)" means, shown whenever one is on
+        # screen. The marker is clear on its own; this says what to do about it.
+        self.lead_legend_var = tk.StringVar(value="")
+        self._lead_legend = ttk.Label(
+            results.body,
+            textvariable=self.lead_legend_var,
+            style=Style.WARNING,
+            wraplength=760,
+            justify="left",
+        )
+
+        self._output_tabs = ttk.Notebook(results.body)
+        tabs = self._output_tabs
+        tabs.pack(fill="both", expand=True, pady=(SPACE_SM, 0))
+        self.transcript_view = TranscriptView(
+            tabs,
+            self.root,
+            self.blank_lines_var,
+            self._save_outputs_if_possible,
+            highlight_var=self.highlight_conf_var,
+            on_play=self._play_segment if self._playback_ok else None,
+            on_enroll=self._enroll_voice,
+            placeholder=(
+                "Choose a recording above, then select Transcribe recording.\n\n"
+                "Your transcript appears here. Drag a file onto this window to "
+                "load it.\n\n"
+                "If something goes wrong, the Status tab explains what happened, "
+                "and System status (top right) shows what this copy can do."
+            ),
+        )
+        style_text_widget(self.transcript_view.widget)
+        self.status = ScrolledText(tabs, wrap="word", state="disabled", height=12)
+        style_text_widget(self.status)
+        self.status.configure(font=theme().mono)
+        tabs.add(self.transcript_view.widget, text="Transcript")
+        tabs.add(self.status, text="Status")
+
+        # Find within the transcript (Enter = next, Shift+Enter = previous).
+        tools = ttk.Frame(results.body, style=Style.CARD_INNER)
+        tools.pack(fill="x", pady=(SPACE_MD, 0))
+        ttk.Label(tools, text="Find", style=Style.FIELD_LABEL, width=6).pack(
+            side="left"
+        )
+        self.find_var = tk.StringVar()
+        find_entry = ttk.Entry(tools, textvariable=self.find_var, width=26)
+        find_entry.pack(side="left")
+        find_entry.bind("<Return>", lambda _e: self._find_next())
+        find_entry.bind("<Shift-Return>", lambda _e: self._find_prev())
+        subtle_button(tools, "Next", self._find_next).pack(
+            side="left", padx=(SPACE_SM, 0)
+        )
+        subtle_button(tools, "Previous", self._find_prev).pack(side="left")
+        self.find_status_var = tk.StringVar()
+        ttk.Label(tools, textvariable=self.find_status_var, style=Style.META).pack(
+            side="left", padx=(SPACE_SM, 0)
+        )
+
+        exports = ttk.Frame(results.body, style=Style.CARD_INNER)
+        exports.pack(fill="x", pady=(SPACE_SM, 0))
+        # Inside the card, just above the buttons it reports on: popped out,
+        # the card is in its own window and the page banner is not on screen.
+        self._card_banner = StatusBanner(results.body, wraplength=760)
+        self._card_banner.insert_before(exports)
+        self._card_banner.wrap_to(results.body)
+        for text, command in (
+            ("Copy transcript", self._copy_transcript),
+            ("Save as Word…", self._save_transcript_docx),
+            ("Analysis report…", self._save_analysis_report),
+            ("Save project…", self._save_project),
+            ("Open project…", self._open_project),
+        ):
+            secondary_button(exports, text, command).pack(
+                side="left", padx=(0, SPACE_SM)
+            )
+        if self._playback_ok:
+            subtle_button(exports, "Stop audio", self._stop_audio).pack(side="left")
+            ttk.Label(
+                results.body,
+                text="Ctrl-click a line or a word to play its audio.",
+                style=Style.META,
+            ).pack(anchor="w", pady=(SPACE_XS, 0))
+
+        # Its own row, and disabled until there is a diarized result to redo:
+        # this is the cheap half of a run offered on its own, and it wants to
+        # be found in the moment somebody reads "5 speakers" on a two-hander.
+        redo_row = ttk.Frame(results.body, style=Style.CARD_INNER)
+        redo_row.pack(fill="x", pady=(SPACE_MD, 0))
+        self.redo_button = secondary_button(
+            redo_row,
+            "Redo speaker separation…",
+            self._redo_speakers,
+        )
+        self.redo_button.pack(side="left")
+        self.redo_hint_var = tk.StringVar(value="")
+        ttk.Label(
+            redo_row,
+            textvariable=self.redo_hint_var,
+            style=Style.META,
+            wraplength=520,
+            justify="left",
+        ).pack(side="left", padx=(SPACE_MD, 0))
+        self._update_redo_state()
+
+        # Its own row: this one does not write a file, it adds to a subject's
+        # reference voice - and it is the point of having corrected the tags.
+        # Only offered where there is a Speaker Profiles page to save into: a
+        # build with no speaker-embedding model cannot measure a voice at all.
+        if bundled_embedding_model() is not None:
+            speaker_row = ttk.Frame(results.body, style=Style.CARD_INNER)
+            speaker_row.pack(fill="x", pady=(SPACE_MD, 0))
+            secondary_button(
+                speaker_row,
+                "Save speaker to profile…",
+                self._save_speaker_to_profile,
+            ).pack(side="left")
+            ttk.Label(
+                speaker_row,
+                text=(
+                    "Keeps the speaker labels you corrected as reference audio "
+                    "for a subject."
+                ),
+                style=Style.META,
+                wraplength=520,
+                justify="left",
+            ).pack(side="left", padx=(SPACE_MD, 0))
+
+    # -- The transcript in a window of its own ------------------------------
+
+    def _popout_failed(self, detail: str) -> None:
+        """Tk refused to give the panel a window. Say so, and carry on."""
+        append_line(self.status, f"Could not move the transcript window: {detail}")
+        self._announce(
+            "warning",
+            "This system would not give the transcript its own window. It "
+            "stays on the page.",
+        )
+
+    # -- Cancellation ------------------------------------------------------
+
+    def _cancel(self) -> None:
+        """Ask this page's run to stop at its next checkpoint."""
+        if not self._busy:
+            return
+        self._cancel_event.set()
+        self.notify_cancelling()
+
+    def notify_cancelling(self) -> None:
+        self.cancel_button.configure(state="disabled")
+        append_line(self.status, "Cancelling… (will stop at the next checkpoint)")
+        self.progress_label_var.set("Cancelling…")
+
+    # -- Settings state ----------------------------------------------------
+
+    def _settings_visible(self) -> bool:
+        return bool(self._settings_area.winfo_manager())
+
+    def _toggle_all_settings(self) -> None:
+        self._show_settings(not self._settings_visible())
+
+    def _collapse_all_settings(self) -> None:
+        """Put the settings away so the transcript has the page."""
+        self._show_settings(False)
+
+    def _show_settings(self, visible: bool) -> None:
+        if visible:
+            # Re-inserted above the action row so the page order is preserved.
+            self._settings_area.pack(fill="x", before=self._action_row)
+        else:
+            self._settings_area.pack_forget()
+        self.toggle_settings_button.configure(
+            text="Hide settings" if visible else "Show settings"
+        )
+
+    def _update_output_state(self) -> None:
+        state = "normal" if self.write_output_var.get() else "disabled"
+        self.output_dir_entry.configure(state=state)
+        self.output_dir_button.configure(state=state)
+
+    def _update_speaker_state(self) -> None:
+        enabled = self.diarize_var.get()
+        state = "normal" if enabled else "disabled"
+        self.sensitivity_entry.configure(state=state)
+        # Comboboxes use "readonly" (selectable but not free-text) when enabled.
+        self.engine_combo.configure(state="readonly" if enabled else "disabled")
+        self.speaker_count_combo.configure(state="readonly" if enabled else "disabled")
+        if enabled:
+            self._speaker_count_row.grid()
+        else:
+            self._speaker_count_row.grid_remove()
+        self._rebuild_speaker_name_fields()
+
+    def _on_speaker_count_choice(self) -> None:
+        """Push the answer into the count the run and a profile actually use."""
+        self.num_speakers_var.set(
+            speaker_count.to_setting(self.speaker_count_var.get())
+        )
+
+    def _on_speaker_count_selected(self) -> None:
+        """The operator answered. Take down the notice that asked."""
+        self._on_speaker_count_choice()
+        if self._awaiting_speaker_count and self._speaker_count_answered():
+            self._awaiting_speaker_count = False
+            self.banner.hide()
+            self.progress_label_var.set("Idle")
+
+    def _set_speaker_count(self, label: str) -> None:
+        """Show ``label`` and keep the stored count in step with it."""
+        self.speaker_count_var.set(label)
+        self._on_speaker_count_choice()
+
+    def _speaker_count_answered(self) -> bool:
+        """True when the run may start: diarization is off, or a count is chosen."""
+        if not self.diarize_var.get():
+            return True
+        return speaker_count.is_answered(self.speaker_count_var.get())
+
+    def _on_num_speakers_changed(self, *_args: object) -> None:
+        self._rebuild_speaker_name_fields()
+
+    def _rebuild_speaker_name_fields(self) -> None:
+        """Show one name entry per speaker, matching the requested count.
+
+        Existing names are preserved across rebuilds. Fields only appear while
+        diarization is enabled and a positive count is given (capped at 10).
+        """
+        try:
+            count = int(self.num_speakers_var.get().strip())
+        except ValueError:
+            count = 0
+        count = max(0, min(count, 10))
+
+        existing = [var.get() for var in self.speaker_name_vars]
+        for child in self.speaker_names_frame.winfo_children():
+            child.destroy()
+        self.speaker_name_vars = []
+
+        if count <= 0 or not self.diarize_var.get():
+            return
+
+        self.speaker_names_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.speaker_names_frame, text="Speaker names (optional):").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(4, 2)
+        )
+        for i in range(count):
+            var = tk.StringVar(value=existing[i] if i < len(existing) else "")
+            self.speaker_name_vars.append(var)
+            ttk.Label(self.speaker_names_frame, text=f"Speaker {i + 1}").grid(
+                row=i + 1, column=0, sticky="w", padx=(0, 8), pady=2
+            )
+            ttk.Entry(self.speaker_names_frame, textvariable=var, width=24).grid(
+                row=i + 1, column=1, sticky="w", pady=2
+            )
+
+    # -- Thread-safe progress helpers --------------------------------------
+
+    def _set_busy(self, busy: bool, message: Optional[str] = None) -> None:
+        def _do() -> None:
+            if busy:
+                self.run_button.configure(state="disabled")
+                self.redo_button.configure(state="disabled")
+                self.cancel_button.configure(state="normal")
+                # Indeterminate while we don't yet have a measurable fraction
+                # (setup, ffmpeg conversion, model loading).
+                self.progress_bar.configure(mode="indeterminate")
+                self.progress_bar.start(12)
+                self.progress_label_var.set(message or "Working…")
+                self.banner.hide()
+                self._card_banner.hide()
+            else:
+                self.progress_bar.stop()
+                self.progress_bar.configure(mode="determinate")
+                self.progress_bar["value"] = 0
+                self.progress_label_var.set(message or "Ready")
+                self.cancel_button.configure(state="disabled")
+                self._release_busy()
+
+        self.root.after(0, _do)
+
+    def _announce(self, kind: str, message: str) -> None:
+        """Put a result or a failure where it cannot be scrolled past."""
+
+        def _do() -> None:
+            self.banner.show(kind, message)
+            scroll_into_view(self._page_canvas, self.banner)
+
+        self.root.after(0, _do)
+
+    def busy_description(self) -> Optional[str]:
+        """What closing the window now would lose, in words, or None."""
+        if self._busy:
+            return "A transcription is still running and will be lost."
+        if self._unsaved_edits:
+            return (
+                f"{self._unsaved_edits} speaker correction(s) have not been saved. "
+                "Save project… keeps them."
+            )
+        return None
+
+    def _announce_in_card(self, kind: str, message: str) -> None:
+        """Report beside the transcript's own buttons (any thread)."""
+        self.root.after(0, lambda: self._card_banner.show(kind, message))
+
+    def _report(self, kind: str, message: str, *, in_card: bool) -> None:
+        if in_card:
+            self._announce_in_card(kind, message)
+        else:
+            self._announce(kind, message)
+
+    def _report_saved(self, path: str, *, in_card: bool = True) -> None:
+        """A save the operator asked for: say where it went, beside the button."""
+        target = Path(path)
+        self._report(
+            "success", f"Saved {target.name} in {target.parent}.", in_card=in_card
+        )
+        self.progress_label_var.set(f"Saved {target.name}")
+
+    def _report_not_saved(
+        self, what: str, exc: Exception, *, in_card: bool = True
+    ) -> None:
+        """A save or open that failed, where it will be seen.
+
+        These went only to the small line under the progress bar, which is not
+        on screen with the transcript popped out or the page scrolled down to
+        the export buttons.
+        """
+        message = f"{what}. {friendly_error(exc)}"
+        append_line(self.status, message)
+        self._report("error", message, in_card=in_card)
+        self.progress_label_var.set(what)
+
+    def _set_result_caveat(self, message: str) -> None:
+        """Carry a completion warning into the transcript card itself."""
+
+        def _do() -> None:
+            self.result_caveat_var.set(message)
+            if message:
+                self._result_caveat.pack(
+                    anchor="w", pady=(SPACE_XS, 0), before=self._output_tabs
+                )
+            else:
+                self._result_caveat.pack_forget()
+
+        self.root.after(0, _do)
+
+    def _note_if_much_was_skipped(
+        self, result: TranscriptionResult, source: Path
+    ) -> None:
+        """Record a recording the silence filter mostly passed over.
+
+        The failure this guards against is silent by nature: audio the filter
+        discards never reaches the model, so a transcript missing half a
+        conversation looks exactly like a conversation that was half silence.
+
+        Called for every file, not just the one that ends up on screen. In a
+        batch only the last result is displayed, so a gutted first file would
+        otherwise finish with no sign that anything was missing from it.
+        """
+        kept = result.kept_fraction
+        if not much_was_skipped(kept):
+            return
+        assert kept is not None  # much_was_skipped ruled out None
+        run = SkippedRun(source.name, result.skipped_seconds / 60.0, kept)
+        self._skipped_much.append(run)
+        append_line(self.status, per_file_note(run))
+
+    def _completion_message(
+        self, done: int, total: int, saved: "Optional[int]" = None
+    ) -> "Tuple[str, str]":
+        """The one banner a finished run leaves behind, and its kind."""
+        return completion(
+            done,
+            total,
+            self._skipped_much,
+            self._missing_files,
+            self._failed_files,
+            self._failed_saves,
+            done if saved is None else saved,
+        )
+
+    def _describe_result(self) -> None:
+        """The one-line account of what was produced, above the transcript."""
+        result = self._result
+        if result is None:
+            self.result_summary_var.set("")
+            return
+        parts = []
+        if self._result_source is not None:
+            parts.append(self._result_source.name)
+        if result.language:
+            parts.append(f"language {result.language}")
+        if result.duration:
+            parts.append(f"{result.duration / 60:.1f} min")
+        kept = result.kept_fraction
+        if kept is not None and kept < 0.995:
+            # Silence skipping decides what the model never hears. An operator
+            # reading a transcript is entitled to know a quarter of the
+            # recording was dropped before it was written.
+            parts.append(f"{kept * 100:.0f}% listened to")
+        speakers = {seg.speaker for seg in result.segments if seg.speaker}
+        if speakers:
+            parts.append(f"{len(speakers)} speaker(s)")
+        self.result_summary_var.set("  ·  ".join(parts))
+
+    def _begin_phase(self, message: str) -> None:
+        """Start a phase whose length is not yet known.
+
+        The bar goes back to moving and the label says what is starting. Without
+        this, the bar left over from the phase before sits at 100% while the next
+        one runs, which reads as finished rather than as busy.
+        """
+
+        def _do() -> None:
+            self.progress_bar.stop()
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start(12)
+            self.progress_label_var.set(message)
+
+        self.root.after(0, _do)
+
+    def _step(self, message: str) -> None:
+        """A named step: the Status tab records it, the line under the bar shows it.
+
+        Loading a model is a minute or more with nothing else to see. Sending
+        these only to the Status tab left the visible line saying whatever the
+        phase before had set, which on a long load reads as stuck.
+        """
+        append_line(self.status, message)
+        self.root.after(0, lambda: self.progress_label_var.set(message))
+
+    def _set_progress(self, fraction: float, message: str) -> None:
+        """Show real progress on a determinate bar (fraction is 0..1)."""
+        pct = max(0.0, min(1.0, fraction)) * 100.0
+
+        def _do() -> None:
+            self.progress_bar.stop()
+            self.progress_bar.configure(mode="determinate")
+            self.progress_bar["value"] = pct
+            self.progress_label_var.set(f"{message} {pct:.0f}%")
+
+        self.root.after(0, _do)
+
+    # -- File pickers ------------------------------------------------------
+
+    def choose_file(self) -> None:
+        patterns = " ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS)
+        path = filedialog.askopenfilename(
+            filetypes=[("Audio/Video", patterns), ("All files", "*.*")],
+            parent=active_window(self.root),
+        )
+        if path:
+            self._use_single_file(Path(path))
+
+    def _use_single_file(self, path: Path) -> None:
+        """One chosen or dropped file: the input, or the next in the queue.
+
+        With a folder queued, a single file used to go into the Recording box
+        in large type while Transcribe recording ran the queue and ignored it.
+        It now joins the queue, which is what the guide promises ("add it with
+        Choose file and it will be used"), and the box never shows a file that
+        will not run.
+        """
+        if self._batch_files:
+            if path not in self._batch_files:
+                self._batch_files.append(path)
+            self._update_batch_label()
+            self.progress_label_var.set(
+                f"Added {path.name} to the queue of {len(self._batch_files)}"
+            )
+            return
+        self.input_file_var.set(str(path))
+        self.progress_label_var.set(f"Loaded {path.name}")
+
+    def choose_output_dir(self) -> None:
+        path = filedialog.askdirectory(parent=active_window(self.root))
+        if path:
+            self.output_dir_var.set(path)
+
+    def choose_model_dir(self) -> None:
+        path = filedialog.askdirectory(
+            title="Select a CTranslate2 model directory",
+            parent=active_window(self.root),
+        )
+        if path:
+            self.model_var.set(path)
+
+    # -- Model selection ---------------------------------------------------
+
+    def _model_labels(self) -> List[str]:
+        """The models this build can actually offer, described."""
+        if self._bundled_models:
+            names = list(self._bundled_models)
+        else:
+            names = list(MODEL_SIZES)
+        return [_model_label(name) for name in names]
+
+    def _on_model_choice(self) -> None:
+        """Dropdown -> the raw model name the rest of the application uses."""
+        label = self.model_choice_var.get()
+        for name in list(self._bundled_models) or list(MODEL_SIZES):
+            if _model_label(name) == label:
+                self._set_model(name)
+                return
+        self._set_model(label)
+
+    def _set_model(self, name: str) -> None:
+        self._syncing_model = True
+        try:
+            self.model_var.set(name)
+        finally:
+            self._syncing_model = False
+        self._update_model_status()
+
+    def _sync_model_choice(self, *_args: object) -> None:
+        """Raw model name -> dropdown, for a profile or a remembered setting."""
+        if self._syncing_model:
+            return
+        self.model_choice_var.set(_model_label(self._selected_model()))
+        self._update_model_status()
+
+    def _selected_model(self) -> str:
+        """The chosen model name or path, trimmed of surrounding whitespace."""
+        return self.model_var.get().strip()
+
+    def _model_is_available(self, model: str) -> bool:
+        """True if ``model`` is bundled in this build or is a local model folder."""
+        return model in self._bundled_models or usable_model_folder(model)
+
+    def _update_model_status(self, *_args: object) -> None:
+        """Reflect whether the chosen model is actually usable in this build."""
+        model = self._selected_model()
+        if not model:
+            self.model_status_var.set("")
+        elif self.task_var.get() == "translate" and translation_refusal(model):
+            # Said beside the model, not only after Run: turbo and the .en
+            # models write the original language when asked to translate.
+            self.model_status_var.set("⚠ cannot translate — use medium or large-v3")
+        elif model in self._bundled_models:
+            self.model_status_var.set("✓ in this build (works offline)")
+        elif usable_model_folder(model):
+            self.model_status_var.set("✓ local model folder")
+        elif Path(model).is_dir():
+            self.model_status_var.set("⚠ that folder has no model in it")
+        elif self._bundled_models or is_bundle():
+            # It can't be fetched on an air-gapped machine, so say so before
+            # Run rather than after. A shipped copy with *no* models used to
+            # land in the branch below and promise a download it must not make.
+            self.model_status_var.set(
+                "⚠ not in this copy — pick a ✓ model (System status lists them)"
+            )
+        else:
+            # Running from source with nothing bundled: faster-whisper will fetch
+            # it. Never reached in a shipped copy - see is_bundle().
+            self.model_status_var.set("will be downloaded on first use")
+
+    # -- Run ---------------------------------------------------------------
+
+    def _refuse_while_busy(self, what: str) -> bool:
+        """True (and say why) when a run or redo is still going."""
+        if not self._busy:
+            return False
+        self._announce(
+            "warning",
+            f"Wait for the current run to finish, or cancel it, before {what}.",
+        )
+        return True
+
+    def _claim_busy(self) -> None:
+        """Mark the page busy now, before the worker starts (UI thread)."""
+        self._busy = True
+        self.run_button.configure(state="disabled")
+        self.redo_button.configure(state="disabled")
+        # Corrections made while a run is going were lost: a redo replaces the
+        # transcript when it ends, and a batch replaces it with each file.
+        self.transcript_view.set_editable(False)
+
+    def _release_busy(self) -> None:
+        """End the busy state begun by :meth:`_claim_busy` (UI thread)."""
+        self._busy = False
+        self.transcript_view.set_editable(True)
+        self.run_button.configure(state="normal")
+        # Whether the redo comes back depends on what the run left behind, so
+        # let that decide rather than enabling it here.
+        self._update_redo_state()
+
+    def run_in_thread(self) -> None:
+        if self._busy:
+            return  # a second click before the button was switched off
+        # One question has to be answered before a long job starts, because the
+        # cost of getting it wrong is only visible once the job has finished.
+        if not self._speaker_count_answered():
+            self._ask_for_speaker_count()
+            return
+        # The model is the same for every file, so it is checked once, here,
+        # before anything is converted, cleaned or written. It used to be
+        # checked inside each file's run - after the conversion, the noise
+        # reduction and the listening copy - so a batch did all of that for
+        # every file and then refused each one in turn, as a crash.
+        try:
+            resolve_model_choice(self._selected_model(), self._bundled_models)
+        except ModelUnavailable as exc:
+            self._show_settings(True)
+            self._announce("error", str(exc))
+            self.progress_label_var.set("Choose a model this copy has")
+            return
+        refusal = (
+            translation_refusal(self._selected_model())
+            if self.task_var.get() == "translate"
+            else None
+        )
+        if refusal:
+            self._show_settings(True)
+            self._announce("error", refusal)
+            self.progress_label_var.set("Choose a model that can translate")
+            return
+        # Collapse the settings so the transcript and progress get the space.
+        self._collapse_all_settings()
+        self._claim_busy()
+        self._cancel_event.clear()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _ask_for_speaker_count(self) -> None:
+        """Stop, show the question, and put the operator in front of it."""
+        message = (
+            "How many people are speaking? Choose a number under Options, or "
+            "“Not sure” to let the tool work it out. Getting this right before "
+            "a long recording saves transcribing it twice."
+        )
+        self._show_settings(True)
+        self._announce("warning", message)
+        append_line(self.status, message)
+        self.progress_label_var.set("Waiting on the number of speakers")
+        self._awaiting_speaker_count = True
+        try:
+            self.speaker_count_combo.focus_set()
+        except tk.TclError:  # pragma: no cover - focus is a courtesy, not the gate
+            pass
+
+    def _collect_jobs(self) -> List[Path]:
+        """The files to transcribe: the batch queue, else the single input file."""
+        if self._batch_files:
+            return list(self._batch_files)
+        path = self.input_file_var.get().strip()
+        return [Path(path)] if path else []
+
+    def _run(self) -> None:
+        task = self.task_var.get()
+        self._set_busy(True, "Preparing audio…")
+        final_status = "Finished"
+        # Drop any prior run's kept audio so a correction can only ever enrol
+        # against audio from this run's diarized file(s).
+        self._clear_session_wav()
+        self._skipped_much = []
+        self._untranslated = []
+        self._missing_files = []
+        self._failed_files = []
+        self._failed_saves = []
+        self._output_names = {}
+        self._unsaved_edits = 0
+        self._set_result_caveat("")
+        try:
+            # The names belonged to the transcript being cleared; left in
+            # place, the voice-lead legend would stand over an empty pane.
+            self._speaker_names = {}
+            self.transcript_view.set_result(None, self._speaker_names)
+            self._refresh_lead_legend()
+            # The summary names a recording. Left standing, it names the
+            # previous one while the next is being transcribed.
+            self.root.after(0, lambda: self.result_summary_var.set(""))
+            jobs = self._collect_jobs()
+            if not jobs:
+                message = (
+                    "Choose a recording first — drop one onto the window, or "
+                    "select Choose file."
+                )
+                append_line(self.status, message)
+                self._announce("warning", message)
+                final_status = "No recording chosen"
+                return
+
+            outdir = self.output_dir_var.get() if self.write_output_var.get() else None
+            # "Save a copy to a folder" is ticked by default with no folder in
+            # it. A single file in that state used to write nothing and finish
+            # on a green "complete"; it now saves beside the recording, as a
+            # batch already did, and the banner says where.
+            save_beside = bool(self.write_output_var.get())
+            saved_in: Set[Path] = set()
+            total = len(jobs)
+            done = 0
+            saved = 0
+            # Worked out for the whole batch before any of it runs, because
+            # whether two recordings collide is a property of the batch and not
+            # of either file. Two recordings called interview.wav from
+            # different days are two transcripts, never one written twice.
+            self._output_names = output_names.plan(jobs)
+            renamed = [
+                (src, name)
+                for src, name in self._output_names.items()
+                if name != src.name
+            ]
+            for src, name in sorted(renamed, key=lambda pair: str(pair[0])):
+                append_line(
+                    self.status,
+                    f"{src.name} shares its name with another recording in this "
+                    f"run; its output is written as {name}.",
+                )
+            for index, src in enumerate(jobs, start=1):
+                if self._cancel_event.is_set():
+                    raise CancelledError("Transcription cancelled.")
+                if not src.exists():
+                    # Recorded, not just logged: a file that was never opened
+                    # must not be able to finish behind a green "complete".
+                    self._missing_files.append(src.name)
+                    append_line(self.status, f"Skipped (file not found): {src}")
+                    continue
+                prefix = f"({index}/{total}) " if total > 1 else ""
+                # Where to write: the chosen folder; else beside the source when
+                # a copy was asked for, or for any batch (so a multi-file run
+                # never silently drops output). Only a single file with the box
+                # unticked writes nothing - which is what unticking it says.
+                if outdir:
+                    save_dir: Optional[Path] = Path(outdir)
+                elif total > 1 or save_beside:
+                    save_dir = src.parent
+                else:
+                    save_dir = None
+                if total > 1:
+                    self.progress_label_var.set(f"{index} of {total} — {src.name}")
+                try:
+                    # Every finished recording goes on screen, so a long folder
+                    # shows its progress as real transcripts rather than a
+                    # status line - and so a batch whose *last* file fails still
+                    # leaves the work that succeeded in front of the operator.
+                    written = self._transcribe_one(
+                        src, task, save_dir, prefix, set_view=True
+                    )
+                except (CancelledError, ModelUnavailable):
+                    # A missing model is not one file's problem: every file
+                    # would be refused the same way.
+                    raise
+                except Exception as exc:  # noqa: BLE001 - one file, not the run
+                    # A batch is often a folder left running unattended. One
+                    # recording that cannot be read is that recording's
+                    # problem; stopping here would throw away the hours of
+                    # work still queued behind it.
+                    if total == 1:
+                        raise
+                    friendly = friendly_error(exc)
+                    self._failed_files.append(FailedRun(src.name, friendly))
+                    append_line(
+                        self.status,
+                        f"{prefix}Could not transcribe {src.name}: {friendly}",
+                    )
+                    append_line(self.status, traceback.format_exc())
+                    continue
+                done += 1
+                if written is not False:
+                    saved += 1
+                if written and save_dir is not None:
+                    saved_in.add(save_dir)
+            if self._missing_files or self._failed_files or self._failed_saves:
+                final_status = f"Finished {done} of {total} — see Status"
+            else:
+                final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
+            kind, message = self._completion_message(done, total, saved)
+            if self._untranslated:
+                note = (
+                    "This came back in the original language, not English: the "
+                    "model did not translate it."
+                    if total == 1
+                    else f"{len(self._untranslated)} file(s) came back in the "
+                    "original language, not English: the model did not "
+                    "translate them (see Status)."
+                )
+                kind, message = "warning", f"{message} {note}"
+            if kind == "success" and saved_in:
+                # A run that saved should say where: "complete" alone left the
+                # operator to guess, or to assume a folder that held nothing.
+                where = (
+                    str(next(iter(saved_in)))
+                    if len(saved_in) == 1
+                    else f"{len(saved_in)} folders"
+                )
+                message = f"{message} Saved in {where}."
+            if kind == "warning":
+                append_line(self.status, message)
+            self._announce(kind, message)
+            self._set_result_caveat(message if kind == "warning" else "")
+            if self._failed_files or self._failed_saves:
+                # The banner says how many and why; the detail is a tab away,
+                # and an operator will not think to go looking for it.
+                self._show_status_tab()
+            self.root.after(0, self._describe_result)
+        except CancelledError:
+            append_line(self.status, "Cancelled.")
+            self._announce("info", "Cancelled before finishing.")
+            final_status = "Cancelled"
+        except ModelUnavailable as exc:
+            # An expected refusal, written for the operator - not a crash, so
+            # no traceback and no jump to the Status tab.
+            append_line(self.status, str(exc))
+            self._announce("error", str(exc))
+            final_status = "Not started"
+        except Exception as exc:
+            friendly = friendly_error(exc)
+            append_line(self.status, friendly)
+            # Keep the full traceback in the log for troubleshooting - never in
+            # front of an operator who cannot act on it.
+            append_line(self.status, traceback.format_exc())
+            final_status = "Error"
+            self._announce(
+                "error", f"{friendly}  (Status tab has the technical details.)"
+            )
+            # Surface the reason: a non-technical user won't think to open the
+            # Status tab on their own, so bring it to the front.
+            self._show_status_tab()
+        finally:
+            self._set_busy(False, final_status)
+
+    def _show_status_tab(self) -> None:
+        """Bring the Status tab to the front (so an error/notice is seen)."""
+
+        def _do() -> None:
+            try:
+                self._output_tabs.select(self.status)
+            except tk.TclError:
+                pass
+
+        self.root.after(0, _do)
+
+    def _transcribe_one(
+        self,
+        src: Path,
+        task: str,
+        save_dir: Optional[Path],
+        prefix: str,
+        *,
+        set_view: bool,
+    ) -> "Optional[bool]":
+        """Transcribe one file: convert, transcribe, diarize, save, show.
+
+        Returns False when the transcript could not be written to the output
+        folder. Transcribed and saved are separate claims: a run that produced
+        nothing on disk has not done what was asked of it, however well the
+        model performed.
+
+        ``set_view`` loads the result into the transcript pane. ``save_dir``
+        writes outputs there when set; ``prefix`` is the ``(i/n)`` batch marker
+        for status lines.
+        """
+        temp_wav: Optional[Path] = None
+        temp_clean: Optional[Path] = None
+        temp_listen: Optional[Path] = None
+        enhancement: "Optional[enhance.EnhancementReport]" = None
+        polished: "Optional[listening.ListeningReport]" = None
+        try:
+            language = self.language_var.get().strip()
+            language_arg = None if language in ("", "Auto") else language
+            append_line(self.status, f"{prefix}Processing: {src}")
+
+            # Optionally pre-convert video to WAV with ffmpeg before transcribing.
+            media_path = src
+            media_is_normalized = False  # True when media_path is our 16 kHz mono WAV
+            if self.convert_video_var.get() and is_video(media_path):
+                if save_dir and save_dir.is_dir():
+                    # Named like the rest of this recording's output, so two
+                    # videos called interview.mp4 do not convert over one
+                    # another before either is transcribed.
+                    wav_dest: Optional[Path] = save_dir / (
+                        output_names.converted_audio_name(self._output_base(src))
+                    )
+                else:
+                    wav_dest = None  # convert to a temp file we clean up afterwards
+                media_path = convert_to_wav(
+                    media_path,
+                    wav_dest,
+                    progress=lambda msg: append_line(self.status, msg),
+                )
+                media_is_normalized = True
+                if wav_dest is None:
+                    temp_wav = media_path
+                append_line(self.status, f"Converted to {media_path}")
+
+            # What speaker separation, recognition and enrolment read. It starts
+            # as whatever is being transcribed and is pinned to the original by
+            # the noise-reduction step below, so a voice is never measured from
+            # cleaned audio.
+            voice_path, voice_is_normalized = media_path, media_is_normalized
+
+            # Noise reduction, when it was asked for. The recording itself is
+            # never touched: this works on a normalised copy and writes another
+            # one, and what the run then transcribes is that copy - recorded in
+            # the provenance so a transcript always says which audio produced it.
+            if self.denoise_var.get() and enhance.available():
+                if not media_is_normalized:
+                    media_path = convert_to_wav(
+                        media_path,
+                        None,
+                        progress=lambda msg: append_line(self.status, msg),
+                    )
+                    media_is_normalized = True
+                    temp_wav = media_path
+                # Voices are measured from this - the normalised original -
+                # and never from the cleaned copy made next. See _diarize_into.
+                voice_path, voice_is_normalized = media_path, True
+                if save_dir is not None and save_dir.is_dir():
+                    clean_dest: Optional[Path] = save_dir / (
+                        self._output_base(src) + enhance.SUFFIX
+                    )
+                else:
+                    # Nowhere was asked for, so nothing is kept; the cleaned
+                    # audio still drives the run, it just is not left behind.
+                    clean_dest = None
+                report = enhance.denoise(
+                    media_path,
+                    clean_dest,
+                    progress=lambda msg: append_line(self.status, msg),
+                )
+                cleaned = Path(report.output)
+                if clean_dest is None:
+                    temp_clean = cleaned
+                media_path = cleaned
+                enhancement = report
+
+            # A listening copy, when it was asked for. Unlike cleaning, this
+            # does not drive the run. The filters are tuned for a person's ears
+            # and nothing has measured what they do to recognition accuracy, so
+            # the words still come from the audio above and this is written for
+            # someone to listen to. If cleaning also ran it is applied on top
+            # of it, which is the order that sounds best; the provenance
+            # records both so the copy can be accounted for either way.
+            if self.listening_var.get():
+                if save_dir is None or not save_dir.is_dir():
+                    append_line(
+                        self.status,
+                        "No output folder, so no listening copy was written. "
+                        "Pick a folder to save one.",
+                    )
+                else:
+                    # Deliberately a separate variable: the listening copy
+                    # needs 16-bit PCM WAV, but the transcriber does not, and
+                    # swapping what it reads would change the words as a side
+                    # effect of asking for a copy to listen to.
+                    listen_src = media_path
+                    if not media_is_normalized:
+                        listen_src = convert_to_wav(
+                            media_path,
+                            None,
+                            progress=lambda msg: append_line(self.status, msg),
+                        )
+                        temp_listen = listen_src
+                    try:
+                        polished = listening.polish(
+                            listen_src,
+                            save_dir / (self._output_base(src) + listening.SUFFIX),
+                            settings=self._listening_settings(),
+                            progress=lambda msg: append_line(self.status, msg),
+                        )
+                    except (listening.ListeningError, OSError) as exc:
+                        # A listening copy is a convenience beside the
+                        # transcript, not the transcript. Losing an hour of
+                        # finished recognition because a spare WAV could not be
+                        # written would be the wrong trade every time.
+                        append_line(
+                            self.status,
+                            f"No listening copy: {friendly_error(exc)} "
+                            "The transcription itself is unaffected.",
+                        )
+
+            # Resolve a bundled model name to its local directory so we never
+            # try to download on an air-gapped machine.
+            model_sel = self._selected_model()
+            # One policy for every page (see resolve_model_choice): bundled names
+            # and model folders are used; anything else is refused in a shipped
+            # copy rather than handed to faster-whisper to download.
+            model = resolve_model_choice(model_sel, self._bundled_models)
+
+            verb = "Translating" if task == "translate" else "Transcribing"
+            transcribe_label = f"{prefix}{verb}"
+            # Word timestamps power word-level speaker assignment (diarization) and
+            # word-level confidence highlighting; skip the extra alignment pass when
+            # neither is needed so plain transcription stays fast.
+            need_words = self.diarize_var.get() or self.highlight_conf_var.get()
+            device = resolve_device(
+                _DEVICE_MODES.get(self.device_var.get(), default_mode())
+            )
+            if device.note:
+                append_line(self.status, device.note)
+            append_line(self.status, f"Processing on: {device.describe()}")
+
+            def _run(on: Device):
+                return transcribe_audio(
+                    media_path,
+                    model_size=model,
+                    device=on.device,
+                    compute_type=on.compute_type,
+                    task=task,
+                    language=language_arg,
+                    vad_filter=self.vad_var.get(),
+                    word_timestamps=need_words,
+                    initial_prompt=self.vocab_var.get().strip() or None,
+                    progress=self._step,
+                    on_progress=lambda f: self._set_progress(f, transcribe_label),
+                    cancelled=self._cancel_event.is_set,
+                )
+
+            try:
+                result = _run(device)
+            except Exception as exc:  # noqa: BLE001 - see fallback_to_cpu
+                # A GPU can be visible and still fail (VRAM, driver, a busy
+                # card). Losing the job to that is worse than running it slowly.
+                retry = fallback_to_cpu(device, exc)
+                if retry is None or self._cancel_event.is_set():
+                    raise
+                append_line(self.status, retry.note)
+                device = retry
+                result = _run(device)
+
+            # Record what produced this result while the settings are in hand.
+            provenance = AnalysisProvenance(
+                source=SourceRecord.from_path(src),
+                # The thresholds this run used, not the shipped defaults.
+                thresholds=active_thresholds(),
+                transcription=TranscriptionProvenance(
+                    model_name=model_sel,
+                    model_sha256=transcription_model_sha256(model),
+                    device=device.device,
+                    compute_type=device.compute_type,
+                    language_setting=language or "auto",
+                    detected_language=result.language,
+                    vad=self.vad_var.get(),
+                    initial_prompt=self.vocab_var.get().strip(),
+                    denoised=enhancement is not None,
+                    denoiser_sha256=(
+                        enhancement.model_sha256 if enhancement is not None else ""
+                    ),
+                    listening_copy=(
+                        Path(polished.output).name if polished is not None else ""
+                    ),
+                    listening_filters=(
+                        polished.filters() if polished is not None else ""
+                    ),
+                ),
+            )
+
+            append_line(
+                self.status,
+                f"Detected language: {result.language} "
+                f"({result.language_probability:.0%}), "
+                f"duration: {result.duration:.1f}s",
+            )
+            if (
+                task == "translate"
+                and untranslated_share(result.segments) > UNTRANSLATED_SHARE
+            ):
+                # Checked on what came back, not only on the model chosen: a
+                # model that can translate does not always do so.
+                self._untranslated.append(src.name)
+                append_line(
+                    self.status,
+                    f"{src.name}: most of this came back in the original "
+                    f"language ({result.language}), not English - the model "
+                    "did not translate it.",
+                )
+
+            if self.diarize_var.get():
+                # Kept as transcribed, before any speaker is attached to it, so
+                # the split can be done again from the same words rather than
+                # from the output of the last split. It belongs to the result on
+                # screen, which in a batch is the one that finished most
+                # recently.
+                undiarized = copy.deepcopy(result.segments) if set_view else None
+                self._diarize_into(result, src, voice_path, voice_is_normalized)
+                provenance.diarization = DiarizationProvenance.from_bundle(
+                    engine=self._diar_engine_used,
+                    expected_speaker_count=self._parse_num_speakers(),
+                    clustering_threshold=self._parse_threshold(),
+                    voice_leads=list(self._recognized_names.values()),
+                )
+            else:
+                undiarized = None
+
+            names = self._preset_names_for(result)
+            if set_view:
+                # Remember the result so speakers can be renamed afterwards.
+                self._result = result
+                self._result_source = src
+                self._result_outdir = save_dir
+                self._speaker_names = names
+                self._result_provenance = provenance
+                self._undiarized_segments = undiarized
+                self._speaker_choice_used = self.speaker_count_var.get()
+                self._speaker_edits = 0
+                self.transcript_view.set_result(result, names)
+                self._refresh_lead_legend()
+                self._update_redo_state()
+
+            self._note_if_much_was_skipped(result, src)
+
+            if save_dir is not None:
+                return self._save_outputs(result, src, save_dir, names)
+            return None
+        finally:
+            for scratch in (temp_wav, temp_clean, temp_listen):
+                if scratch is None:
+                    continue
+                try:
+                    scratch.unlink()
+                except OSError:
+                    pass
+
+    def _parse_num_speakers(self) -> Optional[int]:
+        """The count to hand the diarizer, or None to let it work one out."""
+        return speaker_count.parse(self.num_speakers_var.get())
+
+    def _parse_threshold(self) -> float:
+        raw = self.sensitivity_var.get().strip()
+        if not raw:
+            return 0.5
+        try:
+            value = float(raw)
+        except ValueError:
+            append_line(self.status, f"Ignoring invalid sensitivity: {raw!r}")
+            return 0.5
+        return min(max(value, 0.05), 1.0)
+
+    def _diarize_into(
+        self,
+        result: TranscriptionResult,
+        source: Path,
+        media_path: Path,
+        media_is_normalized: bool,
+    ) -> None:
+        # ``media_path`` here is the audio voices may be measured from: the
+        # original, normalised, and never the cleaned copy even when the words
+        # came from one. Everything below - the speaker split, recognising
+        # learned voices, and the copy kept for later enrolment - reads it.
+        # It used to be the cleaned copy, which put cleaned audio into
+        # voiceprints under the original recording's hash.
+        #
+        # Diarization needs a 16 kHz mono WAV; convert to a temp file unless the
+        # media we already have is one we normalized.
+        diar_wav = media_path
+        diar_temp: Optional[Path] = None
+        if not media_is_normalized:
+            append_line(self.status, "Preparing audio for diarization...")
+            diar_wav = convert_to_wav(
+                source, progress=lambda msg: append_line(self.status, msg)
+            )
+            diar_temp = diar_wav
+        # The bar is sitting at 100% from the transcription that just finished.
+        self._begin_phase("Identifying speakers…")
+        # Settled once, here, and handed to diarize() as a concrete engine: the
+        # record names the same one. Reading the setting again afterwards named
+        # whatever Method said when the run finished - and Method can be
+        # changed while a run is going.
+        self._diar_engine_used = chosen_backend(
+            ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+        )
+        try:
+            speaker_segments = diarize(
+                diar_wav,
+                backend=self._diar_engine_used,
+                num_speakers=self._parse_num_speakers(),
+                threshold=self._parse_threshold(),
+                progress=self._step,
+                on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
+                cancelled=self._cancel_event.is_set,
+            )
+            count = len({seg.speaker for seg in speaker_segments})
+            self._diarized_count = count
+            append_line(self.status, f"Identified {count} speaker(s).")
+            # Recognise enrolled voices (relabel turns to known speakers).
+            self._recognized_names = {}
+            if self._profile is not None and self.learn_var.get():
+                speaker_segments = self._recognize_speakers(
+                    speaker_segments, diar_wav, source
+                )
+            # Keep a 16 kHz copy of the audio for the rest of the session, so a
+            # post-run correction can teach a voice - and so the speaker split
+            # can be redone without transcribing the recording a second time.
+            # Cleared at the start of the next run and when the app closes.
+            self._set_session_wav(diar_wav)
+            result.segments = assign_speakers(result.segments, speaker_segments)
+        finally:
+            if diar_temp is not None:
+                try:
+                    diar_temp.unlink()
+                except OSError:
+                    pass
+
+    # -- Output / export ---------------------------------------------------
+
+    def _save_outputs(
+        self,
+        result: TranscriptionResult,
+        source: Path,
+        outdir: Path,
+        names: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """Write this recording's output. False, and recorded, if it could not.
+
+        A missing output folder used to be a line in the log and nothing more,
+        so a batch whose destination had gone - an unplugged drive, a share
+        that dropped - finished green with nothing written anywhere.
+        """
+        base = self._output_base(source)
+        reason = ""
+        if not outdir.is_dir():
+            # Said plainly rather than through the general error translator:
+            # an unplugged drive is not a mystery, and dressing it up as one
+            # helps nobody standing in front of the machine.
+            reason = f"the output folder is no longer there ({outdir})"
+        try:
+            if reason:
+                raise _SkipWrite
+            names = self._speaker_names if names is None else names
+            txt_path = outdir / output_names.transcript_name(base)
+            txt_path.write_text(
+                result.to_txt(names, blank_lines=self.blank_lines_var.get()),
+                encoding="utf-8",
+            )
+            append_line(self.status, f"Wrote transcript to {txt_path}")
+            if self.srt_var.get():
+                srt_path = outdir / output_names.subtitle_name(base)
+                srt_path.write_text(result.to_srt(names), encoding="utf-8")
+                append_line(self.status, f"Wrote subtitles to {srt_path}")
+        except _SkipWrite:
+            pass
+        except OSError as exc:
+            reason = friendly_error(exc)
+        if reason:
+            self._failed_saves.append(FailedRun(source.name, reason))
+            append_line(
+                self.status,
+                f"Transcribed {source.name}, but could not write its output: {reason}",
+            )
+            return False
+        return True
+
+    def _output_base(self, source: Path) -> str:
+        """The name this recording's output is written under.
+
+        Planned for the whole batch before it ran; a single file, or an edit
+        re-saved afterwards, falls back to the file's own name.
+        """
+        return self._output_names.get(source, output_names.clean(source.name))
+
+    def _save_outputs_if_possible(self) -> None:
+        """Re-save after a transcript edit, when an output folder is in use."""
+        # A rename may have confirmed the last lead, or a move created one.
+        self._refresh_lead_legend()
+        # Every call is a speaker tag changed by hand (the transcript view only
+        # signals for reassignments and renames), which is what a redo costs.
+        self._speaker_edits += 1
+        self._update_redo_state()
+        if self._result is not None and self._result_source and self._result_outdir:
+            self._resave_outputs()
+        else:
+            self._unsaved_edits += 1
+
+    def _resave_outputs(self) -> None:
+        """Write the transcript again after a correction or a redo.
+
+        A failure here went only to the Status tab: the correction stayed on
+        screen and the file on disk silently kept the old version.
+        """
+        result, source, outdir = self._result, self._result_source, self._result_outdir
+        if result is None or source is None or outdir is None:
+            return
+        if self._save_outputs(result, source, outdir) is False:
+            reason = self._failed_saves[-1].reason if self._failed_saves else ""
+            # Corrections are made in the card, so that is where this is said.
+            self._announce_in_card(
+                "error",
+                f"The change is on screen, but the saved transcript in {outdir} "
+                f"still has the old version ({reason.rstrip('.')}). Use Save as "
+                "Word… or Save project… to keep it somewhere else.",
+            )
+
+    # -- Redoing the speaker split -----------------------------------------
+
+    def _can_redo_speakers(self) -> bool:
+        """True when the split can be redone without transcribing again.
+
+        Needs the words as transcribed and the audio they came from; both are
+        kept for the session by a diarized run and dropped when the next one
+        starts, so this is false before the first run and after a plain
+        transcribe-only one.
+        """
+        if self._result is None or not self._undiarized_segments:
+            return False
+        wav = self._session_wav
+        return wav is not None and wav.exists()
+
+    def _update_redo_state(self) -> None:
+        def _do() -> None:
+            if self._busy:
+                # Each finished file of a batch, and every edit, asked for the
+                # button back - mid-run, where a redo would end the run's busy
+                # state while the batch carried on.
+                self.redo_button.configure(state="disabled")
+            elif self._can_redo_speakers():
+                self.redo_button.configure(state="normal")
+                people = "speaker" if self._diarized_count == 1 else "speakers"
+                self.redo_hint_var.set(
+                    f"Found {self._diarized_count} {people}. Wrong? Split it "
+                    "again with a different number — the recording is not "
+                    "transcribed again."
+                )
+            else:
+                self.redo_button.configure(state="disabled")
+                self.redo_hint_var.set(
+                    "Available after a run with “Identify who is speaking” on."
+                )
+
+        self.root.after(0, _do)
+
+    def _redo_speakers(self) -> None:
+        """Ask for a different speaker count and split the transcript again."""
+        if self._refuse_while_busy("splitting the speakers again"):
+            return
+        if not self._can_redo_speakers():
+            self._announce(
+                "warning",
+                "There is nothing to redo yet. Run a transcription with "
+                "“Identify who is speaking” on first.",
+            )
+            return
+        source = self._result_source
+        choice = ask_redo_speakers(
+            self.root,
+            current=self._speaker_choice_used,
+            found=self._diarized_count,
+            corrections=self._speaker_edits,
+            recording=source.name if source else "",
+        )
+        if choice is None:  # cancelled; "" is a real answer ("work it out")
+            return
+        if self._refuse_while_busy("splitting the speakers again"):
+            return  # a run was started while the question was open
+        self._claim_busy()
+        self._cancel_event.clear()
+        threading.Thread(
+            target=self._redo_speakers_worker, args=(choice,), daemon=True
+        ).start()
+
+    def _redo_speakers_worker(self, count_setting: str) -> None:
+        """Re-diarize the kept audio and re-split the transcript as transcribed."""
+        self._set_busy(True, "Identifying speakers…")
+        final_status = "Finished"
+        try:
+            result = self._result
+            wav = self._session_wav
+            base = self._undiarized_segments
+            if result is None or wav is None or not base:
+                raise RuntimeError(
+                    "The audio from that run is no longer available. Transcribe "
+                    "the recording again to change the number of speakers."
+                )
+            requested = speaker_count.parse(count_setting)
+            # What the settings will say *if this works*. Not applied yet: a
+            # cancelled or failed redo leaves the old transcript on screen, and
+            # Options claiming a count that produced none of it would be a lie -
+            # one that also rebuilds the Speaker 1..N fields under the operator,
+            # so a five-speaker transcript could lose fields three to five.
+            answered = (
+                speaker_count.from_setting(count_setting)
+                if count_setting
+                else SPEAKERS_UNKNOWN
+            )
+            append_line(
+                self.status,
+                "Redoing speaker separation"
+                + (f" with {requested} speaker(s)" if requested else "")
+                + " — the recording is not being transcribed again.",
+            )
+            self._begin_phase("Identifying speakers…")
+            self._diar_engine_used = chosen_backend(
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+            )
+            speaker_segments = diarize(
+                wav,
+                backend=self._diar_engine_used,
+                num_speakers=requested,
+                threshold=self._parse_threshold(),
+                progress=self._step,
+                on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
+                cancelled=self._cancel_event.is_set,
+            )
+            found = len({seg.speaker for seg in speaker_segments})
+            self._recognized_names = {}
+            if self._profile is not None and self.learn_var.get():
+                speaker_segments = self._recognize_speakers(
+                    speaker_segments, wav, self._result_source
+                )
+            # From the words as transcribed, never from the last split's output.
+            result.segments = assign_speakers(copy.deepcopy(base), speaker_segments)
+            self._diarized_count = found
+            self._speaker_choice_used = answered
+            # Committed: the new split is the transcript now, so the settings
+            # may follow it. Tk variables belong to the UI thread - writing
+            # num_speakers_var rebuilds the speaker-name fields.
+            self.root.after(0, lambda: self._set_speaker_count(answered))
+            # The hand corrections were made against the old split and are gone
+            # with it; the operator was told so before this started.
+            self._speaker_edits = 0
+            self._unsaved_edits = 0
+            names = self._preset_names_for(result, typed_names=False)
+            self._speaker_names = names
+            self.transcript_view.set_result(result, names)
+            self._refresh_lead_legend()
+            self._record_redo_provenance(requested)
+            self._resave_outputs()
+            people = "speaker" if found == 1 else "speakers"
+            message = f"Split again into {found} {people}."
+            append_line(self.status, message)
+            self._announce("success", message)
+            final_status = message
+        except CancelledError:
+            final_status = "Cancelled"
+            append_line(self.status, "Cancelled.")
+            self._announce("warning", "Cancelled. The transcript is unchanged.")
+        except Exception as exc:  # noqa: BLE001 - reported to the operator
+            final_status = "Failed"
+            append_line(self.status, traceback.format_exc())
+            self._announce("error", friendly_error(exc))
+        finally:
+            self._set_busy(False, final_status)
+            self._update_redo_state()
+
+    def _record_redo_provenance(self, requested: Optional[int]) -> None:
+        """Keep the analysis report honest about which split it is describing."""
+        provenance = self._result_provenance
+        if provenance is None:
+            return
+        provenance.diarization = DiarizationProvenance.from_bundle(
+            engine=self._diar_engine_used,
+            expected_speaker_count=requested,
+            clustering_threshold=self._parse_threshold(),
+            voice_leads=list(self._recognized_names.values()),
+        )
+
+    def _rerender_transcript(self) -> None:
+        self.transcript_view.render()
+
+    def _find_next(self) -> None:
+        self._find(backwards=False)
+
+    def _find_prev(self) -> None:
+        self._find(backwards=True)
+
+    def _find(self, *, backwards: bool) -> None:
+        query = self.find_var.get()
+        if not query.strip():
+            self.transcript_view.find("")
+            self.find_status_var.set("")
+            return
+        count = self.transcript_view.find(query, backwards=backwards)
+        self.find_status_var.set(f"{count} match(es)" if count else "No matches")
+
+    def _refresh_lead_legend(self) -> None:
+        """Show the voice-lead legend while any lead is on screen.
+
+        Called from runs and redos, which are on worker threads; widgets are
+        only touched on the UI thread, so from anywhere else it reschedules
+        itself there.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            self.root.after(0, self._refresh_lead_legend)
+            return
+        if any_leads(self._speaker_names.values()):
+            self.lead_legend_var.set(LEAD_LEGEND)
+            if not self._lead_legend.winfo_manager():
+                self._lead_legend.pack(
+                    anchor="w", pady=(SPACE_XS, 0), before=self._output_tabs
+                )
+        else:
+            self.lead_legend_var.set("")
+            self._lead_legend.pack_forget()
+
+    def _copy_transcript(self) -> None:
+        """Copy the rendered transcript text to the clipboard."""
+        text = self.transcript_view.get_text()
+        if not text.strip():
+            self.progress_label_var.set("Nothing to copy yet.")
+            return
+        if any_leads(self._speaker_names.values()):
+            # Pasted into a report, the lines lose the screen around them; the
+            # legend goes with them, as it does in every saved format.
+            text = f"{LEAD_LEGEND}\n\n{text}"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.progress_label_var.set("Transcript copied to clipboard.")
+
+    def _save_transcript_docx(self) -> None:
+        """Save the current transcript as a Word document."""
+        result = self._result
+        if result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        default = (
+            f"{self._result_source.stem}.docx"
+            if self._result_source
+            else "transcript.docx"
+        )
+        path = filedialog.asksaveasfilename(
+            title="Save transcript as Word",
+            defaultextension=".docx",
+            initialfile=default,
+            filetypes=[("Word document", "*.docx")],
+            parent=active_window(self.root),
+        )
+        if not path:
+            return
+        try:
+            transcript_to_docx(
+                result,
+                path,
+                self._speaker_names,
+                blank_lines=self.blank_lines_var.get(),
+            )
+            self._unsaved_edits = 0
+            self._report_saved(path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self._report_not_saved("The Word document was not saved", exc)
+
+    def current_analysis(
+        self,
+    ) -> "Tuple[Optional[TranscriptionResult], Dict[str, str], Optional[AnalysisProvenance]]":
+        """The displayed result, its speaker names and its provenance.
+
+        Lets the Speaker Compare tab put the transcript and its traceability into
+        an analysis report without reaching into this tab's internals.
+        """
+        return self._result, self._speaker_names, self._result_provenance
+
+    def _save_analysis_report(self) -> None:
+        """Write a report covering the transcript and how it was produced."""
+        result = self._result
+        if result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        stem = self._result_source.stem if self._result_source else "analysis"
+        path = filedialog.asksaveasfilename(
+            title="Save analysis report",
+            defaultextension=".docx",
+            initialfile=f"{stem}-report.docx",
+            filetypes=[
+                ("Word document", "*.docx"),
+                ("Text file", "*.txt"),
+            ],
+            parent=active_window(self.root),
+        )
+        if not path:
+            return
+        try:
+            write_analysis_report(
+                path,
+                result=result,
+                speaker_names=self._speaker_names,
+                provenance=self._result_provenance,
+            )
+            self._report_saved(path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self._report_not_saved("The analysis report was not saved", exc)
+
+    def _save_project(self) -> None:
+        """Save the result + speaker edits to a reloadable project file."""
+        result = self._result
+        if result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        stem = self._result_source.stem if self._result_source else "transcript"
+        path = filedialog.asksaveasfilename(
+            title="Save project",
+            defaultextension=PROJECT_SUFFIX,
+            initialfile=f"{stem}{PROJECT_SUFFIX}",
+            filetypes=[
+                ("Whispers project", f"*{PROJECT_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+            parent=active_window(self.root),
+        )
+        if not path:
+            return
+        try:
+            save_project(
+                path,
+                result,
+                self._speaker_names,
+                self._result_source,
+                self._result_provenance,
+            )
+            self._unsaved_edits = 0
+            self._report_saved(path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self._report_not_saved("The project was not saved", exc)
+
+    def _open_project(self) -> None:
+        """Load a saved project so its transcript can be reviewed/edited again."""
+        if self._refuse_while_busy("opening a project"):
+            return
+        path = filedialog.askopenfilename(
+            title="Open project",
+            filetypes=[
+                # Projects saved before the rename end in the old name.
+                ("Whispers project", f"*{PROJECT_SUFFIX} *{OLD_PROJECT_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+            parent=active_window(self.root),
+        )
+        if not path:
+            return
+        try:
+            record = load_project_record(path)
+            result = record.result
+            speaker_names = record.speaker_names
+            source = record.source
+            self._result_provenance = record.provenance
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self._report_not_saved("The project could not be opened", exc)
+            return
+        self._result = result
+        self._speaker_names = speaker_names
+        # Restore the source path so audio playback still works; outputs are no
+        # longer auto-saved to a folder until the next run (re-save the project).
+        self._result_source = Path(source) if source else None
+        self._result_outdir = None
+        # This transcript is not from the current run's audio, so voiceprint
+        # enrolment must not attach its corrections to a stale recording.
+        self._clear_session_wav()
+        self._recognized_names = {}
+        # Nor may the speaker split be redone: the words on screen came out of a
+        # file, not out of this session, and the audio behind them is not here.
+        # The button is disabled by _can_redo_speakers either way; this stops it
+        # sitting there enabled, offering something that would only refuse.
+        self._undiarized_segments = None
+        self._diarized_count = 0
+        self._speaker_edits = 0
+        self._unsaved_edits = 0
+        self._speaker_choice_used = SPEAKERS_UNSET
+        self._update_redo_state()
+        # That caveat was about the run this transcript did not come from.
+        self._set_result_caveat("")
+        # So were the output names, the summary line above the transcript and
+        # the banner. Left standing, the page described the previous recording
+        # - its name, language and length, and a green "complete" - over a
+        # transcript of a different one.
+        self._output_names = {}
+        self.transcript_view.set_result(result, self._speaker_names)
+        self._refresh_lead_legend()
+        self._describe_result()
+        recording = self._result_source.name if self._result_source else None
+        self.banner.show(
+            "info",
+            f"Opened {Path(path).name}"
+            + (f" \u2014 the transcript of {recording}." if recording else "."),
+        )
+        self.progress_label_var.set(f"Opened {Path(path).name}")
+
+    def _on_drop_media(self, paths: List[Path]) -> None:
+        """A dropped file loads as input; a folder, or several files, fill the batch."""
+        if not paths:
+            return
+        if len(paths) == 1 and not paths[0].is_dir():
+            self._use_single_file(paths[0])
+        else:
+            self._add_batch_paths(paths)
+
+    # -- Batch queue -------------------------------------------------------
+
+    def _add_batch_files(self) -> None:
+        patterns = " ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS)
+        paths = filedialog.askopenfilenames(
+            filetypes=[("Audio/Video", patterns), ("All files", "*.*")],
+            parent=active_window(self.root),
+        )
+        self._add_batch_paths([Path(p) for p in paths if p])
+
+    def _add_batch_folder(self) -> None:
+        """Queue every recording in a folder, including the folders inside it."""
+        path = filedialog.askdirectory(
+            title="Folder of recordings to transcribe",
+            parent=active_window(self.root),
+        )
+        if path:
+            self._add_batch_paths([Path(path)])
+
+    def _add_batch_paths(self, paths: List[Path]) -> None:
+        """Add files, and the recordings inside any folders, to the queue."""
+        found = folder_batch.expand(paths)
+        added = 0
+        # A file already chosen as the single input goes into the queue first:
+        # once a queue exists it is all that runs, and leaving the file in the
+        # Recording box would show something that is never transcribed.
+        single = self.input_file_var.get().strip()
+        if single and found.recordings:
+            chosen = Path(single)
+            if chosen not in self._batch_files:
+                self._batch_files.append(chosen)
+                added += 1
+            self.input_file_var.set("")
+        for path in found.recordings:
+            if path not in self._batch_files:
+                self._batch_files.append(path)
+                added += 1
+        # Carried so the queue can account for what the walk left behind, and
+        # the Status log can name it - a folder that arrives as a shorter list
+        # than the operator expected has to say why.
+        self._batch_found.folders += found.folders
+        self._batch_found.ignored += found.ignored
+        self._batch_found.unreadable.extend(found.unreadable)
+        self._batch_found.converted.extend(found.converted)
+        for name in found.converted:
+            append_line(
+                self.status,
+                f"Left out {name}: it looks like the WAV a previous run made "
+                "from the video of the same name. Choose it directly if it is "
+                "a separate recording.",
+            )
+        for name in found.unreadable:
+            append_line(self.status, f"Could not read the folder {name}.")
+        if found.folders and not added and not self._batch_files:
+            self.progress_label_var.set("No recordings in that folder")
+        self._update_batch_label()
+
+    def _clear_batch_files(self) -> None:
+        self._batch_files = []
+        self._batch_found = folder_batch.Found()
+        self._update_batch_label()
+
+    def _update_batch_label(self) -> None:
+        summary = folder_batch.describe(self._batch_found, queued=self._batch_files)
+        if not self._batch_files:
+            self.batch_files_var.set(summary)
+            # Nothing queued: the only reason to keep Clear is to dismiss a
+            # "no recordings in that folder" notice.
+            self._batch_clear.pack_forget()
+            if summary:
+                self._batch_clear.pack(side="left", padx=(SPACE_SM, 0))
+            return
+        self.batch_files_var.set(
+            f"{summary} Transcribe recording will work through all of them."
+        )
+        self._batch_clear.pack(side="left", padx=(SPACE_SM, 0))
+
+    # -- Audio playback ----------------------------------------------------
+
+    def _listening_settings(self) -> "listening.ListeningSettings":
+        """The listening filters as the operator has them set."""
+        return listening.ListeningSettings(
+            strength=self.listening_strength_var.get() or listening.STANDARD
+        )
+
+    def _play_segment(self, start: float, end: float) -> None:
+        """Play the source audio between ``start`` and ``end`` (off the UI thread)."""
+        source = self._result_source
+        if source is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+
+        # Read off the Tk variables here, on the UI thread, and hand the
+        # worker plain values: the rest of this method already captures
+        # ``source`` the same way rather than reaching back into the widgets.
+        filtered = self.listening_playback_var.get()
+        settings = self._listening_settings() if filtered else None
+
+        def _worker() -> None:
+            try:
+                self._player.play_segment(source, start, end, settings=settings)
+                self.progress_label_var.set(
+                    f"Playing {self._clock(start)}–{self._clock(end)}"
+                    f"{' (filtered)' if filtered else ''}…"
+                )
+            except PlaybackError as exc:
+                self.progress_label_var.set(friendly_error(exc))
+
+        # ffmpeg extraction is quick but still I/O; keep the click responsive.
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _stop_audio(self) -> None:
+        self._player.stop()
+        self.progress_label_var.set("Stopped.")
+
+    @staticmethod
+    def _clock(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        return f"{seconds // 60}:{seconds % 60:02d}"
+
+    def _preset_names_for(
+        self, result: TranscriptionResult, *, typed_names: bool = True
+    ) -> Dict[str, str]:
+        """Build a speaker-id -> display-name map for this result.
+
+        ``typed_names`` is False when re-splitting an existing transcript: see
+        :mod:`whispers.speaker_names` for why a typed name may not travel across
+        a new split and a recognised one may.
+        """
+        return preset_names(
+            (seg.speaker or "" for seg in result.segments),
+            self._recognized_names,
+            [var.get() for var in self.speaker_name_vars],
+            use_typed=typed_names,
+        )
+
+    # -- Voiceprint recognition / enrolment --------------------------------
+
+    def _get_embedder(self) -> Optional[SpeakerEmbedder]:
+        """The speaker-embedding extractor, built once; ``None`` if unavailable."""
+        if self._embedder is None:
+            try:
+                self._embedder = SpeakerEmbedder()
+            except Exception as exc:  # noqa: BLE001 - degrade to no voiceprints
+                self._embedder = False
+                append_line(
+                    self.status,
+                    "Voiceprints unavailable (speaker-embedding model not "
+                    f"loaded): {exc}",
+                )
+        return self._embedder if isinstance(self._embedder, SpeakerEmbedder) else None
+
+    def _recognize_speakers(
+        self, speaker_segments, diar_wav: Path, source: "Optional[Path]"
+    ):
+        """Relabel diarizer turns to enrolled voices; fills ``_recognized_names``.
+
+        ``source`` is the recording the transcript was made from. The refusal
+        for processed audio lives here, the one place every route to
+        recognition passes through. It was checked at the first run's call
+        only, so Redo speaker separation recognised voices on a transcript of a
+        cleaned copy that the first run had correctly refused.
+        """
+        refusal = _derived_voice_refusal(source)
+        if refusal is not None:
+            append_line(self.status, f"Voice recognition skipped. {refusal}")
+            return speaker_segments
+        profile = self._profile
+        if profile is None or not profile.voiceprints:
+            return speaker_segments
+        embedder = self._get_embedder()
+        if embedder is None:
+            return speaker_segments
+        try:
+            active = active_thresholds()
+            relabeled, name_map = recognize(
+                diar_wav,
+                speaker_segments,
+                list(profile.voiceprints.values()),
+                embedder,
+                threshold=active.recognition_acceptance,
+                margin=active.recognition_margin,
+                # Putting a person's name on a turn is an assessment, so it
+                # takes the same minimum the comparison page uses before it will
+                # make one. It used to be the 1 s embedding floor, which named
+                # speakers on turns the comparison page would have called
+                # Insufficient data.
+                min_assess_seconds=active.min_questioned_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a run on recognition
+            append_line(self.status, f"Voice recognition skipped: {exc}")
+            return speaker_segments
+        self._recognized_names = name_map
+        if name_map:
+            recognised = ", ".join(sorted(set(name_map.values())))
+            append_line(
+                self.status,
+                f"Suggested by voice similarity (unconfirmed leads): {recognised}.",
+            )
+        return relabeled
+
+    def _set_session_wav(self, diar_wav: Path) -> None:
+        """Keep a 16 kHz copy of the current audio for post-run enrolment."""
+        self._clear_session_wav()
+        try:
+            handle, tmp = tempfile.mkstemp(suffix=".wav")
+            os.close(handle)
+            shutil.copyfile(diar_wav, tmp)
+            self._session_wav = Path(tmp)
+        except OSError:
+            self._session_wav = None
+
+    def _clear_session_wav(self) -> None:
+        if self._session_wav is not None:
+            try:
+                self._session_wav.unlink()
+            except OSError:
+                pass
+            self._session_wav = None
+
+    def _enroll_voice(self, name: str, spans: List[Tuple[float, float]]) -> None:
+        """Fold the audio of ``spans`` into ``name``'s voiceprint (off the UI thread).
+
+        Triggered by a correction in the transcript. A no-op unless a profile is
+        active, learning is on, and we kept this run's audio.
+        """
+        profile = self._profile
+        if profile is None or not self.learn_var.get():
+            return
+        if is_lead(name):
+            # The name is still the recogniser's suggestion. Learning its voice
+            # from a line attributed to it would let a guess reinforce itself,
+            # so the operator confirms the name first.
+            self.progress_label_var.set(
+                f"Not learned: {name} is still a suggestion. Click the speaker "
+                "tag and confirm the name first."
+            )
+            return
+        refusal = _derived_voice_refusal(self._result_source)
+        if refusal is not None:
+            self.progress_label_var.set(f"Voice not learned. {refusal}")
+            return
+        wav = self._session_wav
+        if wav is None or not wav.exists():
+            return
+        embedder = self._get_embedder()
+        if embedder is None:
+            return
+        # Read now, on the UI thread: by the time the worker files a proposed
+        # sample, a new run may have replaced both, and the sample would be
+        # recorded as coming from a recording it never came from.
+        source = self._result_source
+        provenance = self._result_provenance
+        source_sha256 = (
+            provenance.source.sha256 if provenance and provenance.source else None
+        )
+
+        def _worker() -> None:
+            try:
+                learned = Voiceprint(name=name)
+                added = enroll_spans(learned, wav, spans, embedder)
+                if added:
+                    # Added to the profile as stored now, not to the copy held
+                    # when this started: saving that copy wrote over anything
+                    # stored in the seconds between, such as an import.
+                    stored = add_learned_voice(profile.name, name, learned.vectors)
+                    self.root.after(0, lambda: self._adopt_profile(profile, stored))
+                    self.root.after(
+                        0,
+                        lambda: self.progress_label_var.set(
+                            f"Learned {name}'s voice (+{added} sample(s))."
+                        ),
+                    )
+            except ProfileSaveError as exc:
+                # Learned in memory but not kept: say so, rather than
+                # "Learned", which the next session would contradict.
+                self._announce("error", f"Voice not kept. {exc}")
+            except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
+                self.progress_label_var.set(friendly_error(exc))
+            self._propose_to_speaker_profile(
+                name, wav, spans, embedder, source, source_sha256
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _propose_to_speaker_profile(
+        self,
+        name: str,
+        wav: Path,
+        spans: List[Tuple[float, float]],
+        embedder,
+        source: Optional[Path],
+        source_sha256: Optional[str],
+    ) -> None:
+        """Offer this correction to a known subject's profile - unapproved.
+
+        A correction can be wrong, so it never joins a known actor's trusted
+        reference material on its own: the sample is stored pending review in
+        *Speaker profiles*, where an analyst approves or removes it. The
+        operation profile's own voiceprints (above) are a separate, disposable
+        who-said-what aid and are updated regardless.
+        """
+        try:
+            subject = find_speaker_profile_by_name(name)
+            if subject is None:
+                return
+            result = enroll_from_wav(
+                subject,
+                wav,
+                spans,
+                embedder,
+                source_filename=source.name if source else None,
+                source_sha256=source_sha256,
+                sample_type=SAMPLE_LEARNED,
+                notes="Proposed automatically from a transcript correction.",
+            )
+            if not result.added:
+                return
+            # Into the subject as stored now: a second correction's proposal,
+            # or a removal on Speaker Profiles, may have saved it meanwhile.
+            subject, added = add_samples(subject, result.added)
+            if not added:
+                return
+            # Speaker Profiles may be showing this subject: without this it
+            # could later save its older copy over these proposed samples.
+            notify = self.on_profiles_changed
+            if notify is not None:
+                self.root.after(0, notify)
+            self.progress_label_var.set(
+                f"{len(added)} sample(s) proposed for {subject.display_name} - "
+                "approve them in Speaker profiles before they are used."
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a correction on this
+            append_line(self.status, f"Could not propose a speaker sample: {exc}")
+
+    # -- Saving a corrected speaker to a subject profile -------------------
+
+    def _speaker_spans(self) -> "Dict[str, List[Tuple[float, float]]]":
+        """Display name -> the spans currently attributed to that speaker."""
+        result = self._result
+        if result is None:
+            return {}
+        return spans_by_speaker_name(result.segments, self._speaker_names)
+
+    def _save_speaker_to_profile(self) -> None:
+        """Keep the operator's speaker corrections as a subject's reference audio.
+
+        Correcting the tags in a transcript is where an operator knows, better
+        than the model does, which audio belongs to whom. This is how that work
+        leaves the transcript: the chosen speaker's lines are enrolled onto a
+        known subject - pending review, never trusted on the strength of a
+        correction alone.
+        """
+        if self._refuse_while_busy("saving a speaker"):
+            return
+        if self._result is None:
+            self._announce("warning", "Transcribe a recording first.")
+            return
+        refusal = _derived_voice_refusal(self._result_source)
+        if refusal is not None:
+            self._announce("warning", refusal)
+            return
+        spans = self._speaker_spans()
+        # Unconfirmed suggestions are not offered. Saving one would add the
+        # recogniser's own pick to that subject's review queue - audio that is,
+        # by construction, similar to the reference, so the outlier check would
+        # not flag it.
+        leads = sorted(name for name in spans if is_lead(name))
+        spans = {name: value for name, value in spans.items() if not is_lead(name)}
+        if leads and not spans:
+            self._announce(
+                "warning",
+                "Every speaker here is still an unconfirmed voice lead. Click a "
+                "speaker tag and confirm or correct the name before saving it to "
+                "a subject.",
+            )
+            return
+        if not spans:
+            self._announce(
+                "warning",
+                "This transcript has no separate speakers, so there is nothing to "
+                "attribute. Turn on \u201cIdentify who is speaking\u201d and "
+                "transcribe the recording again.",
+            )
+            return
+        embedder = self._get_embedder()
+        if embedder is None:
+            self._announce(
+                "error",
+                "No speaker-embedding model is available in this build, so a "
+                "reference sample cannot be measured. System status (top right) "
+                "shows what this copy can do.",
+            )
+            return
+        wav = self._session_wav
+        source = self._result_source
+        have_wav = wav is not None and wav.exists()
+        have_source = source is not None and source.exists()
+        if not have_wav and not have_source:
+            self._announce(
+                "warning",
+                "The audio behind this transcript is no longer on hand. Open the "
+                "recording and transcribe it again, then save the speaker.",
+            )
+            return
+
+        ordered = sorted(
+            (
+                (name, sum(end - start for start, end in items))
+                for name, items in spans.items()
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        choice = ask_save_speaker(
+            self.root, ordered, recording=source.name if source else ""
+        )
+        if choice is None:
+            return
+        if self._refuse_while_busy("saving a speaker"):
+            return
+        # Held for the few seconds it takes: the worker reads this run's audio
+        # and source, which a run started meanwhile would delete and replace -
+        # filing one recording's speaker under another recording's name.
+        self._claim_busy()
+        threading.Thread(
+            target=self._save_speaker_worker,
+            args=(choice, list(spans[choice.speaker]), embedder),
+            daemon=True,
+        ).start()
+
+    def _save_speaker_worker(
+        self,
+        choice: SaveSpeakerChoice,
+        spans: List[Tuple[float, float]],
+        embedder: SpeakerEmbedder,
+    ) -> None:
+        """Enrol the chosen speaker's audio off the UI thread, then report."""
+        try:
+            self._save_speaker(choice, spans, embedder)
+        finally:
+            self.root.after(0, self._release_busy)
+
+    def _save_speaker(
+        self,
+        choice: SaveSpeakerChoice,
+        spans: List[Tuple[float, float]],
+        embedder: SpeakerEmbedder,
+    ) -> None:
+        subject = choice.profile
+        self.progress_label_var.set(f"Measuring {choice.speaker}\u2019s speech\u2026")
+        notes = (
+            f"Added from the transcript of "
+            f"{self._result_source.name if self._result_source else 'a recording'} "
+            f"after the speaker labels were corrected."
+        )
+        try:
+            wav = self._session_wav
+            if wav is not None and wav.exists():
+                provenance = self._result_provenance
+                result = enroll_from_wav(
+                    subject,
+                    wav,
+                    spans,
+                    embedder,
+                    source_filename=(
+                        self._result_source.name if self._result_source else None
+                    ),
+                    source_sha256=(
+                        provenance.source.sha256
+                        if provenance and provenance.source
+                        else None
+                    ),
+                    sample_type=SAMPLE_LEARNED,
+                    notes=notes,
+                )
+            else:
+                # No kept analysis audio (a reopened project, say): go back to the
+                # recording itself, which also hashes the file the samples came from.
+                result = enroll_from_media(
+                    subject,
+                    self._result_source,  # type: ignore[arg-type]
+                    embedder,
+                    spans=spans,
+                    sample_type=SAMPLE_LEARNED,
+                    notes=notes,
+                    progress=self.progress_label_var.set,
+                )
+            for reason in result.skipped:
+                append_line(self.status, f"Not enrolled - {reason}")
+            if not result.added_count:
+                self._announce(
+                    "warning",
+                    f"Nothing was added to {subject.display_name}: none of "
+                    f"{choice.speaker}\u2019s audio was usable, or it is already "
+                    "enrolled from this recording. The Status tab lists each "
+                    "stretch and why.",
+                )
+                self.progress_label_var.set("Ready")
+                return
+            # An empty new subject is never written: the profile only reaches
+            # disk once there is something in it. An existing one is added to
+            # as stored now, not as it was when the dialog opened.
+            subject, added = add_samples(
+                subject, result.added, new_subject=choice.is_new
+            )
+        except ProfileError as exc:
+            self._announce("error", friendly_error(exc))
+            self.progress_label_var.set("Ready")
+            return
+        except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
+            append_line(self.status, traceback.format_exc())
+            self._announce("error", friendly_error(exc))
+            self.progress_label_var.set("Ready")
+            return
+
+        created = " (new subject)" if choice.is_new else ""
+        self._announce(
+            "success",
+            f"Added {len(added)} sample(s) - "
+            f"{sum(sample.speech_duration for sample in added):.0f} "
+            f"sec of speech - to {subject.display_name}{created}. They are "
+            "pending review: approve them on the Speaker Profiles page before "
+            "they are used as reference material.",
+        )
+        self.progress_label_var.set(
+            f"Saved {choice.speaker} to {subject.display_name}."
+        )
+        refresh = self.on_profiles_changed
+        if refresh is not None:
+            self.root.after(0, refresh)
+
+    # -- Profile management ------------------------------------------------
+
+    def _refresh_profiles(self) -> None:
+        self.profile_combo.configure(values=[""] + list_profiles())
+
+    def _on_profile_selected(self) -> None:
+        self._select_profile(self.profile_var.get())
+
+    def _select_profile(self, name: str, *, apply: bool = True) -> None:
+        """Make ``name`` the active profile, optionally applying its settings."""
+        name = (name or "").strip()
+        if not name:
+            self._profile = None
+            self.profile_var.set("")
+            return
+        profile = load_profile(name)
+        if profile is None:
+            self._profile = None
+            self.profile_var.set("")
+            return
+        self._profile = profile
+        self.profile_var.set(profile.name)
+        if apply and profile.settings:
+            self._apply_profile_settings(profile.settings)
+        vp_count = len(profile.voiceprints)
+        self.progress_label_var.set(
+            f"Profile '{profile.name}' loaded ({vp_count} learned voice(s))."
+        )
+
+    def _confirm_replace_profile(self, name: str, taken: str) -> bool:
+        """Ask before ``name`` replaces the stored profile ``taken``."""
+        same = taken == name
+        return messagebox.askyesno(
+            "Replace profile?",
+            (
+                f"A profile called \u2018{taken}\u2019 already exists"
+                + (
+                    ""
+                    if same
+                    else f", and \u2018{name}\u2019 would be stored in its place"
+                )
+                + ". Replacing it loses its settings and every voice it has "
+                "learned. Replace it?"
+            ),
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        )
+
+    def _adopt_profile(self, held: Profile, stored: Profile) -> None:
+        """Take ``stored`` as the active profile if ``held`` still is.
+
+        Recognition reads the active profile's voices, so a voice just learned
+        has to reach it. If the operator has chosen another profile since,
+        that one stays.
+        """
+        if self._profile is held:
+            self._profile = stored
+
+    def _store_profile(self, profile: Profile) -> bool:
+        """Save ``profile``; on failure say so where it will be seen."""
+        try:
+            save_profile(profile)
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return False
+        return True
+
+    def _new_profile(self) -> None:
+        name = simpledialog.askstring(
+            "New profile",
+            "Name this operation/profile:",
+            parent=active_window(self.root),
+        )
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        taken = existing_profile_name(name)
+        if taken is not None and not self._confirm_replace_profile(name, taken):
+            return
+        profile = Profile(name=name, settings=self._profile_settings())
+        if not self._store_profile(profile):
+            return
+        self._profile = profile
+        self._refresh_profiles()
+        self.profile_var.set(profile.name)
+        self.progress_label_var.set(f"Created profile '{profile.name}'.")
+
+    def _save_profile_settings(self) -> None:
+        """Store the current settings into the active profile (voiceprints kept)."""
+        profile = self._profile
+        if profile is None:
+            self.progress_label_var.set("Pick or create a profile first.")
+            return
+        try:
+            # Into the profile as stored, so voices it has learned since it was
+            # loaded - in this window or another - are kept.
+            stored = store_profile_settings(profile.name, self._profile_settings())
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return
+        self._profile = stored
+        self.progress_label_var.set(f"Saved profile '{profile.name}'.")
+
+    def _delete_profile(self) -> None:
+        profile = self._profile
+        if profile is None:
+            self.progress_label_var.set("No profile selected.")
+            return
+        voices = len(profile.voiceprints)
+        if not messagebox.askyesno(
+            "Delete profile",
+            f"Delete the profile \u2018{profile.name}\u2019"
+            + (f" and the {voices} voice(s) it has learned" if voices else "")
+            + "? This cannot be undone.",
+            icon="warning",
+            default="no",
+            parent=active_window(self.root),
+        ):
+            return
+        try:
+            delete_profile(profile.name)
+        except ProfileSaveError as exc:
+            self._announce("error", str(exc))
+            return
+        self._profile = None
+        self.profile_var.set("")
+        self._refresh_profiles()
+        self.progress_label_var.set("Profile deleted.")
+
+    def _export_profile(self) -> None:
+        """Write the active profile (settings + voiceprints) to a shareable file."""
+        profile = self._profile
+        if profile is None:
+            self.progress_label_var.set("Pick or create a profile first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export profile",
+            defaultextension=PROFILE_SUFFIX,
+            initialfile=f"{profile.name}{PROFILE_SUFFIX}",
+            filetypes=[
+                ("Whispers profile", f"*{PROFILE_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+            parent=active_window(self.root),
+        )
+        if not path:
+            return
+        try:
+            export_profile(profile, path)
+            self._report_saved(path, in_card=False)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self._report_not_saved("The profile was not exported", exc, in_card=False)
+
+    def _import_profile(self) -> None:
+        """Load a profile exported from another instance and add it here."""
+        path = filedialog.askopenfilename(
+            title="Import profile",
+            filetypes=[
+                ("Whispers profile", f"*{PROFILE_SUFFIX} *{OLD_PROFILE_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+            parent=active_window(self.root),
+        )
+        if not path:
+            return
+        try:
+            profile = read_profile_file(path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self._report_not_saved(
+                "The profile could not be imported", exc, in_card=False
+            )
+            return
+        # Don't silently clobber a profile already on this machine - including
+        # one stored under the same file name with different capitals, or one
+        # whose file cannot be read.
+        taken = existing_profile_name(profile.name)
+        if taken is not None and not self._confirm_replace_profile(profile.name, taken):
+            return
+        if not self._store_profile(profile):
+            return
+        self._profile = profile
+        self._refresh_profiles()
+        self.profile_var.set(profile.name)
+        if profile.settings:
+            self._apply_profile_settings(profile.settings)
+        vp_count = len(profile.voiceprints)
+        self.progress_label_var.set(
+            f"Imported profile '{profile.name}' ({vp_count} learned voice(s))."
+        )
+
+    def _profile_settings(self) -> Dict[str, object]:
+        """The settings a profile remembers (the persisted set plus custom words).
+
+        The active-profile name is dropped: a profile does not store which profile
+        it is (and keeping it would re-trigger selection when the profile's own
+        settings are applied).
+        """
+        data = self.get_settings()
+        data.pop("profile", None)
+        data["vocab"] = self.vocab_var.get()
+        return data
+
+    def _apply_profile_settings(self, data: Dict[str, object]) -> None:
+        self.apply_settings(data)
+        if "vocab" in data:
+            try:
+                self.vocab_var.set(str(data["vocab"]))
+            except Exception:  # noqa: BLE001 - ignore a stale value
+                pass
+
+    def close(self) -> None:
+        """Release session resources (called when the app closes)."""
+        self._clear_session_wav()
+
+    # -- Persisted preferences ---------------------------------------------
+
+    def _restore_speaker_count(self, data: Dict[str, object]) -> None:
+        """Work out whether stored settings actually answer the question.
+
+        A saved answer is an answer. A stored count without one - settings or a
+        profile written by a build that had no such question - counts too, since
+        a number can only have been typed deliberately. A blank from one of
+        those builds is the case this exists for: it meant "nobody chose", and
+        it is asked again rather than quietly run as "not sure".
+        """
+        stored = str(data.get("speaker_count") or "")
+        if speaker_count.is_answered(stored):
+            self._set_speaker_count(stored)
+            return
+        self._set_speaker_count(speaker_count.from_setting(data.get("num_speakers")))
+
+    def _settings_vars(self) -> "Dict[str, tk.Variable]":
+        """The settings persisted across launches (recording-specific fields like
+        the input file, batch queue and custom words are intentionally excluded)."""
+        return {
+            "model": self.model_var,
+            "language": self.language_var,
+            "task": self.task_var,
+            "vad": self.vad_var,
+            "device": self.device_var,
+            "convert_video": self.convert_video_var,
+            "srt": self.srt_var,
+            "blank_lines": self.blank_lines_var,
+            "highlight_conf": self.highlight_conf_var,
+            "diarize": self.diarize_var,
+            "engine": self.engine_var,
+            # The count, and the answer it came from. Both are stored: the count
+            # is what a run and a profile use, and the answer is what tells a
+            # later launch that the question was put and answered.
+            "num_speakers": self.num_speakers_var,
+            "speaker_count": self.speaker_count_var,
+            "sensitivity": self.sensitivity_var,
+            "write_output": self.write_output_var,
+            "output_dir": self.output_dir_var,
+        }
+
+    def get_settings(self) -> Dict[str, object]:
+        data: Dict[str, object] = {
+            key: var.get() for key, var in self._settings_vars().items()
+        }
+        # Remember the active profile + learning toggle across launches.
+        data["profile"] = self.profile_var.get()
+        data["learn_voices"] = self.learn_var.get()
+        return data
+
+    def apply_settings(self, data: Dict[str, object]) -> None:
+        if not data:
+            return
+        for key, var in self._settings_vars().items():
+            if key in data:
+                try:
+                    var.set(data[key])
+                except Exception:  # noqa: BLE001 - ignore a stale/invalid value
+                    pass
+        # A label from an older build (or a hand-edited settings file) would
+        # otherwise sit in the dropdown and resolve to Auto silently.
+        if self.device_var.get() not in _DEVICE_MODES:
+            self.device_var.set(_device_label(default_mode()))
+        # Likewise a Method this build does not offer (Nemotron, chosen on a
+        # copy that had it): back to Auto rather than a run that cannot start.
+        if self.engine_var.get() not in engine_labels():
+            self.engine_var.set(ENGINE_LABELS[0])
+        self._restore_speaker_count(data)
+        if "learn_voices" in data:
+            try:
+                self.learn_var.set(bool(data["learn_voices"]))
+            except Exception:  # noqa: BLE001 - ignore a stale value
+                pass
+        # Reflect any changes to the enable/disable + speaker-name state.
+        self._update_output_state()
+        self._update_speaker_state()
+        # Re-select the last-used profile (which applies its own settings on top).
+        # profile.settings carries no "profile" key, so this doesn't recurse.
+        profile_name = data.get("profile")
+        if profile_name:
+            self._select_profile(str(profile_name))

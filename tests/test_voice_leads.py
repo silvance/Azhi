@@ -9,9 +9,9 @@ lead marker everywhere until the operator confirms it.
 
 import pytest
 
-from whispr import speaker_names as sn
-from whispr.reports import _transcript_lines
-from whispr.transcription import Segment, TranscriptionResult
+from whispers import speaker_names as sn
+from whispers.reports import _transcript_lines
+from whispers.transcription import Segment, TranscriptionResult
 
 
 def _result():
@@ -94,7 +94,7 @@ def test_no_legend_when_every_name_was_typed_or_confirmed():
 
 def test_a_word_export_marks_and_explains_the_lead(tmp_path):
     docx = pytest.importorskip("docx")
-    from whispr.export import transcript_to_docx
+    from whispers.export import transcript_to_docx
 
     out = transcript_to_docx(_result(), tmp_path / "t.docx", _names())
     paragraphs = [p.text for p in docx.Document(str(out)).paragraphs]

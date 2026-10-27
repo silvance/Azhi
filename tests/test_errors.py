@@ -1,8 +1,8 @@
 import pytest
 
-# whispr.gui imports tkinter (via the package __init__); skip cleanly where the
+# whispers.gui imports tkinter (via the package __init__); skip cleanly where the
 # Tk runtime isn't available. errors.py itself has no GUI dependency.
-errors = pytest.importorskip("whispr.gui.errors")
+errors = pytest.importorskip("whispers.gui.errors")
 friendly_error = errors.friendly_error
 
 
@@ -33,9 +33,11 @@ def test_unknown_error_falls_back():
 
 
 def test_access_denied_names_the_place_and_what_to_do():
-    exc = PermissionError(13, "Access is denied", r"\\fileserver\cases\op.whispr.json")
+    exc = PermissionError(
+        13, "Access is denied", r"\\fileserver\cases\op.whispers.json"
+    )
     out = friendly_error(exc)
-    assert r"\\fileserver\cases\op.whispr.json" in out
+    assert r"\\fileserver\cases\op.whispers.json" in out
     assert "Choose another folder" in out
     assert "Errno" not in out and "PermissionError" not in out
 

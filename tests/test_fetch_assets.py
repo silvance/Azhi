@@ -19,7 +19,7 @@ def test_every_model_the_application_offers_can_be_bundled():
     so a release build that asked for it failed - after downloading every model
     named before it.
     """
-    from whispr.transcription import MODEL_SIZES
+    from whispers.transcription import MODEL_SIZES
 
     missing = [name for name in MODEL_SIZES if name not in fetch_assets.MODEL_REPOS]
     assert not missing, (
@@ -117,7 +117,7 @@ def test_embedding_metadata_hashes_the_downloaded_file(tmp_path):
     model.write_bytes(b"weights")
     name, url = fetch_assets._resolve_embedding("titanet-large")
     meta = fetch_assets.embedding_metadata(name, url, model)
-    from whispr.hashing import sha256_file
+    from whispers.hashing import sha256_file
 
     assert meta["sha256"] == sha256_file(model)
     assert meta["size"] == len(b"weights")
@@ -165,8 +165,8 @@ def nemotron_fetch(tmp_path, monkeypatch):
     import sys
     import types
 
-    from whispr import asset_lock
-    from whispr.hashing import sha256_file
+    from whispers import asset_lock
+    from whispers.hashing import sha256_file
 
     platform = "windows" if __import__("os").name == "nt" else "linux"
     archive_name, _ = fetch_assets.NEMO_SPEECH_ARCHIVES[platform]
@@ -177,7 +177,7 @@ def nemotron_fetch(tmp_path, monkeypatch):
     model_source = tmp_path / "source" / "model.gguf"
     model_source.write_bytes(model_bytes)
 
-    monkeypatch.setattr(fetch_assets, "ASSETS", tmp_path / "whispr_assets")
+    monkeypatch.setattr(fetch_assets, "ASSETS", tmp_path / "whispers_assets")
     monkeypatch.setattr(fetch_assets, "LOCK", asset_lock.empty())
     monkeypatch.setattr(fetch_assets, "save_lock", lambda: None)
     monkeypatch.setitem(
@@ -205,7 +205,7 @@ def nemotron_fetch(tmp_path, monkeypatch):
         "huggingface_hub",
         types.SimpleNamespace(hf_hub_download=hf_hub_download),
     )
-    return {"platform": platform, "out": tmp_path / "whispr_assets" / "nemotron"}
+    return {"platform": platform, "out": tmp_path / "whispers_assets" / "nemotron"}
 
 
 def test_nemotron_bundle_holds_program_libraries_licence_model_and_record(

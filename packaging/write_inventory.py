@@ -2,9 +2,9 @@
 
 Run after PyInstaller, against the output directory::
 
-    python packaging/write_inventory.py dist/whispr
+    python packaging/write_inventory.py dist/Whispers
 
-Writes ``bundle-inventory.json`` beside the executable. ``whispr --verify``
+Writes ``bundle-inventory.json`` beside the executable. ``Whispers --verify``
 reads it back on the deployment machine and reports which files are missing,
 truncated or altered - the difference between broken software and a copy that
 did not survive the journey to an air-gapped machine.
@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from whispr.bundle_check import INVENTORY_NAME, build_inventory  # noqa: E402
+from whispers.bundle_check import INVENTORY_NAME, build_inventory  # noqa: E402
 
 
 def main(argv: "list[str] | None" = None) -> int:

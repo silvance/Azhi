@@ -2,9 +2,9 @@ import copy
 
 import pytest
 
-from whispr import diarization
-from whispr.diarization import SpeakerSegment, assign_speakers, diarize
-from whispr.transcription import Segment, Word
+from whispers import diarization
+from whispers.diarization import SpeakerSegment, assign_speakers, diarize
+from whispers.transcription import Segment, Word
 
 
 def test_assign_speakers_by_overlap():
@@ -227,7 +227,7 @@ def test_assign_speakers_keeps_real_short_turn_at_min_length():
 def test_diarize_without_backend(tmp_path, monkeypatch):
     # With no pyannote, auto falls back to sherpa; sherpa-onnx isn't installed in
     # this environment -> clear RuntimeError.
-    import whispr.diarization as d
+    import whispers.diarization as d
 
     monkeypatch.setattr(d, "_pyannote_available", lambda: False)
     wav = tmp_path / "audio.wav"
@@ -244,7 +244,7 @@ def test_diarize_unknown_backend(tmp_path):
 
 
 def test_diarize_pyannote_backend_requires_pyannote(tmp_path, monkeypatch):
-    import whispr.diarization as d
+    import whispers.diarization as d
 
     monkeypatch.setattr(d, "_pyannote_available", lambda: False)
     wav = tmp_path / "audio.wav"
@@ -254,7 +254,7 @@ def test_diarize_pyannote_backend_requires_pyannote(tmp_path, monkeypatch):
 
 
 def test_diarize_sherpa_backend_forced(tmp_path, monkeypatch):
-    import whispr.diarization as d
+    import whispers.diarization as d
 
     # Even when pyannote is available, backend="sherpa" must route to sherpa.
     monkeypatch.setattr(d, "_pyannote_available", lambda: True)

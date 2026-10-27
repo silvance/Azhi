@@ -2,8 +2,8 @@ import math
 
 import pytest
 
-from whispr.diarization import SpeakerSegment
-from whispr.voiceprints import (
+from whispers.diarization import SpeakerSegment
+from whispers.voiceprints import (
     Voiceprint,
     best_match,
     centroid,

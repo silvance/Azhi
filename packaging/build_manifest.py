@@ -1,11 +1,11 @@
-"""Write ``whispr_assets/build_manifest.json`` describing an assembled bundle.
+"""Write ``whispers_assets/build_manifest.json`` describing an assembled bundle.
 
 Run at build time, after the assets have been fetched and before PyInstaller, so
 the shipped application can state exactly what it is: which commit produced it,
 which dependency versions went in, and the SHA-256 of every bundled model.
 
 Without this file the application reports its build identity as "unknown" rather
-than guessing - see :mod:`whispr.buildinfo`.
+than guessing - see :mod:`whispers.buildinfo`.
 
 This makes a build **auditable**: it records what was actually assembled, so a
 result traces back to a specific bundle and two bundles can be compared. What a
@@ -34,16 +34,17 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from whispr.dependencies import TRACKED_PACKAGES as TRACKED_DEPENDENCIES  # noqa: E402
-from whispr.hashing import sha256_file_or_none  # noqa: E402
+from whispers.buildinfo import application_version  # noqa: E402
+from whispers.dependencies import TRACKED_PACKAGES as TRACKED_DEPENDENCIES  # noqa: E402
+from whispers.hashing import sha256_file_or_none  # noqa: E402
 
-ASSETS = Path("whispr_assets")
+ASSETS = Path("whispers_assets")
 MANIFEST = ASSETS / "build_manifest.json"
 
 # Recorded with every build. The same list the dependency lock pins, plus the
 # application itself - the manifest says what a build was, the lock says what it
-# was allowed to be (see whispr/dependencies.py and packaging/check_lock.py).
-TRACKED_PACKAGES = ("silvance-whisper",) + TRACKED_DEPENDENCIES
+# was allowed to be (see whispers/dependencies.py and packaging/check_lock.py).
+TRACKED_PACKAGES = ("whispers",) + TRACKED_DEPENDENCIES
 
 
 def _package_versions() -> Dict[str, str]:
@@ -132,11 +133,11 @@ def build_manifest(
     versions = _package_versions()
     return {
         "build_id": build_id
-        or os.environ.get("WHISPR_BUILD_ID")
+        or os.environ.get("WHISPERS_BUILD_ID")
         or timestamp.replace(":", "").replace("-", ""),
         "git_commit": _git_commit(commit),
         "build_timestamp": timestamp,
-        "application_version": versions.get("silvance-whisper", "unknown"),
+        "application_version": application_version(),
         "platform": platform.platform(),
         "python_version": platform.python_version(),
         "dependencies": versions,

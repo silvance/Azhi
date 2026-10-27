@@ -10,8 +10,8 @@ import wave
 import numpy as np
 import pytest
 
-from whispr import questioned
-from whispr.questioned import (
+from whispers import questioned
+from whispers.questioned import (
     SELECTION_DIARIZED,
     SELECTION_RANGES,
     QuestionedSpeaker,
@@ -195,7 +195,7 @@ def test_an_empty_selection_measures_nothing(long_wav):
 
 
 def test_source_intervals_map_a_joined_window_back():
-    from whispr.questioned import source_intervals
+    from whispers.questioned import source_intervals
 
     pieces = [(0.0, 5.0, 100.0, 105.0), (5.0, 9.0, 200.0, 204.0)]
     # A window spanning the join maps to both original stretches.
@@ -254,7 +254,7 @@ def test_a_partly_usable_selection_warns_that_it_measured_less(tmp_path):
 
 
 def test_the_measurement_identifies_the_recording_it_came_from(long_wav):
-    from whispr.hashing import sha256_file
+    from whispers.hashing import sha256_file
 
     result = measure(long_wav, [(0.0, 40.0)], _CountingEmbedder())
     assert result.source_filename == long_wav.name
@@ -266,7 +266,7 @@ def test_the_measurement_identifies_the_recording_it_came_from(long_wav):
 
 
 def test_the_hash_is_of_the_operators_file_not_a_converted_copy(long_wav):
-    from whispr.hashing import sha256_file
+    from whispers.hashing import sha256_file
 
     before = sha256_file(long_wav)
     result = measure(long_wav, None, _CountingEmbedder())
@@ -322,9 +322,9 @@ def test_short_digest_abbreviates_for_status_lines():
 
 
 def test_a_comparison_inherits_the_measurement_and_its_provenance(long_wav):
-    from whispr.matching import compare_questioned_to_profile
-    from whispr.quality import GOOD
-    from whispr.speaker_profiles import (
+    from whispers.matching import compare_questioned_to_profile
+    from whispers.quality import GOOD
+    from whispers.speaker_profiles import (
         EmbeddingModelIdentity,
         EnrollmentSample,
         SpeakerProfile,
@@ -353,9 +353,9 @@ def test_a_comparison_inherits_the_measurement_and_its_provenance(long_wav):
 
 def test_a_comparison_counts_embeddings_not_source_intervals(scattered_wav):
     """Joined turns make one window map to several intervals - report windows."""
-    from whispr.matching import compare_questioned_to_profile
-    from whispr.quality import GOOD
-    from whispr.speaker_profiles import (
+    from whispers.matching import compare_questioned_to_profile
+    from whispers.quality import GOOD
+    from whispers.speaker_profiles import (
         EmbeddingModelIdentity,
         EnrollmentSample,
         SpeakerProfile,
