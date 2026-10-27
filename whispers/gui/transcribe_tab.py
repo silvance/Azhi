@@ -397,6 +397,11 @@ class TranscribeTab:
         self._session_wav: Optional[Path] = None
         # Set by the app so saving a speaker refreshes the Speaker Profiles page.
         self.on_profiles_changed: Optional[Callable[[], None]] = None
+        # Set by the app: search the speaker profiles for one speaker's lines,
+        # as (recording, speaker's name, the lines' time spans).
+        self.on_compare_speaker: Optional[
+            Callable[[Path, str, List[Tuple[float, float]]], None]
+        ] = None
         # Lazily-built speaker-embedding extractor; False once it has failed to
         # load (e.g. sherpa-onnx/model missing) so we don't retry every edit.
         self._embedder: "Optional[SpeakerEmbedder] | bool" = None
@@ -1043,6 +1048,9 @@ class TranscribeTab:
             highlight_var=self.highlight_conf_var,
             on_play=self._play_segment if self._playback_ok else None,
             on_enroll=self._enroll_voice,
+            on_compare=(
+                self._compare_speaker if bundled_embedding_model() is not None else None
+            ),
             placeholder=(
                 "Choose a recording above, then select Transcribe recording.\n\n"
                 "Your transcript appears here. Drag a file onto this window to "
@@ -3078,6 +3086,39 @@ class TranscribeTab:
         if result is None:
             return {}
         return spans_by_speaker_name(result.segments, self._speaker_names)
+
+    def _compare_speaker(self, speaker_id: str) -> None:
+        """Search every speaker profile for this speaker's lines, on Compare.
+
+        The lines as the transcript now has them, corrections included, and
+        under the name shown: two speakers renamed to one person are measured
+        together, as they are saved together. Measured from the recording
+        itself, never from a cleaned or listening copy.
+        """
+        compare = self.on_compare_speaker
+        result = self._result
+        if compare is None or result is None:
+            return
+        source = self._result_source
+        refusal = _derived_voice_refusal(source)
+        if refusal is not None:
+            self._announce("warning", refusal)
+            return
+        if source is None or not source.exists():
+            self._announce(
+                "warning",
+                "The recording behind this transcript is no longer where it "
+                "was, so its voices cannot be measured. Open the recording "
+                "and transcribe it again.",
+            )
+            return
+        name = self._speaker_names.get(speaker_id, speaker_id)
+        spans = spans_by_speaker_name(result.segments, self._speaker_names).get(name)
+        if not spans:
+            return
+        # The name as shown, a lead's marker and all: the record must not
+        # promote a suggestion to a name.
+        compare(source, name, spans)
 
     def _save_speaker_to_profile(self) -> None:
         """Keep the operator's speaker corrections as a subject's reference audio.

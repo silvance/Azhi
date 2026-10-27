@@ -51,6 +51,7 @@ class TranscriptView:
         highlight_var: Optional[tk.BooleanVar] = None,
         on_play: Optional[Callable[[float, float], None]] = None,
         on_enroll: Optional[Callable[[str, List[Tuple[float, float]]], None]] = None,
+        on_compare: Optional[Callable[[str], None]] = None,
         placeholder: str = "",
     ) -> None:
         self.root = root
@@ -66,6 +67,9 @@ class TranscriptView:
         # Learn a speaker's voice from a correction: (display name, audio spans).
         # None disables voiceprint enrolment (no profile / no audio).
         self._on_enroll = on_enroll
+        # Search the speaker profiles for one speaker's lines (speaker id).
+        # None where this build has no speaker profiles.
+        self._on_compare = on_compare
         self._result: Optional[TranscriptionResult] = None
         self._speaker_names: Dict[str, str] = {}
         # Off while a run or redo is going: an edit made then was lost when the
@@ -330,6 +334,15 @@ class TranscriptView:
                 menu.add_command(
                     label="▶ Play this line",
                     command=lambda: self._play_line(index),
+                )
+                menu.add_separator()
+            on_compare = self._on_compare
+            if on_compare is not None and result.segments[index].speaker:
+                # Reads the transcript, changes nothing: offered mid-run too.
+                shown = self._speaker_names.get(current, current)
+                menu.add_command(
+                    label=f"Compare \u2018{shown}\u2019 to speaker profiles…",
+                    command=lambda: on_compare(current),
                 )
                 menu.add_separator()
             if not self._editable:

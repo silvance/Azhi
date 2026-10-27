@@ -35,6 +35,7 @@ from ..comparison_log import (
     save_comparison,
 )
 from ..enrollment import (
+    format_time_ranges,
     parse_time_ranges,
     prepare_source,
     spans_for_speaker,
@@ -137,6 +138,9 @@ class SpeakerCompareTab:
         self._labels: dict = {}
         # The diarized cluster the operator chose, for the selection record.
         self._picked_speaker: Optional[str] = None
+        # The transcript speaker whose lines are in the ranges box, when they
+        # were sent from the Transcribe page; forgotten once anything changes.
+        self._transcript_speaker: Optional[str] = None
         # Every comparison and search made on this page since it opened (or
         # since "Start a new session report"), for the session report.
         self._session: List[ReportEntry] = []
@@ -166,7 +170,34 @@ class SpeakerCompareTab:
         self._build()
         self.refresh()
         self.reference_var.trace_add("write", lambda *_: self._update_action_state())
+        for var in (self.questioned_var, self.mode_var, self.ranges_var):
+            var.trace_add("write", lambda *_: self._forget_transcript_speaker())
         self._update_action_state()
+
+    def _forget_transcript_speaker(self) -> None:
+        self._transcript_speaker = None
+
+    def search_transcript_speaker(
+        self, source: Path, label: str, spans: List[Tuple[float, float]]
+    ) -> bool:
+        """Search every profile for one speaker's lines in a transcript.
+
+        The lines are put in as time ranges, so the page shows exactly what is
+        being measured, and the record says whose lines they were. False, with
+        the reason on the page, when a comparison is already running.
+        """
+        if self._measuring:
+            self._status(
+                "A comparison is already running. Wait for it, or cancel it, "
+                "then try again."
+            )
+            return False
+        self.questioned_var.set(str(source))
+        self.mode_var.set(MODE_RANGES)
+        self.ranges_var.set(format_time_ranges(spans))
+        self._transcript_speaker = label
+        self._search_gallery()
+        return True
 
     # -- UI ----------------------------------------------------------------
 
@@ -738,7 +769,13 @@ class SpeakerCompareTab:
         """How the questioned speech was chosen, in words, for the record."""
         mode = self.mode_var.get()
         if mode == MODE_RANGES:
-            return f"{SELECTION_RANGES} ({self.ranges_var.get().strip()})"
+            ranges = self.ranges_var.get().strip()
+            if self._transcript_speaker:
+                return (
+                    f"{SELECTION_RANGES} (the lines given to "
+                    f"{self._transcript_speaker} in the transcript: {ranges})"
+                )
+            return f"{SELECTION_RANGES} ({ranges})"
         if mode == MODE_DIARIZE:
             speaker = self._picked_speaker or "selected speaker"
             asked = self._requested_speakers

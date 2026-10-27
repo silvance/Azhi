@@ -189,3 +189,70 @@ def test_live_speakers_relabel_the_transcript_and_rewrite_the_file(
         page._reviewer = None
     finally:
         root.destroy()
+
+
+@pytest.fixture
+def app_with_profiles(app, monkeypatch):
+    # The Transcribe page asks for itself whether voices can be measured.
+    import whispers.gui.transcribe_tab as transcribe_mod
+
+    monkeypatch.setattr(
+        transcribe_mod, "bundled_embedding_model", lambda: Path("e.onnx")
+    )
+    import whispers.gui.app as app_mod
+
+    root = app.root
+    for child in list(root.winfo_children()):
+        child.destroy()
+    return app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True)
+
+
+def test_a_transcript_speaker_can_be_searched_against_every_profile(
+    app_with_profiles, tmp_path
+):
+    from whispers.transcription import Segment, TranscriptionResult
+
+    app = app_with_profiles
+    recording = tmp_path / "call.wav"
+    recording.write_bytes(b"RIFF")
+    page = app.transcribe
+    result = TranscriptionResult(
+        text="",
+        language="en",
+        language_probability=1.0,
+        duration=10.0,
+        segments=[
+            Segment(0.0, 2.0, "Who is it?", speaker="SPEAKER_00"),
+            Segment(2.5, 3.0, "Me.", speaker="SPEAKER_01"),
+            Segment(4.0, 6.5, "Come in.", speaker="SPEAKER_00"),
+        ],
+    )
+    page._result, page._result_source = result, recording
+    page._speaker_names = {"SPEAKER_00": "Anna"}
+    page.transcript_view.set_result(result, page._speaker_names)
+
+    menus = []
+    page.transcript_view._popup = lambda menu, _event: menus.append(menu)
+    searched = []
+    compare = app.speaker_compare
+    compare._search_gallery = lambda: searched.append(
+        (compare.questioned_var.get(), compare.ranges_var.get())
+    )
+    page.transcript_view._speaker_menu_handler(0)(None)
+    menu = menus[-1]
+    labels = {
+        menu.entrycget(i, "label"): i
+        for i in range(menu.index("end") + 1)
+        if menu.type(i) == "command"
+    }
+    menu.invoke(labels["Compare ‘Anna’ to speaker profiles…"])
+
+    # Anna's two lines, from the recording, on the Compare page.
+    assert searched == [(str(recording), "0:00.00-0:02.00, 0:04.00-0:06.50")]
+    assert app._current_page == "compare"
+    description = compare._selection_description([(0.0, 2.0), (4.0, 6.5)])
+    assert "the lines given to Anna in the transcript" in description
+
+    # Edited by hand, the ranges are no longer "Anna's lines".
+    compare.ranges_var.set("0:00-0:02")
+    assert "Anna" not in compare._selection_description([(0.0, 2.0)])

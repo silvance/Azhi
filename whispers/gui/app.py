@@ -14,9 +14,10 @@ import importlib.util
 import os
 import tkinter as tk
 from functools import partial
+from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from ..diagnostics import format_report
 from ..ocr import ocr_available
@@ -155,6 +156,7 @@ class WhispersApp:
             # a transcript correction had just proposed.
             self.transcribe.on_profiles_changed = self._profiles_changed
             self.speaker_profiles.on_profiles_changed = self._profiles_changed
+            self.transcribe.on_compare_speaker = self._compare_transcript_speaker
 
         if show_live:
             live_root = self._add_page("live", "Live")
@@ -249,6 +251,13 @@ class WhispersApp:
         button.pack(fill="x", pady=(0, SPACE_XS))
         self._nav_buttons[key] = button
         return frame
+
+    def _compare_transcript_speaker(
+        self, source: Path, label: str, spans: List[Tuple[float, float]]
+    ) -> None:
+        """A speaker clicked in the transcript, searched against every profile."""
+        self.show_page("compare")
+        self.speaker_compare.search_transcript_speaker(source, label, spans)
 
     def show_page(self, key: str) -> None:
         """Raise one page and mark its rail entry as the current one."""

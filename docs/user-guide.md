@@ -538,6 +538,16 @@ reference profile. The page is three numbered steps, in order:
 3. **Result** — what was found. While it is being measured, **Cancel** beside
    the progress bar stops it; nothing is compared or recorded.
 
+### Straight from a transcript
+
+Click a speaker's name in the transcript and choose **Compare '…' to speaker
+profiles…**. This page opens with that recording, the speaker's lines filled in
+as **Only these parts of the recording**, and searches every profile at once.
+It uses the lines as the transcript has them now, your corrections included,
+so correct the speaker tags first. The comparison record says whose lines
+they were. The result reads exactly as any other search: similarity bands and
+leads to look into, never an identification.
+
 ### Reading the result
 
 The result is a **similarity band**, not a verdict:
