@@ -182,3 +182,85 @@ def test_a_drag_scrolls_near_an_edge_but_not_where_it_starts(view):
     _settle(view.root)
     assert w.yview()[0] > top, "held at the bottom edge, it should scroll down"
     view.view._end_drag()
+
+
+@pytest.fixture
+def playing(view):
+    """The same view with a player: records what it was asked to play."""
+    played = []
+    view.view._on_play = lambda start, end: played.append((start, end))
+    view.view.render()
+    _settle(view.root)
+    view.played = played
+    return view
+
+
+def _wait_click(root):
+    import time
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        root.update()
+        time.sleep(0.02)
+
+
+def _click(view, index):
+    event = _event_at(view.view, index)
+    w = view.view.widget
+    w.event_generate("<Motion>", x=event.x, y=event.y, warp=True)
+    w.event_generate("<ButtonPress-1>", x=event.x, y=event.y)
+    w.event_generate("<ButtonRelease-1>", x=event.x, y=event.y, state=0x100)
+    return event
+
+
+def test_a_click_on_a_word_plays_from_it(playing):
+    menus = []
+    playing.view._popup = lambda menu, _event: menus.append(menu)
+    _click(playing, "word::2::1.first")
+    _wait_click(playing.root)
+    assert playing.played == [(9.0, 11.0)]  # word 1 of line 2, to the line's end
+    assert not menus, "a click plays; corrections are on the right button"
+
+
+def test_a_click_on_a_speaker_tag_plays_the_line(playing):
+    _click(playing, "line::3.first")
+    _wait_click(playing.root)
+    assert playing.played == [(12.0, 15.0)]
+
+
+def test_a_double_click_selects_without_playing(playing):
+    event = _event_at(playing.view, "word::2::1.first")
+    w = playing.view.widget
+    w.event_generate("<Motion>", x=event.x, y=event.y, warp=True)
+    for _ in range(2):  # two clicks in quick succession: a double-click
+        w.event_generate("<ButtonPress-1>", x=event.x, y=event.y)
+        w.event_generate("<ButtonRelease-1>", x=event.x, y=event.y, state=0x100)
+    _wait_click(playing.root)
+    assert playing.played == []
+    assert w.tag_ranges("sel"), "the double-click selected the word"
+
+
+def test_right_click_opens_the_corrections(playing):
+    menus = []
+    playing.view._popup = lambda menu, _event: menus.append(menu)
+
+    def labels(menu):
+        return [
+            menu.entrycget(i, "label")
+            for i in range(menu.index("end") + 1)
+            if menu.type(i) == "command"
+        ]
+
+    playing.view._context_menu(_event_at(playing.view, "line::2.first"))
+    assert any(label.startswith("Rename") for label in labels(menus[-1]))
+    playing.view._context_menu(_event_at(playing.view, "word::2::1.first"))
+    assert any(label.startswith("Move") for label in labels(menus[-1]))
+    assert playing.played == []
+
+
+def test_without_a_player_a_click_still_opens_the_corrections(view):
+    menus = []
+    view.view._popup = lambda menu, _event: menus.append(menu)
+    _click(view, "word::2::1.first")
+    _settle(view.root)
+    assert menus

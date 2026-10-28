@@ -1,10 +1,12 @@
 """The transcript pane: renders a result and supports speaker/word corrections.
 
 Diarization on hard or overlapping audio is never perfect, so the transcript is
-interactive: click a ``[speaker]`` tag to rename that speaker everywhere or move
-the whole line to another speaker, or click a single word to move just that word
-(or from it onward) to another speaker. A speaker tag, or a selected run of
-words, can also be dragged onto another speaker's line. An edit keeps the view
+interactive. A click plays: a word from there to the end of its line, a
+``[speaker]`` tag the whole line. A right-click offers the corrections: on a
+tag, rename that speaker everywhere or move the line to another speaker; on a
+word, move just that word (or from it onward). A speaker tag, or a selected run
+of words, can also be dragged onto another speaker's line. Without a way to
+play audio, a click opens the corrections instead. An edit keeps the view
 where it was and briefly marks what moved. The underlying split/merge logic
 lives in :mod:`whispers.editing`; this module is the Tk view around it.
 """
@@ -12,6 +14,7 @@ lives in :mod:`whispers.editing`; this module is the Tk view around it.
 from __future__ import annotations
 
 import tkinter as tk
+from functools import partial
 from tkinter import simpledialog
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple, cast
@@ -43,6 +46,9 @@ _MOVED_MS = 1600
 _EDGE = 24
 # How far the pointer must travel before a press on a speaker tag is a drag.
 _DRAG_START = 5
+# A click plays after this long, unless it turns out to be the first half of a
+# double-click (which selects a word, and should not set the audio going).
+_CLICK_MS = 250
 
 # In place of the correction items while a run is going.
 PAUSED_NOTE = "Speaker corrections wait until the run finishes"
@@ -89,11 +95,14 @@ class TranscriptView:
         self.widget = ScrolledText(
             parent, wrap="word", state="disabled", height=14, font="TkFixedFont"
         )
-        # Right-click: move a highlighted span of words to another speaker (for the
-        # case where a sentence mid-line belongs to someone else). Button-3 on
-        # Windows/Linux, Button-2 on macOS.
-        self.widget.bind("<Button-3>", self._selection_menu)
-        self.widget.bind("<Button-2>", self._selection_menu)
+        # Right-click: the corrections for whatever is under the pointer - a
+        # highlighted span, a speaker tag or a word. Button-3 on Windows/Linux,
+        # Button-2 on macOS.
+        self.widget.bind("<Button-3>", self._context_menu)
+        self.widget.bind("<Button-2>", self._context_menu)
+        # A double-click selects a word; the click it began with must not play.
+        self.widget.bind("<Double-Button-1>", self._cancel_click, add="+")
+        self._click_job: Optional[str] = None
         # Drag-to-move: after selecting a run of words, press within the selection
         # and drag it onto another speaker's line to reassign it (no menu needed).
         # In-progress drag state, or None. See _on_drag_press/_motion/_release.
@@ -226,20 +235,15 @@ class TranscriptView:
                             self.widget.insert("end", line_end)
                         line_tag = f"line::{index}"
                         tags = (line_tag, *_lowconf_seg(segment))
-                        # Ctrl-click (or the menu) plays this line - works the same
-                        # whether or not the transcript is diarized.
+                        # A click plays this line, as it does in a diarized
+                        # transcript; right-click offers the same as a menu.
                         if self._on_play is not None:
                             # ButtonRelease (not press) so a click-drag can select
-                            # words instead of immediately popping the menu.
+                            # words instead of setting the audio going.
                             self.widget.tag_bind(
                                 line_tag,
                                 "<ButtonRelease-1>",
-                                self._line_menu_handler(index),
-                            )
-                            self.widget.tag_bind(
-                                line_tag,
-                                "<Control-Button-1>",
-                                self._play_line_handler(index),
+                                self._click_handler(partial(self._play_line, index)),
                             )
                             self.widget.tag_bind(
                                 line_tag, "<Enter>", self._cursor_handler("hand2")
@@ -261,22 +265,22 @@ class TranscriptView:
                     if sid not in bound:
                         bound.add(sid)
                         self.widget.tag_config(spk_tag, underline=True)
-                    # Bind on a per-line tag so a click knows which segment it hit:
-                    # the menu can both fix this one line and rename globally. On
+                    # Bind on a per-line tag so a click knows which segment it hit.
+                    # A click plays the line (or, with no way to play, opens the
+                    # menu that fixes this line or renames the speaker). On
                     # ButtonRelease so a click-drag selects words instead.
                     self.widget.tag_bind(
-                        line_tag, "<ButtonRelease-1>", self._speaker_menu_handler(index)
+                        line_tag,
+                        "<ButtonRelease-1>",
+                        self._click_handler(
+                            partial(self._play_line, index),
+                            self._speaker_menu_handler(index),
+                        ),
                     )
                     self.widget.tag_bind(
                         line_tag, "<Enter>", self._cursor_handler("hand2")
                     )
                     self.widget.tag_bind(line_tag, "<Leave>", self._cursor_handler(""))
-                    if self._on_play is not None:
-                        self.widget.tag_bind(
-                            line_tag,
-                            "<Control-Button-1>",
-                            self._play_line_handler(index),
-                        )
                     self.widget.insert("end", f"[{name}]", (spk_tag, line_tag))
                     if segment.words:
                         # Render words individually so a single misattributed word
@@ -289,7 +293,10 @@ class TranscriptView:
                             self.widget.tag_bind(
                                 wtag,
                                 "<ButtonRelease-1>",
-                                self._word_menu_handler(index, w_index),
+                                self._click_handler(
+                                    partial(self._play_from_word, index, w_index),
+                                    self._word_menu_handler(index, w_index),
+                                ),
                             )
                             self.widget.tag_bind(
                                 wtag, "<Enter>", self._cursor_handler("hand2")
@@ -297,12 +304,6 @@ class TranscriptView:
                             self.widget.tag_bind(
                                 wtag, "<Leave>", self._cursor_handler("")
                             )
-                            if self._on_play is not None:
-                                self.widget.tag_bind(
-                                    wtag,
-                                    "<Control-Button-1>",
-                                    self._play_word_handler(index, w_index),
-                                )
                             wtags: tuple[str, ...] = (wtag,)
                             if highlight and is_low_confidence_word(word):
                                 wtags = (wtag, "lowconf")
@@ -527,8 +528,75 @@ class TranscriptView:
 
     # -- Playback ----------------------------------------------------------
 
+    def _click_handler(
+        self,
+        play: Callable[[], None],
+        menu: Optional[Callable[[object], None]] = None,
+    ) -> Callable[[object], None]:
+        """A left click: play, once it is clear it was not a double-click.
+
+        Not a click at all after a drag or a drag-select. Where nothing can be
+        played, the click opens ``menu`` (the corrections) instead, as it did
+        before clicking played.
+        """
+
+        def handler(event: object) -> None:
+            if self._has_selection():
+                return  # a drag-select; leave it for right-click "Move selection"
+            if self._drag is not None and self._drag.get("moved"):
+                return  # the end of a drag, handled as a drop
+            if self._on_play is None:
+                if menu is not None:
+                    menu(event)
+                return
+            self._cancel_click()
+
+            def run() -> None:
+                self._click_job = None
+                play()
+
+            self._click_job = self.widget.after(_CLICK_MS, run)
+
+        return handler
+
+    def _cancel_click(self, _event: object = None) -> None:
+        if self._click_job is not None:
+            self.widget.after_cancel(self._click_job)
+            self._click_job = None
+
+    def _context_menu(self, event: object) -> Optional[str]:
+        """Right-click: the corrections for what is under the pointer."""
+        if self._has_selection() and self._index_in_selection(event):
+            self._selection_menu(event)
+            return "break"
+        try:
+            idx = self.widget.index(f"@{event.x},{event.y}")  # type: ignore[attr-defined]
+        except tk.TclError:
+            return None
+        # A selection elsewhere would make the menus think this is a drag-select.
+        self.widget.tag_remove("sel", "1.0", "end")
+        names = self.widget.tag_names(idx)
+        seg = self._segment_at(idx)
+        if seg is None:
+            return None
+        if any(tag.startswith("spk::") for tag in names):
+            self._speaker_menu_handler(seg)(event)
+            return "break"
+        for tag in names:
+            if tag.startswith("word::"):
+                try:
+                    word = int(tag.split("::")[2])
+                except (IndexError, ValueError):
+                    continue
+                self._word_menu_handler(seg, word)(event)
+                return "break"
+        if self._on_play is not None:
+            self._line_menu_handler(seg)(event)
+            return "break"
+        return None
+
     def _line_menu_handler(self, index: int) -> Callable[[object], None]:
-        """Single-click menu for a non-diarized line (just Play)."""
+        """Right-click menu for a non-diarized line (just Play)."""
 
         def handler(event: object) -> None:
             if self._on_play is None or self._has_selection():
@@ -538,22 +606,6 @@ class TranscriptView:
                 label="▶ Play this line", command=lambda: self._play_line(index)
             )
             self._popup(menu, event)
-
-        return handler
-
-    def _play_line_handler(self, index: int) -> Callable[[object], str]:
-        def handler(_event: object) -> str:
-            self._play_line(index)
-            return "break"  # don't also fire the speaker-menu single-click
-
-        return handler
-
-    def _play_word_handler(
-        self, seg_index: int, word_index: int
-    ) -> Callable[[object], str]:
-        def handler(_event: object) -> str:
-            self._play_from_word(seg_index, word_index)
-            return "break"
 
         return handler
 

@@ -178,9 +178,10 @@ run takes.
   colours the parts the model was unsure
   about, so you can go straight to what needs checking rather than re-reading
   the lot.
-- **Ctrl-click any line or word** to hear just that span of the recording. Use
-  it constantly. A transcript you have spot-checked against the audio is worth
-  a great deal more than one you have not.
+- **Click any word or speaker tag** to hear it: a word plays from there to the
+  end of its line, a tag plays the whole line. Use it constantly. A transcript
+  you have spot-checked against the audio is worth a great deal more than one
+  you have not.
 - **Open in its own window**, on the transcript card, puts the transcript on a
   second screen at full size while the settings stay where they are. **Put it
   back on this page** returns it.
@@ -405,16 +406,19 @@ wrong.
 
 | To do this | Do that |
 | --- | --- |
-| Rename a speaker everywhere | Click their `[speaker]` tag |
-| Move one line to another speaker | Drag its `[speaker]` tag onto the other speaker's line, or click the tag and choose |
-| Move a single word | Click that word |
+| Rename a speaker everywhere | Right-click their `[speaker]` tag |
+| Move one line to another speaker | Drag its `[speaker]` tag onto the other speaker's line, or right-click the tag and choose |
+| Move a single word | Right-click that word |
 | Move part of a line | Highlight the words (double-click selects one) and drag them onto the other speaker's line |
 
 Moving part of a line is for when one person's sentence has been lumped into
-the middle of another's. Right-click offers the same moves as a menu. While
-you drag, the line it will land on is shaded, and holding the pointer at the
-top or bottom edge scrolls the transcript. After a move the transcript stays
-where it was, and the words that moved are marked for a moment.
+the middle of another's; right-clicking the highlighted words offers the same
+as a menu. A plain click plays, so it never changes anything. On a machine that
+cannot play audio, a click opens the same menus as a right-click.
+
+While you drag, the line it will land on is shaded, and holding the pointer at
+the top or bottom edge scrolls the transcript. After a move the transcript
+stays where it was, and the words that moved are marked for a moment.
 
 Which voice is "Speaker 1" is arbitrary, so if two names have landed on the
 wrong people it is one click to swap them.
