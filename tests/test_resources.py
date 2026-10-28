@@ -1,11 +1,11 @@
 import json
 import os
 
-from whispers import resources
+from sotto import resources
 
 
 def _make_assets(tmp_path):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     (assets / "ffmpeg").mkdir(parents=True)
     (assets / "models" / "small").mkdir(parents=True)
     (assets / "models" / "medium").mkdir(parents=True)
@@ -57,7 +57,7 @@ def test_bundled_models(tmp_path, monkeypatch):
 
 
 def test_bundled_diarization_models_present(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     diar = assets / "diarization"
     diar.mkdir(parents=True)
     (diar / "segmentation.onnx").write_bytes(b"\x00")
@@ -75,7 +75,7 @@ def test_bundled_diarization_models_absent(tmp_path, monkeypatch):
 def test_bundled_embedding_model_without_segmentation(tmp_path, monkeypatch):
     # A pyannote-only build ships embedding.onnx but no segmentation: voiceprints
     # must still find the embedding model on its own.
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     diar = assets / "diarization"
     diar.mkdir(parents=True)
     (diar / "embedding.onnx").write_bytes(b"\x00")
@@ -86,7 +86,7 @@ def test_bundled_embedding_model_without_segmentation(tmp_path, monkeypatch):
 
 
 def test_bundled_embedding_model_name(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     diar = assets / "diarization"
     diar.mkdir(parents=True)
     (diar / "embedding.onnx").write_bytes(b"\x00")
@@ -104,7 +104,7 @@ def test_bundled_embedding_model_absent(tmp_path, monkeypatch):
 
 
 def _embedding_assets(tmp_path, monkeypatch, metadata=None):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     diar = assets / "diarization"
     diar.mkdir(parents=True)
     (diar / "embedding.onnx").write_bytes(b"\x00")
@@ -150,7 +150,7 @@ def test_unreadable_embedding_metadata_is_ignored(tmp_path, monkeypatch):
 
 
 def test_configure_offline_hf_cache_present(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     (assets / "pyannote" / "hub").mkdir(parents=True)
     monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
     for var in ("HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE"):
@@ -169,7 +169,7 @@ def test_configure_offline_hf_cache_present(tmp_path, monkeypatch):
 def test_configure_offline_hf_cache_overrides_stale_env(tmp_path, monkeypatch):
     # An operator machine with pre-set HF vars must not win: the bundle has to
     # use its own cache, or offline lookups land in the wrong (empty) cache.
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     (assets / "pyannote" / "hub").mkdir(parents=True)
     monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
     monkeypatch.setenv("HF_HOME", "/some/stale/hf")
@@ -195,7 +195,7 @@ def test_configure_offline_hf_cache_absent_is_noop(tmp_path, monkeypatch):
 
 
 def test_configure_offline_translation_present(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     data = assets / "argos" / "argos-translate"
     data.mkdir(parents=True)
     monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
@@ -219,7 +219,7 @@ def test_configure_offline_translation_absent_is_noop(tmp_path, monkeypatch):
 
 
 def test_find_bundled_tesseract(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     (assets / "tesseract").mkdir(parents=True)
     name = "tesseract.exe" if os.name == "nt" else "tesseract"
     (assets / "tesseract" / name).write_bytes(b"\x00")
@@ -229,7 +229,7 @@ def test_find_bundled_tesseract(tmp_path, monkeypatch):
 
 
 def test_find_tesseract_prefers_bundled(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     (assets / "tesseract").mkdir(parents=True)
     name = "tesseract.exe" if os.name == "nt" else "tesseract"
     (assets / "tesseract" / name).write_bytes(b"\x00")
@@ -252,7 +252,7 @@ def test_find_tesseract_none_when_absent(tmp_path, monkeypatch):
 
 
 def test_configure_offline_ocr_present(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     tessdata = assets / "tesseract" / "tessdata"
     tessdata.mkdir(parents=True)
     monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
@@ -273,7 +273,7 @@ def test_configure_offline_ocr_absent_is_noop(tmp_path, monkeypatch):
 
 
 def test_find_bundled_tesseract_at_relocated_frozen_root(tmp_path, monkeypatch):
-    # PyInstaller can move the .exe out of whispers_assets/tesseract to the bundle
+    # PyInstaller can move the .exe out of sotto_assets/tesseract to the bundle
     # root; find_bundled_tesseract should still locate it via the frozen root.
     monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
     name = "tesseract.exe" if os.name == "nt" else "tesseract"
@@ -284,7 +284,7 @@ def test_find_bundled_tesseract_at_relocated_frozen_root(tmp_path, monkeypatch):
 
 
 def test_configure_offline_ocr_adds_binary_and_root_to_path(tmp_path, monkeypatch):
-    assets = tmp_path / "whispers_assets"
+    assets = tmp_path / "sotto_assets"
     tessdata = assets / "tesseract" / "tessdata"
     tessdata.mkdir(parents=True)
     name = "tesseract.exe" if os.name == "nt" else "tesseract"
@@ -297,3 +297,16 @@ def test_configure_offline_ocr_adds_binary_and_root_to_path(tmp_path, monkeypatc
     entries = os.environ[var].split(os.pathsep)
     assert str(assets / "tesseract") in entries  # binary's folder is searchable
     assert "/pre-existing" in entries  # existing entries preserved
+
+
+def test_an_earlier_versions_assets_variable_still_counts(tmp_path, monkeypatch):
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    monkeypatch.delenv(resources.ENV_ASSETS, raising=False)
+    monkeypatch.setenv("WHISPERS_ASSETS", str(old))
+    assert resources.env_setting(resources.ENV_ASSETS) == str(old)
+    assert old in resources.asset_dirs()
+    monkeypatch.setenv(resources.ENV_ASSETS, str(new))  # the new name wins
+    assert resources.env_setting(resources.ENV_ASSETS) == str(new)
+    assert resources.asset_dirs()[0] == new

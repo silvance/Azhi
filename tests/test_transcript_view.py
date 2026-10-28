@@ -18,9 +18,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def view():
-    from whispers.gui.theme import init_theme
-    from whispers.gui.transcript_view import TranscriptView
-    from whispers.transcription import Segment, TranscriptionResult, Word
+    from sotto.gui.theme import init_theme
+    from sotto.gui.transcript_view import TranscriptView
+    from sotto.transcription import Segment, TranscriptionResult, Word
 
     root = tk.Tk()
     root.geometry("700x300")

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from whispers import live
-from whispers.live import LiveTranscriber, LiveTranscriptionError
+from sotto import live
+from sotto.live import LiveTranscriber, LiveTranscriptionError
 
 
 class _FakeResult:
@@ -139,7 +139,7 @@ def test_test_connection_timeout(monkeypatch):
 
 
 def test_each_chunk_goes_to_the_speaker_reviewer_with_word_times(tmp_path, monkeypatch):
-    from whispers.transcription import Segment, TranscriptionResult, Word
+    from sotto.transcription import Segment, TranscriptionResult, Word
 
     asked = []
 
@@ -190,7 +190,7 @@ def test_each_chunk_goes_to_the_speaker_reviewer_with_word_times(tmp_path, monke
 def test_earlier_chunks_prime_the_next_only_where_the_model_carries_context(
     monkeypatch, tmp_path, model, primed
 ):
-    from whispers.transcription import TranscriptionResult
+    from sotto.transcription import TranscriptionResult
 
     prompts = []
 
@@ -243,7 +243,7 @@ def test_a_microphone_is_opened_with_its_own_input_options_and_recorded(
 
 
 def _real_ffmpeg():
-    from whispers.resources import find_ffmpeg
+    from sotto.resources import find_ffmpeg
 
     return find_ffmpeg()
 
@@ -263,9 +263,10 @@ def test_real_capture_keeps_the_recording_and_notices_silence(
     import time
     import wave
 
-    from whispers.transcription import TranscriptionResult
+    from sotto.transcription import TranscriptionResult
 
-    monkeypatch.setattr(live, "SILENT_WARNING_SECONDS", 3.0)
+    # One finished chunk of zeros is enough here, however slowly ffmpeg starts.
+    monkeypatch.setattr(live, "SILENT_WARNING_SECONDS", 2.0)
     monkeypatch.setattr(
         live,
         "transcribe_audio",
@@ -286,5 +287,10 @@ def test_real_capture_keeps_the_recording_and_notices_silence(
     with wave.open(str(recording), "rb") as kept:
         assert kept.getframerate() == 48000  # as the device sent it
         assert kept.getnchannels() == 2
-        assert 5.0 < kept.getnframes() / 48000 < 8.0  # finalised on stop
+        frames = kept.getnframes()
+        assert 1.0 < frames / 48000 < 8.0
+    # Finalised on Stop: the header counts every sample written (an unfinished
+    # WAV would claim none). Not a timing check: a loaded machine records less.
+    data_bytes = frames * 2 * 2
+    assert 0 <= recording.stat().st_size - data_bytes < 4096
     assert (live.SILENT_MESSAGE in statuses) is silent

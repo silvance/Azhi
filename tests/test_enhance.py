@@ -1,7 +1,7 @@
 """Noise reduction, and the things it must not be allowed to claim.
 
 An operator asked whether a conversation in a bar can be isolated. The answer
-is in whispers/enhance.py and in the numbers behind it: the bundled denoiser is
+is in sotto/enhance.py and in the numbers behind it: the bundled denoiser is
 good against steady noise and useless-to-harmful against a room full of other
 voices, which is the case people want it for. What these hold shut is not the
 model's behaviour - that is the model's - but the application's claims about
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from whispers import enhance
+from sotto import enhance
 
 
 def test_a_cleaned_copy_is_named_so_it_can_be_recognised(tmp_path):

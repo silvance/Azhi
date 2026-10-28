@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from whispers.dependencies import (  # noqa: E402
+from sotto.dependencies import (  # noqa: E402
     TRACKED_PACKAGES,
     canonical,
     drift,
@@ -43,7 +43,7 @@ from whispers.dependencies import (  # noqa: E402
 LOCKFILE = Path(__file__).resolve().parent / "lockfile.txt"
 
 HEADER = """\
-# Operational dependency lock for the Whispers offline bundle.
+# Operational dependency lock for the Sotto offline bundle.
 #
 # These are the versions an operational bundle is built from, resolved on the
 # build platform (Python 3.11). The point is not that they are the newest: it is

@@ -9,7 +9,7 @@ wondering whether the tool lost the rest.
 
 from pathlib import Path
 
-from whispers.folder_batch import Found, describe, expand, is_media, plural
+from sotto.folder_batch import Found, describe, expand, is_media, plural
 
 
 def make(root: Path, *names: str) -> Path:
@@ -205,7 +205,7 @@ def test_nothing_dropped_at_all_says_nothing(tmp_path):
 def test_a_cleaned_copy_is_not_queued_as_a_recording(tmp_path):
     """Noise reduction writes its copy beside the recording; a later folder run
     must not transcribe that copy as though it were a separate recording."""
-    from whispers import enhance
+    from sotto import enhance
 
     make(tmp_path, "carpark.m4a", "carpark.m4a" + enhance.SUFFIX)
     found = expand([tmp_path])
@@ -215,7 +215,7 @@ def test_a_cleaned_copy_is_not_queued_as_a_recording(tmp_path):
 
 def test_a_cleaned_copy_chosen_directly_is_still_honoured(tmp_path):
     """The operator who points at one knows what it is."""
-    from whispers import enhance
+    from sotto import enhance
 
     name = "carpark.m4a" + enhance.SUFFIX
     make(tmp_path, name)

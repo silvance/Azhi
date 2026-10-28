@@ -10,7 +10,7 @@ The build would not have caught it either: the check at the time was that the
 cache directory existed.
 """
 
-from whispers import hub_cache
+from sotto import hub_cache
 
 COMMIT = "84fd25912480287da0247647c3d2b4853cb3ee5d"
 REPO = "pyannote/speaker-diarization-3.1"

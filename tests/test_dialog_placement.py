@@ -10,7 +10,7 @@ Left to the window manager that is where a Tk dialog goes. So it is not left
 to the window manager.
 """
 
-from whispers.dialog_placement import Rect, geometry, place
+from sotto.dialog_placement import Rect, geometry, place
 
 # A main window on a second monitor, to the right of a 2560-wide primary one.
 RIGHT = Rect(2560, 200, 1400, 900)

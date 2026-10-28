@@ -2,7 +2,7 @@ import codecs
 
 import pytest
 
-from whispers.textfiles import UnreadableText, read_text
+from sotto.textfiles import UnreadableText, read_text
 
 
 def test_utf8_with_and_without_bom(tmp_path):

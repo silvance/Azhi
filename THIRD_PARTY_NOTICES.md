@@ -1,6 +1,6 @@
 # Third-party notices
 
-Whispers is MIT-licensed (see `LICENSE`). It runs on, and a bundle ships, other
+Sotto is MIT-licensed (see `LICENSE`). It runs on, and a bundle ships, other
 people's software and models under their own licences. Python packages carry
 their licence files with them; a bundle copies every one into its `licenses/`
 folder. This file covers the rest: the models and programs a bundle includes,
@@ -19,7 +19,7 @@ bundle goes anywhere new.
 - **wav2vec2-base-960h** (Facebook AI), in the ONNX export published by
   onnx-community (`onnx-community/wav2vec2-base-960h-ONNX`), only in a build
   made with `alignment=yes`; it re-times English words. Apache-2.0. The
-  revision and digest are in `whispers_assets/alignment/alignment.json`.
+  revision and digest are in `sotto_assets/alignment/alignment.json`.
 - **ONNX Runtime** (Microsoft), which runs it and the voice-activity model. MIT.
 
 ## Speaker separation and voice comparison
@@ -32,14 +32,14 @@ bundle goes anywhere new.
   pipeline; WeSpeaker). CC-BY-4.0.
 - **NVIDIA TitaNet-large** (`nvidia/speakerverification_en_titanet_large`),
   the default speaker-embedding model. CC-BY-4.0. A build that chose another
-  embedding model records which in `whispers_assets/diarization/embedding_model.json`.
+  embedding model records which in `sotto_assets/diarization/embedding_model.json`.
 - **NeMo-Speech.cpp** (NVIDIA), only in a build made with `nemotron=yes`.
-  Apache-2.0; its own licence files are in `whispers_assets/nemotron/licenses`.
+  Apache-2.0; its own licence files are in `sotto_assets/nemotron/licenses`.
 - **Nemotron 3 Diarization** (NVIDIA, `nvidia/Nemotron-3-Diarization`), only
   with `nemotron=yes`. OpenMDW-1.1, a permissive licence whose one condition
   on passing the model on is that the copy keeps the agreement and the notices
   of origin it came with. Both travel with the model in
-  `whispers_assets/nemotron`: the agreement as `licenses/OpenMDW-1.1.txt`
+  `sotto_assets/nemotron`: the agreement as `licenses/OpenMDW-1.1.txt`
   (also reproduced below) and NVIDIA's model card, which states the licence,
   as `Nemotron-3-Diarization-model-card.md`. `nemotron.json` records the
   revision and digests.
@@ -63,7 +63,7 @@ bundle goes anywhere new.
   `licenses/minisbd/`.
 - **MiniSBD sentence models**, one small ONNX file per translated language,
   fetched from MiniSBD's releases at build time into the Argos folder
-  (`whispers_assets/argos`). They are MiniSBD's conversions of Stanza's
+  (`sotto_assets/argos`). They are MiniSBD's conversions of Stanza's
   tokenizer models, which Stanford publishes under Apache-2.0; MiniSBD states
   no separate licence for the converted files.
 - **GTCRN** noise-reduction model, from the sherpa-onnx model releases. See its

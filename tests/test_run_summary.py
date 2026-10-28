@@ -10,7 +10,7 @@ a test that was missing:
 
 import pytest
 
-from whispers.run_summary import (
+from sotto.run_summary import (
     LOW_KEPT_FRACTION,
     FailedRun,
     SkippedRun,

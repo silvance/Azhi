@@ -13,10 +13,10 @@ import wave
 import numpy as np
 import pytest
 
-from whispers import alignment
-from whispers.alignment import AlignmentSummary, align_segments, forced_align
-from whispers.provenance import TranscriptionProvenance
-from whispers.transcription import CancelledError, Segment, Word
+from sotto import alignment
+from sotto.alignment import AlignmentSummary, align_segments, forced_align
+from sotto.provenance import TranscriptionProvenance
+from sotto.transcription import CancelledError, Segment, Word
 
 # facebook/wav2vec2-base-960h's vocabulary.
 VOCAB = {
@@ -205,9 +205,9 @@ def test_it_says_how_many_words_it_retimed(tmp_path):
 
 
 def test_without_the_model_it_is_not_offered_and_says_why(tmp_path, monkeypatch):
-    monkeypatch.setenv("WHISPERS_ASSETS", str(tmp_path))
+    monkeypatch.setenv("SOTTO_ASSETS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("whispers.resources.asset_dirs", lambda: [tmp_path])
+    monkeypatch.setattr("sotto.resources.asset_dirs", lambda: [tmp_path])
     assert not alignment.available()
     with pytest.raises(RuntimeError, match="does not include the English"):
         alignment.load()
@@ -218,7 +218,7 @@ def test_the_build_record_names_the_model(tmp_path, monkeypatch):
     folder.mkdir()
     (folder / "model.onnx").write_bytes(b"weights")
     (folder / "vocab.json").write_text(json.dumps(VOCAB))
-    monkeypatch.setattr("whispers.resources.asset_dirs", lambda: [tmp_path])
+    monkeypatch.setattr("sotto.resources.asset_dirs", lambda: [tmp_path])
     assert "revision not recorded" in alignment.describe_method()
     (folder / "alignment.json").write_text(
         json.dumps({"model": {"repo": "onnx-community/x", "revision": "abc123"}})
@@ -243,7 +243,7 @@ def test_the_record_keeps_how_the_words_were_timed():
 
 
 def test_an_older_record_says_nothing_about_word_timing():
-    from whispers.provenance import AnalysisProvenance
+    from sotto.provenance import AnalysisProvenance
 
     record = TranscriptionProvenance.from_dict({"model_name": "medium"})
     assert record.word_timing == "" and record.words_retimed is None
@@ -252,7 +252,7 @@ def test_an_older_record_says_nothing_about_word_timing():
 
 
 def test_the_report_names_the_word_timing_model():
-    from whispers.provenance import AnalysisProvenance
+    from sotto.provenance import AnalysisProvenance
 
     record = TranscriptionProvenance(
         model_name="medium",
@@ -302,7 +302,7 @@ def test_the_model_runs_through_onnxruntime(tmp_path, monkeypatch):
     folder.mkdir()
     onnx.save(model, str(folder / "model.onnx"))
     (folder / "vocab.json").write_text(json.dumps(VOCAB))
-    monkeypatch.setattr("whispers.resources.asset_dirs", lambda: [tmp_path])
+    monkeypatch.setattr("sotto.resources.asset_dirs", lambda: [tmp_path])
 
     assert alignment.available()
     aligner = alignment.load()

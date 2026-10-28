@@ -1,21 +1,21 @@
 import pytest
 
-from whispers.matching import ComparisonResult, GalleryMatch, GalleryResult
-from whispers.provenance import (
+from sotto.matching import ComparisonResult, GalleryMatch, GalleryResult
+from sotto.provenance import (
     AnalysisProvenance,
     DiarizationProvenance,
     SourceRecord,
     TranscriptionProvenance,
 )
-from whispers.quality import GOOD
-from whispers.reports import (
+from sotto.quality import GOOD
+from sotto.reports import (
     DISCLAIMER_HEADING,
     GallerySearch,
     build_report_sections,
     render_text,
     write_analysis_report,
 )
-from whispers.thresholds import (
+from sotto.thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
     BAND_LOW,
@@ -23,8 +23,8 @@ from whispers.thresholds import (
     DISCLAIMER,
     NO_LEAD_EXPLAINED,
 )
-from whispers.transcription import Segment, TranscriptionResult
-from whispers.voiceprints import MatchDecision
+from sotto.transcription import Segment, TranscriptionResult
+from sotto.voiceprints import MatchDecision
 
 SOURCE_SHA = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 

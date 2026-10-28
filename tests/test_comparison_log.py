@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from whispers import comparison_log
-from whispers.comparison_log import (
+from sotto import comparison_log
+from sotto.comparison_log import (
     KIND_GALLERY,
     KIND_PROFILE,
     ComparisonRecord,
@@ -17,9 +17,9 @@ from whispers.comparison_log import (
     save_comparison,
     subjects_in,
 )
-from whispers.matching import ComparisonResult, GalleryMatch, GalleryResult
-from whispers.speaker_profiles import ProfileError
-from whispers.thresholds import NO_LEAD_LABEL, NOT_ASSESSED_LABEL, OUTCOME_UNKNOWN_LABEL
+from sotto.matching import ComparisonResult, GalleryMatch, GalleryResult
+from sotto.speaker_profiles import ProfileError
+from sotto.thresholds import NO_LEAD_LABEL, NOT_ASSESSED_LABEL, OUTCOME_UNKNOWN_LABEL
 
 
 @pytest.fixture(autouse=True)
@@ -134,7 +134,7 @@ def test_record_pins_what_the_reference_profile_was_at_the_time():
     contradiction rather than as a reference profile that has since gained
     samples.
     """
-    from whispers.speaker_profiles import EnrollmentSample, SpeakerProfile
+    from sotto.speaker_profiles import EnrollmentSample, SpeakerProfile
 
     profile = SpeakerProfile(display_name="A. Subject")
     for _ in range(3):
@@ -172,7 +172,7 @@ def test_record_names_the_build_that_decided_it():
 
 
 def test_gallery_record_keeps_the_margin_over_the_runner_up():
-    from whispers.voiceprints import MatchDecision
+    from sotto.voiceprints import MatchDecision
 
     result = GalleryResult(
         matches=[
@@ -318,7 +318,7 @@ def test_round_trip_through_dict_keeps_the_ranking():
 
 
 def test_a_new_record_carries_the_build_that_made_it(monkeypatch):
-    from whispers import buildinfo, comparison_log
+    from sotto import buildinfo, comparison_log
 
     monkeypatch.setattr(
         comparison_log,
@@ -334,7 +334,7 @@ def test_a_new_record_carries_the_build_that_made_it(monkeypatch):
 
 
 def test_the_build_survives_a_round_trip_through_json():
-    from whispers.comparison_log import ComparisonRecord
+    from sotto.comparison_log import ComparisonRecord
 
     record = ComparisonRecord(build_id="4242-1", git_commit="abc1234")
     back = ComparisonRecord.from_dict(record.to_dict())
@@ -343,7 +343,7 @@ def test_the_build_survives_a_round_trip_through_json():
 
 def test_a_record_written_before_this_change_still_loads():
     """Schema 1 entries never recorded a build; empty is the truthful answer."""
-    from whispers.comparison_log import ComparisonRecord
+    from sotto.comparison_log import ComparisonRecord
 
     old = ComparisonRecord(app_version="1.2.3").to_dict()
     del old["build_id"], old["git_commit"]
@@ -355,7 +355,7 @@ def test_a_record_written_before_this_change_still_loads():
 
 def test_an_unidentified_build_records_nothing_rather_than_unknown(monkeypatch):
     """ "unknown" in a provenance field reads as a value; blank reads as absent."""
-    from whispers import comparison_log
+    from sotto import comparison_log
 
     app, build_id, commit = comparison_log._identity()
     assert build_id in ("", None) or build_id != "unknown"
@@ -367,7 +367,7 @@ def test_the_exported_csv_names_the_build():
     import tempfile
     from pathlib import Path
 
-    from whispers.comparison_log import ComparisonRecord, export_csv
+    from sotto.comparison_log import ComparisonRecord, export_csv
 
     with tempfile.TemporaryDirectory() as tmp:
         out = export_csv(
@@ -387,7 +387,7 @@ def test_the_exported_csv_names_the_build():
 
 
 def _search(*, accepted, inadequate="", top=0.71):
-    from whispers.voiceprints import MatchDecision
+    from sotto.voiceprints import MatchDecision
 
     return GalleryResult(
         matches=[
@@ -464,7 +464,7 @@ def test_the_csv_carries_the_decision(tmp_path):
 
 
 def test_no_gallery_wording_says_match():
-    from whispers.thresholds import NO_LEAD_EXPLAINED
+    from sotto.thresholds import NO_LEAD_EXPLAINED
 
     lines = _search(accepted=False).summary_lines()
     assert NO_LEAD_EXPLAINED in lines
@@ -484,11 +484,12 @@ def test_the_three_ways_a_search_can_have_no_lead_are_filed_apart():
     assert "All subjects" not in labels
 
 
-def test_records_saved_before_the_rename_are_still_listed(tmp_path):
+@pytest.mark.parametrize("old_name", ["whispers", "whispr"])
+def test_records_saved_before_the_rename_are_still_listed(tmp_path, old_name):
     record = comparison_log.record_from_comparison(_result())
     path = comparison_log.save_comparison(record)
     old = path.with_name(
-        path.name.replace(".whispers-comparison.json", ".whispr-comparison.json")
+        path.name.replace(".sotto-comparison.json", f".{old_name}-comparison.json")
     )
     path.rename(old)
     listed = comparison_log.list_comparisons()

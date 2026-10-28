@@ -1,0 +1,126 @@
+"""Entry point for Sotto: the GUI, or a headless self-test.
+
+The GUI itself lives in :mod:`sotto.gui`; this is the thin front door that
+``sotto.app:main`` names, so the console script, ``python -m sotto`` and the
+PyInstaller bundle entry (``packaging/sotto_entry.py``) all go through one
+place.
+
+It deliberately does **not** import the GUI at module level. ``--self-test``
+has to work on a machine with no display and has to keep working when the
+window toolkit is exactly what is broken - a build missing Tk should report
+that, not crash on the way to saying it.
+"""
+
+from __future__ import annotations
+
+import sys
+from typing import Any, List, Optional
+
+# SottoApp is resolved lazily by __getattr__ below, so it is not listed here:
+# naming it would make a static check demand a module-level import, which is the
+# one thing this module exists to avoid.
+__all__ = ["main", "self_test", "verify_install", "score_test_set", "launch"]
+
+USAGE = """Sotto - offline audio analysis
+
+  Sotto                  open the application
+  Sotto --self-test      print what this copy can do, and exit
+  Sotto --verify         check this copy against the build that made it
+  Sotto --score-test-set FOLDER [--out RESULTS] [--speakers known|unknown]
+                         measure who-said-what on your own labelled recordings
+                         (see the user guide); writes summary.txt and scores.csv
+  Sotto --help           show this message
+"""
+
+
+def self_test() -> int:
+    """Print the build self-test and return an exit code.
+
+    The same report the application shows under System status, on stdout. Two
+    uses: a build can prove the executable it just made actually starts, and an
+    operator on an air-gapped machine can capture what their copy can do
+    (``Sotto --self-test > report.txt``) without opening a window.
+
+    A build that deliberately leaves translation or OCR out is not ready for
+    everything and is not broken for it, so the report is printed and this
+    returns 0 either way. Only an application that cannot run at all fails -
+    by raising on the way here, long before this line.
+    """
+    from .diagnostics import format_report
+
+    print(format_report())
+    return 0
+
+
+def verify_install() -> int:
+    """Check the installed files against the inventory the build recorded.
+
+    Answers the question a failing bundle actually poses: is the software wrong,
+    or did this copy of it arrive damaged? A copy that fails in a different
+    place on each run is the second, and this says so in a list of files rather
+    than in a traceback about whichever one was reached first.
+
+    Returns 1 when files are missing, altered or unreadable, and 2 when the
+    check could not be run at all - a copy that cannot be checked is not the
+    same as a copy that passed.
+    """
+    from .bundle_check import verify
+
+    result = verify()
+    print("\n".join(result.summary_lines()))
+    if not result.usable:
+        return 2
+    return 0 if result.intact else 1
+
+
+def score_test_set(args: "List[str]") -> int:
+    """Score a folder of labelled recordings, as ``sotto.diarization_eval`` does.
+
+    Here so the shipped copy - the one with the models, on the machine with the
+    recordings - can run it, not only a source checkout. The report is written
+    to files as well as printed, because a windowed build has nowhere to print.
+    """
+    from .diarization_eval import main as score_main
+
+    return score_main(args)
+
+
+def main(argv: "Optional[List[str]]" = None) -> None:
+    """Run Sotto: a check if asked for one, otherwise the window."""
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args and args[0] == "--nemotron-worker":
+        # Started by sotto.nemotron, never by a person: the shipped copy has
+        # no Python of its own to run the worker module with.
+        from .nemotron_worker import main as worker_main
+
+        raise SystemExit(worker_main(args[1:]))
+    if args and args[0] == "--score-test-set":
+        raise SystemExit(score_test_set(args[1:]))
+    if "--self-test" in args:
+        raise SystemExit(self_test())
+    if "--verify" in args:
+        raise SystemExit(verify_install())
+    if "--help" in args or "-h" in args:
+        print(USAGE)
+        raise SystemExit(0)
+    launch()
+
+
+def launch() -> None:
+    """Open the main window. Imported here so --self-test never needs Tk."""
+    from .gui.app import main as gui_main
+
+    gui_main()
+
+
+def __getattr__(name: str) -> Any:
+    """Keep ``from sotto.app import SottoApp`` working, without importing Tk."""
+    if name == "SottoApp":
+        from .gui.app import SottoApp
+
+        return SottoApp
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+if __name__ == "__main__":
+    main()

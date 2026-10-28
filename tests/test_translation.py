@@ -2,8 +2,8 @@ import importlib.util
 
 import pytest
 
-from whispers import translation
-from whispers.translation import detect_language
+from sotto import translation
+from sotto.translation import detect_language
 
 
 def test_chunk_text_rejoins_and_bounds():

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from whispers.hashing import sha256_file
+from sotto.hashing import sha256_file
 
 # build_manifest.py is a build script under packaging/ (not an installed
 # module); load it by path, as tests/test_fetch_assets.py does.
@@ -18,7 +18,7 @@ _spec.loader.exec_module(build_manifest)
 @pytest.fixture
 def assets(tmp_path, monkeypatch):
     """A fake asset tree laid out the way fetch_assets.py leaves one."""
-    root = tmp_path / "whispers_assets"
+    root = tmp_path / "sotto_assets"
     models = root / "models" / "base.en"
     models.mkdir(parents=True)
     (models / "model.bin").write_bytes(b"transcription-weights")

@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from whispers import thresholds
-from whispers.settings import (
+from sotto import thresholds
+from sotto.settings import (
     SettingsError,
     load_settings,
     settings_path,
@@ -106,7 +106,7 @@ def test_a_failed_save_is_reported_not_swallowed(config, monkeypatch):
     def refuse(*_args, **_kwargs):
         raise PermissionError(13, "Access is denied")
 
-    monkeypatch.setattr("whispers.settings.write_json_atomic", refuse)
+    monkeypatch.setattr("sotto.settings.write_json_atomic", refuse)
     with pytest.raises(SettingsError) as caught:
         update_settings("transcribe", {"a": 1})
     assert "could not be saved" in str(caught.value)
@@ -122,10 +122,10 @@ def test_saving_is_atomic(config, monkeypatch):
     def crash(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr("whispers.atomicio.os.replace", crash)
+    monkeypatch.setattr("sotto.atomicio.os.replace", crash)
     with pytest.raises(SettingsError):
         update_settings("transcribe", {"a": 2})
-    monkeypatch.setattr("whispers.atomicio.os.replace", real_replace)
+    monkeypatch.setattr("sotto.atomicio.os.replace", real_replace)
     assert load_settings() == {"transcribe": {"a": 1}}
     leftovers = [p for p in config.parent.iterdir() if p.suffix == ".tmp"]
     assert leftovers == [], "no half-written temporary file left behind"
@@ -134,7 +134,7 @@ def test_saving_is_atomic(config, monkeypatch):
 # -- what earlier versions saved, before the program was renamed ---------------
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Windows always used the Whispers folder")
+@pytest.mark.skipif(os.name == "nt", reason="the folder names here are Linux's")
 def test_an_earlier_versions_settings_folder_is_moved_not_copied(tmp_path, monkeypatch):
     old = tmp_path / "whispr"
     (old / "speakers").mkdir(parents=True)
@@ -142,14 +142,14 @@ def test_an_earlier_versions_settings_folder_is_moved_not_copied(tmp_path, monke
     (old / "speakers" / "subject.whispr-speaker.json").write_text("{}")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     path = settings_path()
-    assert path == tmp_path / "whispers" / "settings.json"
+    assert path == tmp_path / "sotto" / "settings.json"
     assert load_settings() == {"transcribe": {"model": "medium"}}
-    assert (tmp_path / "whispers" / "speakers" / "subject.whispr-speaker.json").exists()
+    assert (tmp_path / "sotto" / "speakers" / "subject.whispr-speaker.json").exists()
     # Voice profiles are in one place, never two.
     assert not old.exists()
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Windows always used the Whispers folder")
+@pytest.mark.skipif(os.name == "nt", reason="the folder names here are Linux's")
 def test_a_folder_that_cannot_be_moved_is_used_where_it_is(tmp_path, monkeypatch):
     old = tmp_path / "whispr"
     old.mkdir()
@@ -160,20 +160,59 @@ def test_a_folder_that_cannot_be_moved_is_used_where_it_is(tmp_path, monkeypatch
     assert settings_path() == old / "settings.json"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the folder names here are Linux's")
+def test_the_whispers_folder_is_taken_over_the_older_whispr_one(tmp_path, monkeypatch):
+    for old in ("whispers", "whispr"):
+        (tmp_path / old).mkdir()
+        (tmp_path / old / "settings.json").write_text(f'{{"from": "{old}"}}')
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert settings_path() == tmp_path / "sotto" / "settings.json"
+    assert load_settings() == {"from": "whispers"}
+    assert not (tmp_path / "whispers").exists()
+    assert (tmp_path / "whispr").exists()  # left alone, not merged
+
+
+def test_the_windows_whispers_folder_becomes_sotto(tmp_path):
+    from sotto.settings import OLD_WINDOWS_NAMES, _settings_folder
+
+    (tmp_path / "Whispers" / "speakers").mkdir(parents=True)
+    (tmp_path / "Whispers" / "settings.json").write_text("{}")
+    folder = _settings_folder(tmp_path, "Sotto", OLD_WINDOWS_NAMES)
+    assert folder == tmp_path / "Sotto"
+    assert (folder / "speakers").is_dir() and (folder / "settings.json").is_file()
+    assert not (tmp_path / "Whispers").exists()
+    # Once moved, it is simply used.
+    assert _settings_folder(tmp_path, "Sotto", OLD_WINDOWS_NAMES) == folder
+
+
+def test_both_earlier_file_endings_are_brought_across(tmp_path):
+    from sotto.settings import adopt_old_files
+
+    (tmp_path / "a.whispers-speaker.json").write_text("from Whispers")
+    (tmp_path / "b.whispr-speaker.json").write_text("from Whispr")
+    found = adopt_old_files(
+        tmp_path,
+        ".sotto-speaker.json",
+        (".whispers-speaker.json", ".whispr-speaker.json"),
+    )
+    assert [p.name for p in found] == ["a.sotto-speaker.json", "b.sotto-speaker.json"]
+    assert (tmp_path / "a.sotto-speaker.json").read_text() == "from Whispers"
+
+
 def test_old_file_endings_are_renamed_once_and_listed_once(tmp_path):
-    from whispers.settings import adopt_old_files
+    from sotto.settings import adopt_old_files
 
     (tmp_path / "a.whispr-speaker.json").write_text("old a")
-    (tmp_path / "b.whispers-speaker.json").write_text("new b")
+    (tmp_path / "b.sotto-speaker.json").write_text("new b")
     # Both names for c: the new one wins, the old one is left untouched.
     (tmp_path / "c.whispr-speaker.json").write_text("old c")
-    (tmp_path / "c.whispers-speaker.json").write_text("new c")
-    found = adopt_old_files(tmp_path, ".whispers-speaker.json", ".whispr-speaker.json")
+    (tmp_path / "c.sotto-speaker.json").write_text("new c")
+    found = adopt_old_files(tmp_path, ".sotto-speaker.json", ".whispr-speaker.json")
     assert [p.name for p in found] == [
-        "a.whispers-speaker.json",
-        "b.whispers-speaker.json",
-        "c.whispers-speaker.json",
+        "a.sotto-speaker.json",
+        "b.sotto-speaker.json",
+        "c.sotto-speaker.json",
     ]
-    assert (tmp_path / "a.whispers-speaker.json").read_text() == "old a"
+    assert (tmp_path / "a.sotto-speaker.json").read_text() == "old a"
     assert (tmp_path / "c.whispr-speaker.json").read_text() == "old c"
     assert adopt_old_files(tmp_path / "missing", ".x", ".y") == []

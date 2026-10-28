@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from whispers import validation
-from whispers.validation import (
+from sotto import validation
+from sotto.validation import (
     CorpusItem,
     EmbeddedItem,
     OperatingPoint,
