@@ -53,6 +53,19 @@ bundle goes anywhere new.
   bundled. Apache-2.0.
 - **Argos Translate** language packages, when translation is bundled. Each
   package states its own licence in its metadata.
+- **MiniSBD** (LibreTranslate authors; the `minisbd` package pinned in
+  `packaging/lockfile.txt`), the sentence splitter Argos Translate runs before
+  translating, when translation is bundled. Used unmodified. AGPL-3.0, a
+  copyleft licence: a copy passed on outside the office must make MiniSBD's
+  source available with it (section 6); it is published at
+  https://github.com/LibreTranslate/MiniSBD. Part of its code is adapted from
+  Stanford's Stanza (Apache-2.0). Both licence texts ship in
+  `licenses/minisbd/`.
+- **MiniSBD sentence models**, one small ONNX file per translated language,
+  fetched from MiniSBD's releases at build time into the Argos folder
+  (`whispers_assets/argos`). They are MiniSBD's conversions of Stanza's
+  tokenizer models, which Stanford publishes under Apache-2.0; MiniSBD states
+  no separate licence for the converted files.
 - **GTCRN** noise-reduction model, from the sherpa-onnx model releases. See its
   source for its licence.
 
