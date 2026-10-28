@@ -56,6 +56,25 @@ SELECTION_RANGES = "time ranges"
 
 
 @dataclass
+class MeasuredWindow:
+    """One window of the questioned selection, whether or not it was used."""
+
+    # Where the window lies in the source recording: several intervals when
+    # turns were joined to make it.
+    spans: List[Tuple[float, float]]
+    report: QualityReport
+    # Why it was left out of the measurement; empty for a window that was used.
+    skipped: str = ""
+    # Held in memory only, for comparing the window on its own, and never
+    # written out or shown.
+    embedding: List[float] = field(default_factory=list, repr=False)
+
+    @property
+    def used(self) -> bool:
+        return bool(self.embedding)
+
+
+@dataclass
 class QuestionedSpeaker:
     """A questioned speaker's embedding, plus the audio and source behind it."""
 
@@ -74,6 +93,8 @@ class QuestionedSpeaker:
     aggregated: bool = False
     selected_spans: List[Tuple[float, float]] = field(default_factory=list)
     selected_seconds: float = 0.0
+    # Every window of the selection in order, used or skipped.
+    windows: List[MeasuredWindow] = field(default_factory=list, repr=False)
     selection_mode: str = SELECTION_WHOLE
     skipped: List[str] = field(default_factory=list)
     source_filename: str = ""
@@ -296,18 +317,23 @@ def _measure_windows(
         report = analyse_span(working, start, end)
         origin = source_intervals(pieces, start, end)
         where = _describe_intervals(origin)
+        window = MeasuredWindow(spans=origin, report=report)
+        out.windows.append(window)
         if not report.usable:
-            out.skipped.append(
-                f"{where}: {report.assessment.lower()} audio "
-                f"({report.voiced_seconds:.1f}s of speech)."
+            window.skipped = (
+                f"{report.assessment.lower()} audio "
+                f"({report.voiced_seconds:.1f}s of speech)"
             )
+            out.skipped.append(f"{where}: {window.skipped}.")
             continue
         if progress is not None:
             progress(f"Measuring {where}…")
         vector = embedder.embed_span(working, start, end)
         if not vector:
-            out.skipped.append(f"{where}: no embedding produced.")
+            window.skipped = "no embedding produced"
+            out.skipped.append(f"{where}: {window.skipped}.")
             continue
+        window.embedding = list(vector)
         vectors.append(list(vector))
         used_reports.append(report)
         out.embedded_spans.extend(origin)

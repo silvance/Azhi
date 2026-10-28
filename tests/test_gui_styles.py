@@ -404,3 +404,81 @@ def test_copy_carries_the_lead_legend_once_with_times_and_notes(app, tmp_path):
     page._copy_transcript()
     assert "Analyst note" not in app.root.clipboard_get()
     assert page.get_settings()["notes"] is False
+
+
+def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
+    import math
+
+    from sotto.matching import compare_questioned_to_profile
+    from sotto.quality import GOOD, QualityReport
+    from sotto.questioned import MeasuredWindow, QuestionedSpeaker
+    from sotto.speaker_profiles import (
+        EmbeddingModelIdentity,
+        EnrollmentSample,
+        SpeakerProfile,
+    )
+
+    model = EmbeddingModelIdentity(name="m", sha256="a" * 64, vector_dimension=2)
+    profile = SpeakerProfile(display_name="Subject A", embedding_model=model)
+    profile.add_reference_sample(
+        EnrollmentSample(
+            embedding=[1.0, 0.0],
+            speech_duration=20.0,
+            quality={"assessment": GOOD, "voiced_seconds": 20.0, "bandwidth_hz": 7000},
+        )
+    )
+
+    def window(spans, cosine):
+        return MeasuredWindow(
+            spans=spans,
+            report=QualityReport(
+                voiced_seconds=7.0, assessment=GOOD, bandwidth_hz=3750.0
+            ),
+            embedding=[cosine, math.sqrt(1 - cosine * cosine)],
+        )
+
+    measured = QuestionedSpeaker(
+        embedding=[1.0, 0.0],
+        speech_seconds=28.0,
+        quality=GOOD,
+        window_count=4,
+        windows=[
+            window([(0.0, 8.0)], 0.9),
+            window([(8.0, 16.0)], 0.85),
+            window([(16.0, 18.0), (30.0, 36.0)], 0.3),
+            window([(40.0, 48.0)], 0.88),
+        ],
+    )
+    result = compare_questioned_to_profile(measured, profile, questioned_model=model)
+
+    played = []
+
+    class Listener:
+        def play(self, span, _on_error):
+            played.append(span)
+
+        def stop(self):
+            played.append("stop")
+
+    page = app.speaker_compare
+    page._show_comparison(result, Listener())
+    app.root.update()
+    assert page._windows_disclosure.winfo_manager() == "pack"
+    assert page._conditions_disclosure.winfo_manager() == "pack"
+
+    strip = page.window_strip
+    assert len(strip.canvas.find_withtag("hit")) == 4
+    assert "0:16-0:36 (joined from 2 turns) scores 0.30" in strip.notes_var.get()
+    # Clicking the bar plays its longest stretch and says what it is.
+    strip._play(2)
+    assert played == [(30.0, 36.0)]
+    assert strip.detail_var.get().startswith("0:16-0:36 (joined from 2 turns): 0.30")
+
+    notes = page.conditions_table.notes_var.get()
+    assert "questioned audio reaches only 3.8 kHz against 7.0 kHz" in notes
+
+    # A new run takes both off the card, and stops the audio.
+    page._start_measuring(Path("next.wav"), "Comparing")
+    assert played[-1] == "stop"
+    assert page._windows_disclosure.winfo_manager() == ""
+    assert page._conditions_disclosure.winfo_manager() == ""

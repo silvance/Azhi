@@ -383,3 +383,24 @@ def test_a_comparison_counts_embeddings_not_source_intervals(scattered_wav):
     assert comparison.questioned_window_count < len(measured.embedded_spans)
     text = "\n".join(comparison.format_lines())
     assert f"measured across {measured.window_count} window(s)" in text
+
+
+def test_every_window_is_kept_in_order_used_or_not(tmp_path):
+    """The window strip needs the skipped windows too, and where each one was."""
+    wav = _write(
+        tmp_path / "gap.wav",
+        [_speechlike(16.0), _silence(8.0), _speechlike(8.0)],
+    )
+    result = measure_from_wav(wav, [(0.0, 32.0)], _CountingEmbedder())
+    assert [w.spans for w in result.windows] == [
+        [(0.0, 8.0)],
+        [(8.0, 16.0)],
+        [(16.0, 24.0)],
+        [(24.0, 32.0)],
+    ]
+    assert [w.used for w in result.windows] == [True, True, False, True]
+    assert result.windows[2].skipped.startswith("insufficient audio")
+    assert result.window_count == 3
+    # A window's vector stays in memory: it is not in the record or the repr.
+    assert "windows" not in result.to_dict()
+    assert "embedding" not in repr(result.windows[0])

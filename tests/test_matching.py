@@ -577,3 +577,132 @@ def test_an_adequate_ranking_still_carries_its_bands():
     )
     assert not result.inadequate_reason
     assert result.matches[0].band == "High similarity"
+
+
+# -- Window by window --------------------------------------------------------
+
+
+def _measured(cosines, *, skipped=0, joined=False, seconds_each=7.0):
+    """A questioned speaker whose windows sit at the given cosines to (1, 0)."""
+    from sotto.quality import QualityReport
+    from sotto.questioned import MeasuredWindow, QuestionedSpeaker
+    from sotto.voiceprints import centroid
+
+    def report(voiced, assessment):
+        return QualityReport(
+            duration_seconds=8.0,
+            voiced_seconds=voiced,
+            assessment=assessment,
+            level_margin_db=30.0,
+            bandwidth_hz=7000.0,
+        )
+
+    windows = []
+    for index, target in enumerate(cosines):
+        start = index * 8.0
+        spans = (
+            [(start, start + 3.0), (start + 20.0, start + 25.0)]
+            if joined
+            else [(start, start + 8.0)]
+        )
+        windows.append(
+            MeasuredWindow(
+                spans=spans,
+                report=report(seconds_each, GOOD),
+                embedding=_at_cosine(target),
+            )
+        )
+    for index in range(skipped):
+        start = (len(cosines) + index) * 8.0
+        windows.append(
+            MeasuredWindow(
+                spans=[(start, start + 8.0)],
+                report=report(1.0, INSUFFICIENT),
+                skipped="insufficient audio (1.0s of speech)",
+            )
+        )
+    vectors = [_at_cosine(c) for c in cosines]
+    return QuestionedSpeaker(
+        embedding=centroid(vectors) if vectors else [],
+        speech_seconds=seconds_each * len(cosines),
+        quality=GOOD,
+        window_count=len(cosines),
+        windows=windows,
+    )
+
+
+def _compare(questioned, profile=None):
+    from sotto.matching import compare_questioned_to_profile
+
+    return compare_questioned_to_profile(
+        questioned, profile or _profile(), questioned_model=MODEL
+    )
+
+
+def test_each_window_is_scored_on_its_own_and_a_skipped_one_says_why():
+    result = _compare(_measured([0.9, 0.8, 0.85], skipped=1))
+    assert [round(w.score, 2) for w in result.windows[:3]] == [0.9, 0.8, 0.85]
+    left_out = result.windows[3]
+    assert left_out.score is None and not left_out.used
+    assert "insufficient audio" in left_out.skipped
+    assert result.typical_window_score() == pytest.approx(0.85)
+    assert result.windows_apart() == []
+    lines = result.window_lines()
+    assert lines[1] == "  0:00-0:08: 0.90 (7.0 sec of speech, good)"
+    assert lines[4] == "  0:24-0:32: not used (insufficient audio (1.0s of speech))"
+
+
+def test_a_window_apart_from_the_rest_is_pointed_out_to_listen_to():
+    result = _compare(_measured([0.85, 0.82, 0.88, 0.3]))
+    (apart,) = result.windows_apart()
+    assert apart.start == 24.0
+    (note,) = result.window_notes()
+    assert note.startswith("The window at 0:24-0:32 scores 0.30")
+    assert "Listen to it" in note
+    text = "\n".join(result.format_lines())
+    assert "Window by window" in text and "Note: The window at 0:24-0:32" in text
+
+
+def test_two_windows_have_no_typical_to_stand_apart_from():
+    result = _compare(_measured([0.9, 0.2]))
+    assert len(result.windows) == 2
+    assert result.typical_window_score() is None
+    assert result.window_notes() == []
+
+
+def test_a_joined_window_says_so_and_offers_its_longest_stretch():
+    result = _compare(_measured([0.9, 0.8, 0.85], joined=True))
+    window = result.windows[0]
+    assert window.where() == "0:00-0:25 (joined from 2 turns)"
+    assert window.longest == (20.0, 25.0)
+
+
+def test_no_window_scores_under_insufficient_data_but_the_conditions_stay():
+    """Per-window numbers under "Insufficient data" would be read as the finding."""
+    result = _compare(_measured([0.9], seconds_each=2.0))
+    assert result.band == BAND_INSUFFICIENT
+    assert result.windows == []
+    assert result.conditions is not None
+    assert any("Only 2.0 sec" in note for note in result.conditions.notes)
+
+
+def test_a_refused_comparison_has_neither_windows_nor_conditions():
+    result = _compare(_measured([0.9, 0.8, 0.85]), _profile(model=OTHER_MODEL))
+    assert result.refused
+    assert result.windows == [] and result.conditions is None
+    assert "Window by window" not in "\n".join(result.format_lines())
+
+
+def test_the_record_holds_window_scores_and_conditions_never_vectors():
+    result = _compare(_measured([0.9, 0.8, 0.85]))
+    data = result.to_dict()
+    assert [w["score"] for w in data["windows"]] == [0.9, 0.8, 0.85]
+    assert data["windows"][0]["spans"] == [[0.0, 8.0]]
+    assert "embedding" not in str(data["windows"])
+    assert data["conditions"][1] == [
+        "Frequency range",
+        "up to 7.0 kHz",
+        "not measured",
+    ]
+    # The reference here predates the measurement, and says so.
+    assert any("enrolled before" in note for note in data["condition_notes"])

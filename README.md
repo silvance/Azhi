@@ -354,6 +354,16 @@ Intermediate similarity / Low similarity / Insufficient data** — alongside the
 operational threshold, the speech duration on each side and the quality of each,
 and it refuses a comparison across different voice models.
 
+Under the result, **Window by window** shows each 8-second window of the
+questioned speech compared on its own, as a bar against the band lines, so a
+window that disagrees with the rest (a second voice, a burst of noise) stands
+out and can be played. **Recording conditions** sets the two sides' audio
+next to each other (speech, frequency range, speech above background,
+clipping) and says where they differ enough to lower similarity whoever is
+speaking, such as a telephone recording against a full-band reference. Neither
+shows the voice measurement itself, and neither is a finding about who is
+speaking.
+
 An earlier **Compare voices…** button on the operation-profile card compared two
 exported voiceprint files directly. It was removed: a voiceprint file records
 neither how much speech built it nor which model measured it, so that dialog could

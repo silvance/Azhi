@@ -187,3 +187,41 @@ def test_combine_of_nothing_is_insufficient():
     merged = combine([])
     assert merged.assessment == INSUFFICIENT
     assert isinstance(merged, QualityReport)
+
+
+# -- Frequency range ---------------------------------------------------------
+
+
+def _band_limited(seconds, top_hz, level=0.2):
+    """Noise with nothing above ``top_hz``, as after a telephone line."""
+    noise = rng.normal(0, level, int(seconds * RATE))
+    spectrum = np.fft.rfft(noise)
+    spectrum[np.fft.rfftfreq(noise.size, 1.0 / RATE) > top_hz] = 0
+    return np.fft.irfft(spectrum, noise.size).astype(np.float32)
+
+
+def test_full_band_audio_reaches_the_top_of_the_analysis_range():
+    report = analyse_samples(_speechlike(8.0), RATE)
+    assert report.bandwidth_hz >= 7500
+    assert quality.describe_bandwidth(report.bandwidth_hz).startswith("up to 8.0 kHz")
+    assert "telephone" not in quality.describe_bandwidth(report.bandwidth_hz)
+
+
+def test_telephone_band_audio_is_measured_as_narrow():
+    report = analyse_samples(_band_limited(8.0, 3400), RATE)
+    assert 3250 <= report.bandwidth_hz <= 4250
+    assert quality.describe_bandwidth(report.bandwidth_hz).endswith("(telephone-like)")
+
+
+def test_mains_hum_does_not_set_the_frequency_range():
+    """The lowest band is not the reference level, or loud hum would hide speech."""
+    t = np.arange(8 * RATE) / RATE
+    hum = (0.8 * np.sin(2 * np.pi * 50 * t)).astype(np.float32)
+    report = analyse_samples(_speechlike(8.0) * 0.2 + hum, RATE)
+    assert report.bandwidth_hz >= 7500
+
+
+def test_frequency_range_is_recorded_and_unmeasured_says_so():
+    assert "bandwidth_hz" in analyse_samples(_speechlike(8.0), RATE).to_dict()
+    assert QualityReport().bandwidth_hz == 0.0
+    assert quality.describe_bandwidth(0.0) == "not measured"

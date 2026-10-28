@@ -419,6 +419,20 @@ recording containing that person speaking for more than three seconds.
 - [ ] Nowhere does the screen show a percentage, "match", "confirmed" or
       "same person". The disclaimer is visible without expanding anything.
 - [ ] **Full result text** expands to the copyable block; Copy result works.
+- [ ] A comparison with a band shows **Window by window**: one bar per window
+      against the High and Intermediate lines, times under the bars, an
+      outlined empty bar for a window not used. Pointing at a bar names its
+      time and score; clicking plays it; **Stop audio** stops it. A window well
+      apart from the rest is outlined and named under the strip.
+- [ ] Under **Insufficient data** the strip is not shown; **Recording
+      conditions** still is.
+- [ ] Compare a telephone recording (or one converted to 8 kHz) against a
+      full-band reference: the frequency ranges read about 3.8 and 7 kHz and
+      the note under the table says a different channel lowers similarity
+      whoever is speaking.
+- [ ] A reference enrolled before this version reads **not measured** for
+      frequency range, with a note saying so.
+- [ ] A search of all profiles shows neither the strip nor the conditions.
 - [ ] **Export this result…** writes the result on screen. Compare recording A,
       then search all profiles with recording B: the report holds B's search
       only, and leaves out a transcript that is not of B.
