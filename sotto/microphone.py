@@ -279,7 +279,7 @@ def write_capture_record(
         "live_transcription_model": transcription_model,
         "sotto_version": __version__,
     }
-    record.update(_wav_format(path))
+    record.update(wav_format(path))
     return write_json_atomic(record_path(path), record)
 
 
@@ -295,7 +295,7 @@ def _utc(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _wav_format(path: Path) -> Dict[str, object]:
+def wav_format(path: Path) -> Dict[str, object]:
     """Rate, channels and length, from the file itself; nothing if unreadable."""
     try:
         with wave.open(str(path), "rb") as recording:

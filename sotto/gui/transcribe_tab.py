@@ -20,7 +20,15 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from .. import alignment, enhance, folder_batch, listening, output_names, speaker_count
+from .. import (
+    alignment,
+    clips,
+    enhance,
+    folder_batch,
+    listening,
+    output_names,
+    speaker_count,
+)
 from ..acceleration import (
     Device,
     build_supports_cuda,
@@ -35,7 +43,8 @@ from ..diarization import assign_speakers, chosen_backend, diarize
 from ..diarization import is_available as diarization_available
 from ..enrollment import enroll_from_media, enroll_from_wav, spans_by_speaker_name
 from ..export import transcript_to_docx
-from ..playback import PlaybackError, SegmentPlayer, playback_available
+from ..hashing import sha256_file_or_none, short
+from ..playback import SPEEDS, PlaybackError, SegmentPlayer, playback_available
 from ..profiles import (
     OLD_PROFILE_SUFFIXES,
     PROFILE_SUFFIX,
@@ -65,7 +74,7 @@ from ..provenance import (
     transcription_model_sha256,
 )
 from ..reports import write_analysis_report
-from ..resources import bundled_embedding_model, bundled_models, is_bundle
+from ..resources import bundled_embedding_model, bundled_models, find_ffmpeg, is_bundle
 from ..run_summary import (
     FailedRun,
     SkippedRun,
@@ -367,6 +376,12 @@ class TranscribeTab:
         self.speaker_name_vars: List[tk.StringVar] = []
         self.sensitivity_var = tk.StringVar(value="0.5")
         self.srt_var = tk.BooleanVar(value=False)
+        # A spreadsheet of the lines beside the transcript (and Save as…).
+        self.csv_var = tk.BooleanVar(value=False)
+        # When each line starts, at its head, in text and Word transcripts.
+        self.times_var = tk.BooleanVar(value=False)
+        # How fast a clicked line plays back (see playback.SPEEDS).
+        self.playback_speed_var = tk.StringVar(value=next(iter(SPEEDS)))
         # Put a blank line between segments in the transcript (and saved .txt).
         self.blank_lines_var = tk.BooleanVar(value=True)
         # Optional vocabulary hint (names/jargon) to prime the decoder.
@@ -770,6 +785,18 @@ class TranscribeTab:
         ).pack(anchor="w", pady=(SPACE_XS, 0))
         ttk.Checkbutton(
             audio.body,
+            text="Also save a spreadsheet (.csv): one row per line, with times",
+            variable=self.csv_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Checkbutton(
+            audio.body,
+            text="Put the time on each line of text and Word transcripts",
+            variable=self.times_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Checkbutton(
+            audio.body,
             text="Blank line between segments (easier to read and paste)",
             variable=self.blank_lines_var,
             command=self._rerender_transcript,
@@ -1135,6 +1162,7 @@ class TranscribeTab:
             on_compare=(
                 self._compare_speaker if bundled_embedding_model() is not None else None
             ),
+            on_save_clip=self._save_clip if find_ffmpeg() is not None else None,
             placeholder=(
                 "Choose a recording above, then select Transcribe recording.\n\n"
                 "Your transcript appears here. Drag a file onto this window to "
@@ -1179,7 +1207,7 @@ class TranscribeTab:
         self._card_banner.wrap_to(results.body)
         for text, command in (
             ("Copy transcript", self._copy_transcript),
-            ("Save as Word…", self._save_transcript_docx),
+            ("Save as…", self._save_transcript_as),
             ("Analysis report…", self._save_analysis_report),
             ("Save project…", self._save_project),
             ("Open project…", self._open_project),
@@ -1189,12 +1217,19 @@ class TranscribeTab:
             )
         if self._playback_ok:
             subtle_button(exports, "Stop audio", self._stop_audio).pack(side="left")
+            ttk.Combobox(
+                exports,
+                textvariable=self.playback_speed_var,
+                values=list(SPEEDS),
+                state="readonly",
+                width=14,
+            ).pack(side="left", padx=(SPACE_XS, 0))
         ttk.Label(
             results.body,
             text=(
                 "Click a word or speaker tag to play it; right-click for "
-                "corrections. Drag a speaker tag, or selected words, onto "
-                "another speaker's line."
+                "corrections, or to save a passage as audio. Drag a speaker "
+                "tag, or selected words, onto another speaker's line."
                 if self._playback_ok
                 else "Click a speaker tag or word for corrections, or drag it "
                 "onto another speaker's line."
@@ -2416,7 +2451,11 @@ class TranscribeTab:
             names = self._speaker_names if names is None else names
             txt_path = outdir / output_names.transcript_name(base)
             txt_path.write_text(
-                result.to_txt(names, blank_lines=self.blank_lines_var.get()),
+                result.to_txt(
+                    names,
+                    blank_lines=self.blank_lines_var.get(),
+                    times=self.times_var.get(),
+                ),
                 encoding="utf-8",
             )
             append_line(self.status, f"Wrote transcript to {txt_path}")
@@ -2424,6 +2463,12 @@ class TranscribeTab:
                 srt_path = outdir / output_names.subtitle_name(base)
                 srt_path.write_text(result.to_srt(names), encoding="utf-8")
                 append_line(self.status, f"Wrote subtitles to {srt_path}")
+            if self.csv_var.get():
+                csv_path = outdir / output_names.spreadsheet_name(base)
+                # With a byte-order mark: Excel then reads Arabic, Cyrillic
+                # and the rest as UTF-8 instead of guessing a code page.
+                csv_path.write_text(result.to_csv(names), encoding="utf-8-sig")
+                append_line(self.status, f"Wrote spreadsheet to {csv_path}")
         except _SkipWrite:
             pass
         except OSError as exc:
@@ -2683,6 +2728,13 @@ class TranscribeTab:
         if not text.strip():
             self.progress_label_var.set("Nothing to copy yet.")
             return
+        if self.times_var.get() and self._result is not None:
+            # The screen has no times on it; the copy is the text transcript.
+            text = self._result.to_txt(
+                self._speaker_names,
+                blank_lines=self.blank_lines_var.get(),
+                times=True,
+            )
         if any_leads(self._speaker_names.values()):
             # Pasted into a report, the lines lose the screen around them; the
             # legend goes with them, as it does in every saved format.
@@ -2691,37 +2743,102 @@ class TranscribeTab:
         self.root.clipboard_append(text)
         self.progress_label_var.set("Transcript copied to clipboard.")
 
-    def _save_transcript_docx(self) -> None:
-        """Save the current transcript as a Word document."""
+    def _save_transcript_as(self) -> None:
+        """Save the current transcript as Word, a spreadsheet or plain text."""
         result = self._result
         if result is None:
             self.progress_label_var.set("Run a transcription first.")
             return
-        default = (
-            f"{self._result_source.stem}.docx"
-            if self._result_source
-            else "transcript.docx"
-        )
+        stem = self._result_source.stem if self._result_source else "transcript"
+        kinds = {
+            "Word document": ".docx",
+            "Spreadsheet (CSV)": ".csv",
+            "Text file": ".txt",
+        }
+        chosen = tk.StringVar(master=self.root, value="Word document")
         path = filedialog.asksaveasfilename(
-            title="Save transcript as Word",
+            title="Save transcript",
             defaultextension=".docx",
-            initialfile=default,
-            filetypes=[("Word document", "*.docx")],
+            initialfile=f"{stem}.docx",
+            filetypes=[(name, f"*{suffix}") for name, suffix in kinds.items()],
+            typevariable=chosen,
             parent=active_window(self.root),
         )
         if not path:
             return
+        out = Path(path)
+        if out.suffix.lower() not in kinds.values():
+            # A name typed without its ending takes the type that was picked.
+            out = out.with_name(out.name + kinds.get(chosen.get(), ".docx"))
+        times = self.times_var.get()
+        names = self._speaker_names
         try:
-            transcript_to_docx(
-                result,
-                path,
-                self._speaker_names,
-                blank_lines=self.blank_lines_var.get(),
-            )
+            if out.suffix.lower() == ".csv":
+                out.write_text(result.to_csv(names), encoding="utf-8-sig")
+            elif out.suffix.lower() == ".txt":
+                text = result.to_txt(
+                    names, blank_lines=self.blank_lines_var.get(), times=times
+                )
+                out.write_text(text, encoding="utf-8")
+            else:
+                transcript_to_docx(
+                    result,
+                    out,
+                    names,
+                    blank_lines=self.blank_lines_var.get(),
+                    times=times,
+                )
             self._unsaved_edits = 0
-            self._report_saved(path)
+            self._report_saved(str(out))
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self._report_not_saved("The Word document was not saved", exc)
+            self._report_not_saved("The transcript was not saved", exc)
+
+    def _save_clip(self, start: float, end: float) -> None:
+        """Save a passage of the original recording as audio, with its record."""
+        source, result = self._result_source, self._result
+        if source is None or result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        folder = (
+            self.output_dir_var.get().strip() if self.write_output_var.get() else ""
+        ) or str(source.parent)
+        path = filedialog.asksaveasfilename(
+            title="Save the passage as audio",
+            defaultextension=".wav",
+            initialdir=folder,
+            initialfile=clips.clip_name(source, start, end),
+            filetypes=[("WAV audio", "*.wav")],
+            parent=active_window(self.root),
+        )
+        if not path:
+            return
+        out = Path(path)
+        names = dict(self._speaker_names)
+        lines = clips.lines_within(result.segments, start, end)
+        self.progress_label_var.set("Saving the passage…")
+
+        def _worker() -> None:
+            try:
+                first, last = clips.cut(source, start, end, out)
+                clips.write_clip_record(
+                    out,
+                    source=source,
+                    start=first,
+                    end=last,
+                    lines=lines,
+                    speaker_label=lambda sid: result._speaker_label(sid, names),
+                )
+                digest = sha256_file_or_none(out)
+                message = (
+                    f"Saved {self._clock(first)}–{self._clock(last)} as {out.name} "
+                    f"(SHA-256 {short(digest)}\u2026), with its record beside it."
+                )
+            except (clips.ClipError, OSError) as exc:
+                message = f"The passage was not saved: {friendly_error(exc)}"
+            self.root.after(0, lambda: self.progress_label_var.set(message))
+
+        # Cutting is quick; hashing a long source recording for the record is not.
+        threading.Thread(target=_worker, daemon=True).start()
 
     def current_analysis(
         self,
@@ -2966,13 +3083,24 @@ class TranscribeTab:
         # ``source`` the same way rather than reaching back into the widgets.
         filtered = self.listening_playback_var.get()
         settings = self._listening_settings() if filtered else None
+        speed = SPEEDS.get(self.playback_speed_var.get(), 1.0)
+        notes = [
+            note
+            for note, on in (
+                ("filtered", filtered),
+                (f"{speed:g}\u00d7 speed", speed != 1.0),
+            )
+            if on
+        ]
 
         def _worker() -> None:
             try:
-                self._player.play_segment(source, start, end, settings=settings)
+                self._player.play_segment(
+                    source, start, end, settings=settings, speed=speed
+                )
                 self.progress_label_var.set(
                     f"Playing {self._clock(start)}–{self._clock(end)}"
-                    f"{' (filtered)' if filtered else ''}…"
+                    f"{' (' + ', '.join(notes) + ')' if notes else ''}…"
                 )
             except PlaybackError as exc:
                 self.progress_label_var.set(friendly_error(exc))
@@ -3678,6 +3806,9 @@ class TranscribeTab:
             "device": self.device_var,
             "convert_video": self.convert_video_var,
             "srt": self.srt_var,
+            "csv": self.csv_var,
+            "times": self.times_var,
+            "playback_speed": self.playback_speed_var,
             "blank_lines": self.blank_lines_var,
             "highlight_conf": self.highlight_conf_var,
             "verbatim": self.verbatim_var,
@@ -3716,6 +3847,8 @@ class TranscribeTab:
         # otherwise sit in the dropdown and resolve to Auto silently.
         if self.device_var.get() not in _DEVICE_MODES:
             self.device_var.set(_device_label(default_mode()))
+        if self.playback_speed_var.get() not in SPEEDS:
+            self.playback_speed_var.set(next(iter(SPEEDS)))
         # A Method saved under an earlier build's label keeps its choice.
         old = _OLD_ENGINE_LABELS.get(self.engine_var.get())
         if old is not None:

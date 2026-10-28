@@ -25,6 +25,12 @@ PathLike = Union[str, Path]
 _PLAYER_CANDIDATES = ("ffplay", "aplay", "afplay", "paplay")
 
 
+# How fast a line is played back, as offered beside Stop audio. Slower keeps
+# the pitch (ffmpeg's atempo), so a voice still sounds like itself: the point
+# is to catch fast or mumbled words, not to change how someone sounds.
+SPEEDS = {"Normal speed": 1.0, "0.75\u00d7 speed": 0.75, "0.5\u00d7 speed": 0.5}
+
+
 class PlaybackError(RuntimeError):
     """Raised when a segment can't be extracted or played."""
 
@@ -66,8 +72,11 @@ class SegmentPlayer:
         end: float,
         *,
         settings: "Optional[listening.ListeningSettings]" = None,
+        speed: float = 1.0,
     ) -> None:
         """Extract ``[start, end]`` from ``source`` and play it (async).
+
+        ``speed`` below 1 plays it slower at the same pitch (0.5 at the least).
 
         With ``settings``, the extracted span is put through the listening
         filters before it is played: hum out, rumble out, the consonant band
@@ -84,16 +93,22 @@ class SegmentPlayer:
         os.close(handle)
         out = Path(tmp)
         # -ss before -i is fast (keyframe) seek - plenty accurate for re-listening.
+        tempo: List[str] = []
+        if abs(speed - 1.0) > 1e-6:
+            tempo = ["-af", f"atempo={min(2.0, max(0.5, speed)):.3f}"]
         result = subprocess.run(
             [
                 str(ffmpeg),
                 "-y",
                 "-ss",
                 f"{max(0.0, start):.3f}",
-                "-i",
-                str(source),
+                # Before -i: how much of the recording to read. After it, it
+                # would cap what is written, and a slowed line would be cut off.
                 "-t",
                 f"{duration:.3f}",
+                "-i",
+                str(source),
+                *tempo,
                 "-ac",
                 "1",
                 "-ar",

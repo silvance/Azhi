@@ -435,6 +435,28 @@ wrong people it is one click to swap them.
 **Find**, under the transcript, jumps through matches: Enter for the next,
 Shift+Enter for the previous.
 
+**Hard to catch a word?** The box beside **Stop audio** plays lines slower:
+0.75× or 0.5× speed. The pitch stays the same, so a voice still sounds like
+itself. Use it with the listening filters (Advanced options) for the worst
+lines.
+
+### Saving a passage as audio
+
+Right-click a line's `[speaker]` tag (or the line, without speakers) and
+choose **Save this line as audio…**; or highlight several lines and
+right-click the highlight for **Save the selection as audio…**. It is for
+briefing on a lead, or passing it on, without sending the whole recording.
+
+- It is cut from the **original recording**, at the quality it was recorded,
+  with a quarter of a second either side so the first and last words are not
+  clipped. Nothing is filtered.
+- It is named after the recording and the time range, for example
+  `interview 00-12-34 to 00-12-50.wav`, and saved where you choose (your
+  output folder, by default).
+- Beside it, a `.clip.json` record says where it came from: the recording's
+  name and SHA-256 fingerprint, the time range, the clip's own fingerprint and
+  format, and the transcript lines it covers.
+
 ---
 
 ## 5. Getting the transcript out
@@ -442,7 +464,8 @@ Shift+Enter for the previous.
 Under the transcript:
 
 - **Copy transcript** — to the clipboard.
-- **Save as Word…** — a `.docx`.
+- **Save as…** — a Word document (`.docx`), a spreadsheet (`.csv`) or plain
+  text (`.txt`), picked in the dialog.
 - **Analysis report…** — the transcript plus what produced it: which models,
   which settings, and a fingerprint of the source file. This is the one to
   export when the result may be questioned later.
@@ -452,6 +475,18 @@ Under the transcript:
 
 Save a project whenever you have put real work into corrections. Re-doing them
 is the most annoying way to lose an hour.
+
+Two options under **Advanced options** change what is written:
+
+- **Put the time on each line** starts every line of the text and Word
+  transcripts (and a copy) with when it was said, as `[00:12:34]`, so a
+  report can point at the moment in the recording.
+- **Also save a spreadsheet (.csv)** writes one row per line beside the
+  transcript: start and end (as times and in seconds), speaker, text, and
+  whether the line has low-confidence words. It opens in Excel with every
+  language intact. A line that begins `=`, `+`, `-` or `@` is stored with a
+  leading `'`, so a spreadsheet shows it as text and never runs it as a
+  formula.
 
 ---
 

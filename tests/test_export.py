@@ -53,4 +53,28 @@ def test_transcript_to_docx_with_speakers(tmp_path):
     doc = Document(str(out))
     joined = "\n".join(p.text for p in doc.paragraphs)
     assert "[Alice] hello" in joined
-    assert "[SPEAKER_01] world" in joined
+    assert "[Speaker 2] world" in joined
+
+
+@pytest.mark.skipif(not _HAS_DOCX, reason="python-docx not installed")
+def test_word_transcript_can_carry_the_time_of_each_line(tmp_path):
+    from docx import Document
+
+    result = TranscriptionResult(
+        text="",
+        language="en",
+        language_probability=1.0,
+        duration=80.0,
+        segments=[
+            Segment(start=75.0, end=76.0, text="hello", speaker="SPEAKER_00"),
+        ],
+    )
+    out = transcript_to_docx(
+        result, tmp_path / "t.docx", {"SPEAKER_00": "Ann"}, times=True
+    )
+    joined = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "[00:01:15] [Ann] hello" in joined
+    untimed = transcript_to_docx(result, tmp_path / "u.docx", {"SPEAKER_00": "Ann"})
+    assert "[00:01:15]" not in "\n".join(
+        p.text for p in Document(str(untimed)).paragraphs
+    )

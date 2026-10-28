@@ -353,24 +353,31 @@ class TranscriptionResult:
         speaker_names: Optional[Dict[str, str]] = None,
         *,
         blank_lines: bool = False,
+        times: bool = False,
     ) -> str:
         """Plain-text transcript. When diarized, lines are prefixed with the
         speaker (optionally remapped via ``speaker_names``: id -> display name).
 
         ``blank_lines`` puts an empty line between segments (between speaker turns
-        when diarized) - easier to read and to paste into a document.
+        when diarized) - easier to read and to paste into a document. ``times``
+        starts each line with when it starts in the recording, ``[00:12:34]``.
         """
         sep = "\n\n" if blank_lines else "\n"
+
+        def at(segment: Segment) -> str:
+            return f"[{clock_time(segment.start)}] " if times else ""
+
         if not self.has_speakers:
             if self.segments:
-                return sep.join(segment.text for segment in self.segments)
+                return sep.join(at(segment) + segment.text for segment in self.segments)
             return self.text
         labels = [
             self._speaker_label(segment.speaker, speaker_names)
             for segment in self.segments
         ]
         body = sep.join(
-            f"[{label}] {segment.text}" for label, segment in zip(labels, self.segments)
+            f"{at(segment)}[{label}] {segment.text}"
+            for label, segment in zip(labels, self.segments)
         )
         if any_leads(labels):
             # A transcript leaves this machine as this file; the marker on each
@@ -391,6 +398,74 @@ class TranscriptionResult:
                 text = segment.text
             blocks.append(f"{index}\n{start} --> {end}\n{text}\n")
         return "\n".join(blocks)
+
+    def to_csv(self, speaker_names: Optional[Dict[str, str]] = None) -> str:
+        """The transcript as a spreadsheet: one row per line.
+
+        Columns: start and end (``hh:mm:ss.mmm``, and in seconds for sorting
+        and arithmetic), speaker (as shown, unconfirmed-lead marker included),
+        the text, and whether any of it is low-confidence (the line, or any
+        word in it, as the screen marks it). A cell that a
+        spreadsheet would read as a formula (it begins ``=``, ``+``, ``-`` or
+        ``@``) is stored as text: a transcript of someone else's speech must
+        not be able to run anything on the analyst's machine.
+        """
+        import csv
+        import io
+
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\r\n")
+        writer.writerow(
+            [
+                "Start",
+                "End",
+                "Start (s)",
+                "End (s)",
+                "Speaker",
+                "Text",
+                "Low confidence",
+            ]
+        )
+        for segment in self.segments:
+            speaker = (
+                self._speaker_label(segment.speaker, speaker_names)
+                if segment.speaker
+                else ""
+            )
+            writer.writerow(
+                [
+                    clock_time(segment.start, millis=True),
+                    clock_time(segment.end, millis=True),
+                    f"{segment.start:.3f}",
+                    f"{segment.end:.3f}",
+                    _as_text(speaker),
+                    _as_text(segment.text.strip()),
+                    "yes" if _shaky(segment) else "",
+                ]
+            )
+        return out.getvalue()
+
+
+def clock_time(seconds: float, *, millis: bool = False) -> str:
+    """``hh:mm:ss`` (or ``hh:mm:ss.mmm``) for a point in a recording."""
+    total_ms = max(0, round(seconds * 1000))
+    hours, rest = divmod(total_ms, 3_600_000)
+    minutes, rest = divmod(rest, 60_000)
+    secs, ms = divmod(rest, 1000)
+    stamp = f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{stamp}.{ms:03d}" if millis else stamp
+
+
+def _shaky(segment: Segment) -> bool:
+    """Whether any of a line is low-confidence, as the screen would mark it."""
+    return is_low_confidence_segment(segment) or any(
+        is_low_confidence_word(word) for word in segment.words
+    )
+
+
+def _as_text(cell: str) -> str:
+    """A cell a spreadsheet would treat as a formula, made plain text."""
+    return "'" + cell if cell[:1] in ("=", "+", "-", "@", "\t", "\r") else cell
 
 
 def _format_timestamp(seconds: float) -> str:

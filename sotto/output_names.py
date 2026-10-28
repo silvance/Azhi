@@ -112,6 +112,10 @@ def subtitle_name(base: str) -> str:
     return base + ".srt"
 
 
+def spreadsheet_name(base: str) -> str:
+    return base + ".csv"
+
+
 def converted_audio_name(base: str) -> str:
     """The WAV a video is converted to, beside the rest of that file's output."""
     return Path(base).stem + ".wav"
@@ -123,6 +127,7 @@ __all__ = [
     "components",
     "converted_audio_name",
     "plan",
+    "spreadsheet_name",
     "subtitle_name",
     "transcript_name",
 ]
