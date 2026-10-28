@@ -429,9 +429,13 @@ def fetch_diarization(embedding: str = DEFAULT_EMBEDDING) -> None:
 #
 # - NeMo-Speech.cpp, the CPU runtime that runs it (Apache-2.0). Digests are the
 #   .sha256 files NVIDIA publishes with the release.
-# - Nemotron 3 Diarization, the model (OpenMDW-1.1 - have it reviewed before a
-#   bundle carrying it is distributed). Revision, size and digest are the ones
-#   the runtime's own model index pins for this release.
+# - Nemotron 3 Diarization, the model (OpenMDW-1.1). Revision, size and digest
+#   are the ones the runtime's own model index pins for this release.
+#
+# OpenMDW-1.1 is permissive. Its one condition on passing the model on is that
+# the copy keeps the agreement's text and the notices of origin the model came
+# with. NVIDIA's model card is that notice (the repository has no LICENSE file
+# or copyright line), so both go into the folder beside the model.
 NEMO_SPEECH_VERSION = "0.2.0"
 NEMO_SPEECH_RELEASE = (
     "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/"
@@ -451,6 +455,9 @@ NEMOTRON_REVISION = "f667ed73aee57d40cc39428eb768b4fd87a0a29e"
 NEMOTRON_FILENAME = "Nemotron-3-Diarization.q8_0.gguf"
 NEMOTRON_SIZE = 107012128
 NEMOTRON_SHA256 = "08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1"
+NEMOTRON_CARD = "README.md"
+NEMOTRON_CARD_COPY = "Nemotron-3-Diarization-model-card.md"
+OPENMDW_TEXT = Path(__file__).resolve().parent / "licenses" / "OpenMDW-1.1.txt"
 
 
 def _check_digest(path: Path, expected: str, what: str) -> None:
@@ -467,7 +474,8 @@ def fetch_nemotron() -> None:
 
     Into ``whispers_assets/nemotron``: the runtime's ``bin`` folder (the program
     and the libraries it loads from beside itself), its licence files, the
-    model, and ``nemotron.json`` recording exactly what was fetched.
+    model with its licence text and NVIDIA's model card, and ``nemotron.json``
+    recording exactly what was fetched.
     """
     import zipfile
 
@@ -518,6 +526,17 @@ def fetch_nemotron() -> None:
     if model.stat().st_size != NEMOTRON_SIZE:
         raise SystemExit(f"{NEMOTRON_FILENAME} is not {NEMOTRON_SIZE} bytes")
     _check_digest(model, NEMOTRON_SHA256, NEMOTRON_FILENAME)
+    # The model card, from the same pinned revision: the notice of origin the
+    # licence asks a copy to keep.
+    with tempfile.TemporaryDirectory() as tmp:
+        card = hf_hub_download(
+            repo_id=NEMOTRON_REPO,
+            filename=NEMOTRON_CARD,
+            revision=NEMOTRON_REVISION,
+            local_dir=tmp,
+        )
+        shutil.copyfile(card, out / NEMOTRON_CARD_COPY)
+    shutil.copyfile(OPENMDW_TEXT, out / "licenses" / OPENMDW_TEXT.name)
     _pin_repo(NEMOTRON_REPO, NEMOTRON_REVISION)
     # hf_hub_download leaves its own bookkeeping folder beside the file.
     shutil.rmtree(out / ".cache", ignore_errors=True)
@@ -536,6 +555,9 @@ def fetch_nemotron() -> None:
             "file": NEMOTRON_FILENAME,
             "sha256": NEMOTRON_SHA256,
             "licence": "OpenMDW-1.1",
+            "licence_text": f"licenses/{OPENMDW_TEXT.name}",
+            "model_card": NEMOTRON_CARD_COPY,
+            "model_card_sha256": sha256_file_or_none(out / NEMOTRON_CARD_COPY),
         },
     }
     (out / "nemotron.json").write_text(

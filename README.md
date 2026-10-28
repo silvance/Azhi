@@ -205,9 +205,10 @@ swap.
   anything under half a second, and so lost one-word replies. With a speaker
   count given, the voices heard longest are kept and each moment of any other
   goes to whichever of them is more likely; it cannot split a voice it heard as
-  one, and says so. The model is licensed **OpenMDW-1.1**
-  (the runtime is Apache-2.0) — have that reviewed before distributing a bundle
-  that carries it. NVIDIA's published results (DIHARD III 12.7% DER against 21.4%
+  one, and says so. The model is licensed **OpenMDW-1.1** (the runtime is
+  Apache-2.0), which is permissive: a copy must keep the agreement and NVIDIA's
+  notices, and the build puts both beside the model (see
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). NVIDIA's published results (DIHARD III 12.7% DER against 21.4%
   for pyannote 3.1) are its own, on its own benchmarks; in this office's use it
   has also been faster than sherpa and more accurate than pyannote. The
   [test set](docs/test-set.md) measures it on your own recordings.
@@ -400,11 +401,11 @@ separation are cached in the output folder (text and timings, never audio), so
 [`docs/test-set.md`](docs/test-set.md) is the guide for building and labelling a
 test set.
 
-### Live (stream) transcription
+### Live transcription (a stream or a microphone)
 
 The **Live** tab transcribes an incoming stream in near-real-time — e.g. a GoPro
-pushing **RTMP** to this PC during a training session. It appears whenever ffmpeg
-is available (always, in a bundle).
+pushing **RTMP** to this PC during a training session — or a microphone plugged
+into this PC. It appears whenever ffmpeg is available (always, in a bundle).
 
 It is *chunked* near-live, not true streaming: ffmpeg reads the stream and splits
 its audio into short fixed-length segments, and each finished segment is
@@ -425,6 +426,21 @@ keep up on CPU — a big model will fall behind.
   setting up.
 - **Start** / **Stop** control capture. Cancel on another page does not stop
   it: each page's Cancel stops only that page's work.
+
+**A microphone on this PC** (Windows through DirectShow, Linux through ALSA,
+both in the ffmpeg a bundle already ships; no other library) is the other
+source. **Refresh** lists what is plugged in. Its audio exists nowhere else, so
+the whole of it is always kept: ffmpeg writes it, at the device's own rate and
+channels, to a WAV in **Keep recordings in** (`Documents\Whispers recordings`
+by default), beside the live chunks it transcribes. On **Stop**, a record is
+written next to it (`<recording>.wav.capture.json`): the device, start and stop
+times, the transcription model, the file's size and SHA-256, and the rate,
+channels and length read back from the file. A red line on the page names the
+device and the time for as long as it records. A microphone that sends nothing
+but exact zeros for ten seconds (muted, or blocked by Windows' privacy
+settings) is reported in the status line; the recording carries on. Nothing is
+sent anywhere, and no network is used. For a careful transcript, open the kept
+recording on the Transcribe page afterwards.
 
 Accuracy on a live feed is bounded by the audio: room noise, distance from the
 mic and overlapping speech all hurt more than on a clean recording. For a room,

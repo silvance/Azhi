@@ -205,3 +205,86 @@ def test_earlier_chunks_prime_the_next_only_where_the_model_carries_context(
     transcriber._transcribe_segment(tmp_path / "a.wav", "")
     transcriber._transcribe_segment(tmp_path / "b.wav", "WORDS")
     assert prompts == [None, "WORDS" if primed else None]
+
+
+def test_a_microphone_is_opened_with_its_own_input_options_and_recorded(
+    tmp_path, monkeypatch
+):
+    captured = {}
+
+    def _fake_popen(args, **kwargs):
+        captured["args"] = args
+        return _FakePopen(args, **kwargs)
+
+    monkeypatch.setattr(live, "find_ffmpeg", lambda: Path("ffmpeg"))
+    monkeypatch.setattr(live.subprocess, "Popen", _fake_popen)
+    recording = tmp_path / "Microphone.wav"
+    lt = LiveTranscriber(
+        "",
+        input_args=("-f", "dshow", "-i", "audio=@device_cm_{X}"),
+        record_to=recording,
+        listen=True,
+    )
+    statuses = []
+    lt.start(on_text=lambda _t: None, on_status=statuses.append)
+    lt.stop()
+    args = captured["args"]
+    assert args[args.index("-f") + 1] == "dshow"
+    assert args[args.index("-i") + 1] == "audio=@device_cm_{X}"
+    assert "-listen" not in args  # a device is not a server
+    assert "-n" in args  # never over an existing file
+    # The recording is a second output, after the chunks, unresampled.
+    assert args[-1] == str(recording)
+    assert args[-7].endswith("seg_%05d.wav")
+    tail = args[-6:]
+    assert tail[:3] == ["-vn", "-c:a", "pcm_s16le"]
+    assert "-ar" not in tail
+    assert statuses[0] == "Opening the microphone…"
+
+
+def _real_ffmpeg():
+    from whispers.resources import find_ffmpeg
+
+    return find_ffmpeg()
+
+
+@pytest.mark.skipif(_real_ffmpeg() is None, reason="needs ffmpeg")
+@pytest.mark.parametrize(
+    "source, silent",
+    [
+        ("sine=frequency=300:sample_rate=48000,aformat=channel_layouts=stereo", False),
+        ("anullsrc=sample_rate=48000:channel_layout=stereo", True),
+    ],
+)
+def test_real_capture_keeps_the_recording_and_notices_silence(
+    tmp_path, monkeypatch, source, silent
+):
+    """ffmpeg itself, with a generated sound standing in for a microphone."""
+    import time
+    import wave
+
+    from whispers.transcription import TranscriptionResult
+
+    monkeypatch.setattr(live, "SILENT_WARNING_SECONDS", 3.0)
+    monkeypatch.setattr(
+        live,
+        "transcribe_audio",
+        lambda path, **_k: TranscriptionResult("", "en", 1.0, 2.0, []),
+    )
+    recording = tmp_path / "Microphone.wav"
+    lt = LiveTranscriber(
+        "",
+        segment_seconds=2,
+        input_args=("-re", "-f", "lavfi", "-i", source),
+        record_to=recording,
+        watch_silence=True,
+    )
+    statuses = []
+    lt.start(on_text=lambda _t: None, on_status=statuses.append)
+    time.sleep(6.5)
+    lt.stop()
+    with wave.open(str(recording), "rb") as kept:
+        assert kept.getframerate() == 48000  # as the device sent it
+        assert kept.getnchannels() == 2
+        assert 5.0 < kept.getnframes() / 48000 < 8.0  # finalised on stop
+    assert (live.SILENT_MESSAGE in statuses) is silent

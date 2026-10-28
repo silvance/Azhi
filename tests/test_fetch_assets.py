@@ -197,7 +197,12 @@ def nemotron_fetch(tmp_path, monkeypatch):
             fetch_assets.NEMOTRON_REVISION,
         )
         target = __import__("pathlib").Path(local_dir) / filename
-        target.write_bytes(model_bytes)
+        if filename == fetch_assets.NEMOTRON_CARD:
+            target.write_text(
+                "## License/Terms of Use\nGoverned by OpenMDW 1.1.\n", encoding="utf-8"
+            )
+        else:
+            target.write_bytes(model_bytes)
         return str(target)
 
     monkeypatch.setitem(
@@ -232,6 +237,32 @@ def test_nemotron_bundle_holds_program_libraries_licence_model_and_record(
     assert fetch_assets.LOCK["huggingface"][fetch_assets.NEMOTRON_REPO] == (
         fetch_assets.NEMOTRON_REVISION
     )
+
+
+def test_nemotron_bundle_keeps_what_its_licence_asks_a_copy_to_keep(nemotron_fetch):
+    """OpenMDW-1.1: a copy keeps the agreement and the notices of origin."""
+    import json
+
+    fetch_assets.fetch_nemotron()
+    out = nemotron_fetch["out"]
+    text = (out / "licenses" / "OpenMDW-1.1.txt").read_text(encoding="utf-8")
+    assert text.startswith("OpenMDW License Agreement, version 1.1")
+    assert "you shall retain in your\ndistribution (1) a copy of this agreement" in text
+    card = out / fetch_assets.NEMOTRON_CARD_COPY
+    assert "OpenMDW 1.1" in card.read_text(encoding="utf-8")
+    record = json.loads((out / "nemotron.json").read_text(encoding="utf-8"))
+    assert record["model"]["licence_text"] == "licenses/OpenMDW-1.1.txt"
+    assert record["model"]["model_card"] == card.name
+    assert len(record["model"]["model_card_sha256"]) == 64
+    assert not (out / fetch_assets.NEMOTRON_CARD).exists()
+
+
+def test_the_notices_reproduce_the_openmdw_agreement_as_shipped():
+    """The notices beside the program carry the same text as the bundle's copy."""
+    root = Path(__file__).resolve().parent.parent
+    agreement = fetch_assets.OPENMDW_TEXT.read_text(encoding="utf-8")
+    notices = (root / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert agreement.strip() in notices
 
 
 def test_nemotron_runtime_with_another_digest_is_not_bundled(

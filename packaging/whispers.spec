@@ -20,8 +20,9 @@
 #     python packaging/fetch_assets.py argos ar,ru,zh,fa,uk,he,ko
 #     (plus the steps above, then pyinstaller)
 #
-# Optional Nemotron speaker separation (NVIDIA; model licence OpenMDW-1.1 -
-# have it reviewed before distributing a bundle that carries it):
+# Optional Nemotron speaker separation (NVIDIA; model licence OpenMDW-1.1,
+# permissive: the fetch puts its text and NVIDIA's model card beside the model,
+# which is all it asks of a copy):
 #     python packaging/fetch_assets.py nemotron
 #     (plus the steps above, then pyinstaller)
 #

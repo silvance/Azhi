@@ -11,8 +11,8 @@ needed or used for any of the work described here.
 
 The one exception is deliberate and operator-driven: the **Live** page connects
 to a stream you point it at, because that is what listening to a stream means.
-Nothing is sent out; it reads what you asked it to read. Every other page is
-entirely local.
+Nothing is sent out; it reads what you asked it to read. Its microphone option,
+and every other page, are entirely local.
 
 This guide is for the person using the tool. It assumes no technical
 background and follows the order you would actually work in.
@@ -76,7 +76,7 @@ includes:
 | **Speaker Profiles** | Building a reference voice for someone you know. |
 | **Compare Speakers** | Measuring a voice against one of those references. |
 | **Comparison History** | Every comparison this copy has run. |
-| **Live** | Transcribing an incoming stream as it happens — the one page that uses the network. |
+| **Live** | Transcribing a stream or a microphone as it happens. A stream is the one thing that uses the network. |
 | **Translate** | Translating text, and pulling text out of images and PDFs. |
 
 The green **Local processing** marker in the header means the analysis is done
@@ -626,8 +626,8 @@ later be read as cleaner than it was.
 
 ## 10. Live and Translate
 
-**Live** transcribes an incoming stream as it arrives. Use a small model
-(`base.en` or `small.en`) so it keeps up. **Chunk length** trades latency
+**Live** transcribes an incoming stream, or a microphone on this PC, as it
+arrives. Use a small model (`base.en` or `small.en`) so it keeps up. **Chunk length** trades latency
 against smoothness: shorter is more live but choppier. The transcript can be
 saved to a file as it goes.
 
@@ -649,15 +649,47 @@ another takes more than a few seconds of each, so:
 - Someone who has said nothing for more than ten minutes may come back under a
   new speaker number.
 
-The Live page does not keep the audio. For a transcript you need to rely on,
-record the stream as well, and transcribe the recording on the Transcribe page
-afterwards: that hears all of it at once.
+### A microphone
 
-This is the one page that uses the network, and only where you tell it to: it
-reads the **Stream URL** you give it, or waits for an incoming connection when
-you ask this PC to host. Nothing is sent out, and the transcription itself
-still happens here. On a machine that is meant to stay isolated, this is the
-page to leave alone.
+Under **Listen to**, choose **A microphone on this PC**, pick it from the list
+(**Refresh** looks again after you plug one in), and press **Start**.
+
+- **Everything it hears is kept.** A microphone's audio exists nowhere else, so
+  the whole recording is saved as a WAV file in **Keep recordings in** (your
+  Documents folder's *Whispers recordings*, unless you choose another), named
+  after the time it started. It is saved as the microphone sent it, not
+  reduced to what the live transcription uses.
+- **While it records**, a red line under the buttons names the microphone and
+  counts the time. If it says the recording ended, the microphone stopped
+  sending (unplugged, or taken by another program): press **Stop**.
+- **When you press Stop**, a small record is written beside the recording,
+  ending `.capture.json`: which microphone, when it started and stopped, the
+  model used live, and the file's size and SHA-256 fingerprint. The status line
+  says where the recording is.
+- **"The microphone is sending only silence"** means ten seconds of nothing at
+  all: the microphone is muted, or Windows is not letting desktop apps use it
+  (Settings, Privacy & security, Microphone). The recording carries on, but
+  will be silent until that is fixed.
+- The live transcript is a quick look. For the careful one, open the kept
+  recording on the **Transcribe** page afterwards, with a larger model.
+
+Recording people is governed by law and by your office's rules. The tool does
+not decide whether you may; it only makes plain that it is recording.
+
+### Streams and the network
+
+The Live page does not keep a stream's audio. For a transcript you need to rely
+on, record the stream as well, and transcribe the recording on the Transcribe
+page afterwards: that hears all of it at once.
+
+A stream is the one thing in Whispers that uses the network, and only where you
+tell it to: it reads the **Stream URL** you give it, or waits for an incoming
+connection when you ask this PC to host. Nothing is sent out, and the
+transcription itself still happens here. On a machine that is meant to stay
+isolated, use a microphone or nothing on this page; a microphone uses no
+network.
+
+### Translate
 
 **Translate** translates pasted text, and can pull text out of an image or PDF
 first (**Choose an image or PDF**) when the build includes OCR. The result can
