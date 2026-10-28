@@ -1189,11 +1189,12 @@ class TranscribeTab:
             )
         if self._playback_ok:
             subtle_button(exports, "Stop audio", self._stop_audio).pack(side="left")
-            ttk.Label(
-                results.body,
-                text="Ctrl-click a line or a word to play its audio.",
-                style=Style.META,
-            ).pack(anchor="w", pady=(SPACE_XS, 0))
+        hints = ["Drag a speaker tag, or selected words, onto another speaker's line."]
+        if self._playback_ok:
+            hints.insert(0, "Ctrl-click a line or a word to play its audio.")
+        ttk.Label(results.body, text="  ".join(hints), style=Style.META).pack(
+            anchor="w", pady=(SPACE_XS, 0)
+        )
 
         # Its own row, and disabled until there is a diarized result to redo:
         # this is the cheap half of a run offered on its own, and it wants to
@@ -2633,7 +2634,7 @@ class TranscribeTab:
         )
 
     def _rerender_transcript(self) -> None:
-        self.transcript_view.render()
+        self.transcript_view.render(keep_view=True)
 
     def _find_next(self) -> None:
         self._find(backwards=False)

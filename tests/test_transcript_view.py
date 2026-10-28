@@ -1,0 +1,184 @@
+"""Editing the transcript: the view stays put, and lines can be dragged.
+
+Builds the real transcript widget, so it needs a display; skipped without one.
+"""
+
+import os
+from types import SimpleNamespace
+
+import pytest
+
+tk = pytest.importorskip("tkinter")
+
+pytestmark = pytest.mark.skipif(
+    os.name != "nt" and not os.environ.get("DISPLAY"),
+    reason="needs a display",
+)
+
+
+@pytest.fixture
+def view():
+    from whispers.gui.theme import init_theme
+    from whispers.gui.transcript_view import TranscriptView
+    from whispers.transcription import Segment, TranscriptionResult, Word
+
+    root = tk.Tk()
+    root.geometry("700x300")
+    init_theme(root)
+    changes = []
+    try:
+        view = TranscriptView(
+            root, root, tk.BooleanVar(value=True), lambda: changes.append(1)
+        )
+        view.widget.pack(fill="both", expand=True)
+        segments = []
+        for n in range(80):
+            start = n * 4.0
+            words = [
+                Word(start + i, start + i + 0.8, f" w{n}_{i}", 0.9) for i in range(3)
+            ]
+            segments.append(
+                Segment(
+                    start,
+                    start + 3.0,
+                    "".join(w.word for w in words).strip(),
+                    speaker=f"SPEAKER_0{n % 2}",
+                    words=words,
+                )
+            )
+        result = TranscriptionResult(
+            text="",
+            language="en",
+            language_probability=1.0,
+            duration=320.0,
+            segments=segments,
+        )
+        view.set_result(result, {})
+        _settle(root)
+        yield SimpleNamespace(view=view, root=root, result=result, changes=changes)
+    finally:
+        root.destroy()
+
+
+def _settle(root):
+    for _ in range(5):
+        root.update_idletasks()
+        root.update()
+
+
+def _event_at(view, index):
+    x, y, w, h = view.widget.bbox(index)
+    return SimpleNamespace(x=x + 2, y=y + h // 2)
+
+
+def test_moving_a_word_keeps_the_view_where_it_was(view):
+    view.view.widget.yview_moveto(0.6)
+    _settle(view.root)
+    before = view.view.widget.yview()[0]
+    # A word on a line in view, given to the other speaker.
+    top = view.view._segment_at(view.view.widget.index("@0,0 +2 lines"))
+    other = (
+        "SPEAKER_01"
+        if view.result.segments[top].speaker == "SPEAKER_00"
+        else "SPEAKER_00"
+    )
+    view.view._reassign_word_span(top, 1, other, False)
+    _settle(view.root)
+    after = view.view.widget.yview()[0]
+    assert after > 0.4, "the view went back to the top"
+    assert abs(after - before) < 0.05
+    assert view.changes
+
+
+def test_the_moved_words_are_marked_for_a_moment(view):
+    view.view._reassign_word_span(3, 2, "SPEAKER_00", False)
+    _settle(view.root)
+    marked = view.view.widget.tag_ranges("moved")
+    assert marked
+    assert view.view.widget.get(marked[0], marked[1]).strip() == "w3_2"
+
+
+def test_a_speaker_tag_dragged_onto_another_line_moves_that_line(view):
+    w = view.view.widget
+    w.yview("line::10.first linestart")
+    _settle(view.root)
+    assert view.result.segments[10].speaker == "SPEAKER_00"
+    start = _event_at(view.view, "line::10.first")
+    target = _event_at(view.view, "word::11::1.first")  # Speaker 2's line
+    assert view.view._on_drag_press(start) == "break"
+    view.view._on_drag_motion(target)
+    assert w.tag_ranges("droptarget"), "the line it would land on is shaded"
+    view.view._on_drag_release(target)
+    _settle(view.root)
+    # Line 10 joined the other speaker (merged with its neighbours).
+    owner = next(
+        seg.speaker
+        for seg in view.view._result.segments
+        if any(word.start == 40.0 for word in seg.words)
+    )
+    assert owner == "SPEAKER_01"
+    assert not w.tag_ranges("droptarget")
+
+
+def test_a_click_on_a_speaker_tag_is_still_a_click(view):
+    start = _event_at(view.view, "line::2.first")
+    view.view._on_drag_press(start)
+    view.view._on_drag_motion(SimpleNamespace(x=start.x + 1, y=start.y))
+    view.view._on_drag_release(start)
+    _settle(view.root)
+    assert view.result.segments[2].speaker == "SPEAKER_00"
+    assert not view.changes
+
+
+def test_dropping_on_the_same_speaker_changes_nothing(view):
+    start = _event_at(view.view, "line::2.first")
+    same = _event_at(view.view, "word::4::0.first")  # also Speaker 1
+    view.view._on_drag_press(start)
+    view.view._on_drag_motion(same)
+    assert not view.view.widget.tag_ranges("droptarget")
+    view.view._on_drag_release(same)
+    _settle(view.root)
+    assert not view.changes
+
+
+def test_a_real_drag_drops_without_opening_the_speaker_menu(view):
+    w = view.view.widget
+    w.yview("line::10.first linestart")
+    _settle(view.root)
+    menus = []
+    view.view._popup = lambda menu, _event: menus.append(menu)
+    start = _event_at(view.view, "line::10.first")
+    target = _event_at(view.view, "word::11::1.first")
+    w.focus_force()
+    w.event_generate("<Motion>", x=start.x, y=start.y, warp=True)
+    w.event_generate("<ButtonPress-1>", x=start.x, y=start.y)
+    w.event_generate("<B1-Motion>", x=start.x + 10, y=start.y, state=0x100)
+    w.event_generate("<B1-Motion>", x=target.x, y=target.y, state=0x100)
+    w.event_generate("<Motion>", x=target.x, y=target.y)
+    w.event_generate("<ButtonRelease-1>", x=target.x, y=target.y, state=0x100)
+    _settle(view.root)
+    assert not menus, "a drop opened a menu as well"
+    owner = next(
+        seg.speaker
+        for seg in view.view._result.segments
+        if any(word.start == 40.0 for word in seg.words)
+    )
+    assert owner == "SPEAKER_01"
+
+
+def test_a_drag_scrolls_near_an_edge_but_not_where_it_starts(view):
+    w = view.view.widget
+    w.yview("line::10.first linestart")
+    _settle(view.root)
+    top = w.yview()[0]
+    start = _event_at(view.view, "line::10.first")  # on the top line
+    view.view._on_drag_press(start)
+    view.view._on_drag_motion(SimpleNamespace(x=start.x + 10, y=start.y))
+    _settle(view.root)
+    assert w.yview()[0] == top, "scrolled away as soon as the drag began"
+    middle = w.winfo_height() // 2
+    view.view._on_drag_motion(SimpleNamespace(x=start.x, y=middle))
+    view.view._on_drag_motion(SimpleNamespace(x=start.x, y=w.winfo_height() - 2))
+    _settle(view.root)
+    assert w.yview()[0] > top, "held at the bottom edge, it should scroll down"
+    view.view._end_drag()

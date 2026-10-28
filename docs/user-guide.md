@@ -406,17 +406,20 @@ wrong.
 | To do this | Do that |
 | --- | --- |
 | Rename a speaker everywhere | Click their `[speaker]` tag |
-| Move one line to another speaker | Click the tag, choose the individual option |
+| Move one line to another speaker | Drag its `[speaker]` tag onto the other speaker's line, or click the tag and choose |
 | Move a single word | Click that word |
-| Move part of a line | Highlight the words and drag them onto the other speaker's line |
+| Move part of a line | Highlight the words (double-click selects one) and drag them onto the other speaker's line |
 
-The last one is for when one person's sentence has been lumped into the middle
-of another's. Right-click offers the same moves as a menu.
+Moving part of a line is for when one person's sentence has been lumped into
+the middle of another's. Right-click offers the same moves as a menu. While
+you drag, the line it will land on is shaded, and holding the pointer at the
+top or bottom edge scrolls the transcript. After a move the transcript stays
+where it was, and the words that moved are marked for a moment.
 
-Which voice a diarizer calls `SPEAKER_00` is arbitrary, so if two names have
-landed on the wrong people it is one click to swap them.
+Which voice is "Speaker 1" is arbitrary, so if two names have landed on the
+wrong people it is one click to swap them.
 
-**Find**, under the transcript, jumps through matches — Enter for the next,
+**Find**, under the transcript, jumps through matches: Enter for the next,
 Shift+Enter for the previous.
 
 ---
