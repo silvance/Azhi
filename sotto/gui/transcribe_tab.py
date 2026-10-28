@@ -28,6 +28,7 @@ from .. import (
     listening,
     output_names,
     speaker_count,
+    watchlist,
 )
 from ..acceleration import (
     Device,
@@ -133,6 +134,7 @@ from .theme import (
     theme,
 )
 from .transcript_view import TranscriptView
+from .watch_dialog import ask_watch_list
 from .widgets import (
     Card,
     Disclosure,
@@ -382,6 +384,13 @@ class TranscribeTab:
         self.times_var = tk.BooleanVar(value=False)
         # How fast a clicked line plays back (see playback.SPEEDS).
         self.playback_speed_var = tk.StringVar(value=next(iter(SPEEDS)))
+        # Names and places to pick out of every transcript, one per line
+        # (sotto.watchlist). Saved, and carried by operation profiles.
+        self.watch_list_var = tk.StringVar(value="")
+        self.watch_matcher: Optional[watchlist.Matcher] = None
+        self.watch_status_var = tk.StringVar(value="")
+        # Told when the list changes, so the live transcript can follow.
+        self.on_watch_list_changed: Optional[Callable[[], None]] = None
         # Put a blank line between segments in the transcript (and saved .txt).
         self.blank_lines_var = tk.BooleanVar(value=True)
         # Optional vocabulary hint (names/jargon) to prime the decoder.
@@ -1163,6 +1172,7 @@ class TranscribeTab:
                 self._compare_speaker if bundled_embedding_model() is not None else None
             ),
             on_save_clip=self._save_clip if find_ffmpeg() is not None else None,
+            on_watch=self._show_watch_counts,
             placeholder=(
                 "Choose a recording above, then select Transcribe recording.\n\n"
                 "Your transcript appears here. Drag a file onto this window to "
@@ -1197,6 +1207,23 @@ class TranscribeTab:
         ttk.Label(tools, textvariable=self.find_status_var, style=Style.META).pack(
             side="left", padx=(SPACE_SM, 0)
         )
+
+        # The watch list: highlighted in every transcript as it is shown.
+        watch = ttk.Frame(results.body, style=Style.CARD_INNER)
+        watch.pack(fill="x", pady=(SPACE_XS, 0))
+        ttk.Label(watch, text="Watch", style=Style.FIELD_LABEL, width=6).pack(
+            side="left"
+        )
+        subtle_button(watch, "Edit list…", self._edit_watch_list).pack(side="left")
+        subtle_button(watch, "Next hit", self._next_watch_hit).pack(side="left")
+        ttk.Label(
+            watch,
+            textvariable=self.watch_status_var,
+            style=Style.META,
+            wraplength=640,
+            justify="left",
+        ).pack(side="left", padx=(SPACE_SM, 0))
+        self.watch_list_var.trace_add("write", lambda *_: self._apply_watch_list())
 
         exports = ttk.Frame(results.body, style=Style.CARD_INNER)
         exports.pack(fill="x", pady=(SPACE_SM, 0))
@@ -2702,6 +2729,37 @@ class TranscribeTab:
         count = self.transcript_view.find(query, backwards=backwards)
         self.find_status_var.set(f"{count} match(es)" if count else "No matches")
 
+    # -- The watch list ------------------------------------------------------
+
+    def _apply_watch_list(self) -> None:
+        """Highlight the list as it now stands, here and on the Live page."""
+        self.watch_matcher = watchlist.matcher(self.watch_list_var.get())
+        self.transcript_view.set_watch(self.watch_matcher)
+        if self.on_watch_list_changed is not None:
+            self.on_watch_list_changed()
+
+    def _show_watch_counts(self, counts: Dict[str, int]) -> None:
+        listed = self.watch_matcher is not None and self._result is not None
+        self.watch_status_var.set(watchlist.describe(counts, listed=listed))
+
+    def _edit_watch_list(self) -> None:
+        text = ask_watch_list(self.root, self.watch_list_var.get())
+        if text is not None:
+            # One per line, tidied, so what is saved is what is matched.
+            self.watch_list_var.set("\n".join(watchlist.parse(text)))
+
+    def _next_watch_hit(self) -> None:
+        if self.watch_matcher is None:
+            self.watch_status_var.set(
+                "The watch list is empty: Edit list… to add names or places."
+            )
+        elif not self.transcript_view.next_watch_hit():
+            self.watch_status_var.set(
+                "Watch list: nothing in this transcript."
+                if self._result is not None
+                else "Run a transcription first."
+            )
+
     def _refresh_lead_legend(self) -> None:
         """Show the voice-lead legend while any lead is on screen.
 
@@ -3809,6 +3867,7 @@ class TranscribeTab:
             "csv": self.csv_var,
             "times": self.times_var,
             "playback_speed": self.playback_speed_var,
+            "watch_list": self.watch_list_var,
             "blank_lines": self.blank_lines_var,
             "highlight_conf": self.highlight_conf_var,
             "verbatim": self.verbatim_var,

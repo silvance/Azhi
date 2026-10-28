@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import IO, List, Optional
+from typing import IO, Callable, List, Optional
 
 from .. import speaker_count
 from ..atomicio import write_text_atomic
@@ -47,11 +47,13 @@ from ..transcription import (
     Segment,
     resolve_model_choice,
 )
+from ..watchlist import Matcher
 from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
 from .theme import SPACE_LG, SPACE_SM, SPACE_XS, Style, theme
 from .transcribe_tab import ENGINE_CHOICES, ENGINE_LABELS, engine_labels
+from .watch_marks import mark
 from .widgets import (
     Card,
     PageHeader,
@@ -115,9 +117,13 @@ class LiveTab:
         self,
         parent: ttk.Frame,
         root: tk.Misc,
+        watch: "Optional[Callable[[], Optional[Matcher]]]" = None,
     ) -> None:
         self.parent = parent
         self.root = root
+        # The watch list as the Transcribe page has it, read each time the
+        # transcript changes, so an edit there shows here at once.
+        self._watch = watch
 
         self._bundled_models = bundled_models()
         default_model = "base.en"
@@ -774,6 +780,8 @@ class LiveTab:
         if self._reviewer is not None:
             return  # drawn, and saved, from the speaker reviewer's lines
         append_line(self.transcript, text)
+        # After the line is in: append_line draws on the UI thread, in order.
+        self.root.after(0, self.refresh_watch)
         fh = self._save_fh
         if fh is not None:
             try:
@@ -840,6 +848,7 @@ class LiveTab:
             widget.see("end")
         else:
             widget.yview_moveto(top)
+        self.refresh_watch()
         self._save_speaker_text(text)
 
     def _save_speaker_text(self, text: str) -> None:
@@ -861,6 +870,10 @@ class LiveTab:
             except OSError:
                 pass
             self._save_fh = None
+
+    def refresh_watch(self) -> None:
+        """Highlight the watch list in the live transcript as it now stands."""
+        mark(self.transcript, self._watch() if self._watch is not None else None)
 
     # -- Transcript actions ------------------------------------------------
 

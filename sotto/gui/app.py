@@ -160,7 +160,10 @@ class SottoApp:
 
         if show_live:
             live_root = self._add_page("live", "Live")
-            self.live = LiveTab(live_root, self.root)
+            self.live = LiveTab(
+                live_root, self.root, watch=lambda: self.transcribe.watch_matcher
+            )
+            self.transcribe.on_watch_list_changed = self.live.refresh_watch
             self._tabs.append(self.live)
 
         if show_translate:
@@ -292,6 +295,8 @@ class SottoApp:
             "   callsigns you expect, so they are spelled correctly.\n"
             "• Copy transcript and Save as… (Word, spreadsheet or text) are\n"
             "   below the transcript.\n"
+            "• Watch › Edit list…: names or places to pick out of every\n"
+            "   transcript, highlighted wherever they are said.\n"
             "\n"
             "Who said what\n"
             "-------------\n"

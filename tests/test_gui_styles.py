@@ -345,3 +345,40 @@ def test_the_playback_speed_is_remembered_and_checked(app):
     assert page.get_settings()["playback_speed"] == "0.5× speed"
     page.apply_settings({"playback_speed": "9× speed"})  # not on offer
     assert page.playback_speed_var.get() == "Normal speed"
+
+
+def test_the_watch_list_is_highlighted_saved_and_carried_by_profiles(app, tmp_path):
+    page = _page_with_transcript(app, tmp_path)
+    page.watch_list_var.set("come in\nNobody")
+    for _ in range(5):
+        app.root.update()
+    assert page.watch_status_var.get() == "Watch list: come in ×1."
+    assert page.get_settings()["watch_list"] == "come in\nNobody"
+    assert page._profile_settings()["watch_list"] == "come in\nNobody"
+    page.apply_settings({"watch_list": ""})
+    for _ in range(5):
+        app.root.update()
+    assert page.watch_matcher is None
+    assert page.watch_status_var.get() == ""
+
+
+def test_the_live_transcript_follows_the_same_watch_list(app, tmp_path):
+    from sotto.transcription import Segment
+
+    live = getattr(app, "live", None)
+    if live is None:
+        pytest.skip("this copy has no Live page")
+    app.transcribe.watch_list_var.set("bridge")
+    live._reviewer = object()  # as if speakers were on
+    live._show_speakers(
+        live._reviewer,
+        [Segment(0, 2, "Meet at the bridge.", speaker="SPEAKER_00")],
+        [Segment(2, 4, "Which bridge?")],
+    )
+    w = live.transcript
+    marked = w.tag_ranges("watch")
+    assert [w.get(a, b) for a, b in zip(marked[0::2], marked[1::2])] == [
+        "bridge",
+        "bridge",
+    ]
+    live._reviewer = None
