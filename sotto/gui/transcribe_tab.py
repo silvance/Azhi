@@ -382,6 +382,9 @@ class TranscribeTab:
         self.csv_var = tk.BooleanVar(value=False)
         # When each line starts, at its head, in text and Word transcripts.
         self.times_var = tk.BooleanVar(value=False)
+        # The analyst's notes on lines, in what is saved and copied (always
+        # in the project file and on screen).
+        self.notes_var = tk.BooleanVar(value=True)
         # How fast a clicked line plays back (see playback.SPEEDS).
         self.playback_speed_var = tk.StringVar(value=next(iter(SPEEDS)))
         # Names and places to pick out of every transcript, one per line
@@ -802,6 +805,12 @@ class TranscribeTab:
             audio.body,
             text="Put the time on each line of text and Word transcripts",
             variable=self.times_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Checkbutton(
+            audio.body,
+            text="Include analyst notes in saved transcripts, copies and reports",
+            variable=self.notes_var,
             style=Style.CHECK,
         ).pack(anchor="w", pady=(SPACE_XS, 0))
         ttk.Checkbutton(
@@ -2482,6 +2491,7 @@ class TranscribeTab:
                     names,
                     blank_lines=self.blank_lines_var.get(),
                     times=self.times_var.get(),
+                    notes=self.notes_var.get(),
                 ),
                 encoding="utf-8",
             )
@@ -2494,7 +2504,10 @@ class TranscribeTab:
                 csv_path = outdir / output_names.spreadsheet_name(base)
                 # With a byte-order mark: Excel then reads Arabic, Cyrillic
                 # and the rest as UTF-8 instead of guessing a code page.
-                csv_path.write_text(result.to_csv(names), encoding="utf-8-sig")
+                csv_path.write_text(
+                    result.to_csv(names, notes=self.notes_var.get()),
+                    encoding="utf-8-sig",
+                )
                 append_line(self.status, f"Wrote spreadsheet to {csv_path}")
         except _SkipWrite:
             pass
@@ -2786,16 +2799,18 @@ class TranscribeTab:
         if not text.strip():
             self.progress_label_var.set("Nothing to copy yet.")
             return
-        if self.times_var.get() and self._result is not None:
-            # The screen has no times on it; the copy is the text transcript.
+        if self._result is not None:
+            # The text transcript, as a saved one would be: with the times and
+            # notes the options ask for, and the voice-lead legend where there
+            # are leads (pasted into a report, the lines lose the screen
+            # around them).
             text = self._result.to_txt(
                 self._speaker_names,
                 blank_lines=self.blank_lines_var.get(),
-                times=True,
+                times=self.times_var.get(),
+                notes=self.notes_var.get(),
             )
-        if any_leads(self._speaker_names.values()):
-            # Pasted into a report, the lines lose the screen around them; the
-            # legend goes with them, as it does in every saved format.
+        elif any_leads(self._speaker_names.values()):
             text = f"{LEAD_LEGEND}\n\n{text}"
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
@@ -2829,13 +2844,17 @@ class TranscribeTab:
             # A name typed without its ending takes the type that was picked.
             out = out.with_name(out.name + kinds.get(chosen.get(), ".docx"))
         times = self.times_var.get()
+        notes = self.notes_var.get()
         names = self._speaker_names
         try:
             if out.suffix.lower() == ".csv":
-                out.write_text(result.to_csv(names), encoding="utf-8-sig")
+                out.write_text(result.to_csv(names, notes=notes), encoding="utf-8-sig")
             elif out.suffix.lower() == ".txt":
                 text = result.to_txt(
-                    names, blank_lines=self.blank_lines_var.get(), times=times
+                    names,
+                    blank_lines=self.blank_lines_var.get(),
+                    times=times,
+                    notes=notes,
                 )
                 out.write_text(text, encoding="utf-8")
             else:
@@ -2845,6 +2864,7 @@ class TranscribeTab:
                     names,
                     blank_lines=self.blank_lines_var.get(),
                     times=times,
+                    notes=notes,
                 )
             self._unsaved_edits = 0
             self._report_saved(str(out))
@@ -2933,6 +2953,7 @@ class TranscribeTab:
                 result=result,
                 speaker_names=self._speaker_names,
                 provenance=self._result_provenance,
+                notes=self.notes_var.get(),
             )
             self._report_saved(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
@@ -3866,6 +3887,7 @@ class TranscribeTab:
             "srt": self.srt_var,
             "csv": self.csv_var,
             "times": self.times_var,
+            "notes": self.notes_var,
             "playback_speed": self.playback_speed_var,
             "watch_list": self.watch_list_var,
             "blank_lines": self.blank_lines_var,

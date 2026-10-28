@@ -728,6 +728,7 @@ def test_the_spreadsheet_has_a_row_per_line_and_never_a_formula():
         "Speaker",
         "Text",
         "Low confidence",
+        "Analyst note",
     ]
     assert rows[1] == [
         "00:00:05.250",
@@ -737,8 +738,59 @@ def test_the_spreadsheet_has_a_row_per_line_and_never_a_formula():
         "Ann",
         "Hello there.",
         "",
+        "",
     ]
     # Someone else's words can't become a formula on the analyst's machine.
     assert rows[2][5] == "'=SUM(A1) he said"
     assert rows[2][6] == "yes"  # a low-confidence word marks the line
     assert len(rows) == 3
+
+
+# -- Analyst notes -------------------------------------------------------------
+
+
+def test_a_note_belongs_to_the_line_holding_its_moment():
+    from sotto.transcription import Note, Segment, note_lines
+
+    lines = [Segment(0, 4, "a"), Segment(5, 9, "b"), Segment(12, 15, "c")]
+    notes = [
+        Note(5.0, "on b"),
+        Note(10.5, "in the gap"),
+        Note(-1, "early"),
+        Note(14, "c"),
+    ]
+    assert note_lines(lines, notes) == {1: [0, 1], 0: [2], 2: [3]}
+    assert note_lines([], notes) == {}
+
+
+def test_notes_are_written_under_their_lines_and_labelled():
+    from sotto.transcription import Note
+
+    result = _two_speakers()
+    result.notes = [Note(5.25, "Sounds nervous.\nCheck the 05:10 call too.")]
+    text = result.to_txt({"SPEAKER_00": "Ann"})
+    assert text.splitlines()[:3] == [
+        "[Ann] Hello there.",
+        "    Analyst note: Sounds nervous.",
+        "    Check the 05:10 call too.",
+    ]
+    assert "Analyst note" not in result.to_txt({"SPEAKER_00": "Ann"}, notes=False)
+
+
+def test_the_spreadsheet_carries_notes_in_their_own_column():
+    import csv
+    import io
+
+    from sotto.transcription import Note
+
+    result = _two_speakers()
+    result.notes = [Note(3725.5, "=not a formula"), Note(3726.0, "second")]
+    rows = list(csv.reader(io.StringIO(result.to_csv())))
+    assert rows[0][-1] == "Analyst note"
+    assert rows[2][-1] == "'=not a formula | second"
+    assert rows[1][-1] == ""
+    assert all(
+        row[-1] == ""
+        for row in csv.reader(io.StringIO(result.to_csv(notes=False)))
+        if row[0] != "Start"
+    )

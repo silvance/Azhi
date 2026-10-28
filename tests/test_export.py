@@ -78,3 +78,26 @@ def test_word_transcript_can_carry_the_time_of_each_line(tmp_path):
     assert "[00:01:15]" not in "\n".join(
         p.text for p in Document(str(untimed)).paragraphs
     )
+
+
+@pytest.mark.skipif(not _HAS_DOCX, reason="python-docx not installed")
+def test_word_notes_follow_their_line_in_italics(tmp_path):
+    from docx import Document
+
+    from sotto.transcription import Note
+
+    result = TranscriptionResult(
+        text="",
+        language="en",
+        language_probability=1.0,
+        duration=5.0,
+        segments=[Segment(start=1.0, end=2.0, text="hello", speaker="SPEAKER_00")],
+    )
+    result.notes = [Note(1.0, "Who is this?")]
+    paragraphs = Document(
+        str(transcript_to_docx(result, tmp_path / "n.docx"))
+    ).paragraphs
+    note = next(p for p in paragraphs if p.text == "Analyst note: Who is this?")
+    assert all(run.italic for run in note.runs)
+    plain = Document(str(transcript_to_docx(result, tmp_path / "p.docx", notes=False)))
+    assert "Analyst note" not in "\n".join(p.text for p in plain.paragraphs)

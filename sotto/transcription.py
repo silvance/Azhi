@@ -305,6 +305,42 @@ def is_low_confidence_segment(segment: "Segment") -> bool:
 
 
 @dataclass
+class Note:
+    """An analyst's note on the transcript, anchored to a moment in the recording.
+
+    Anchored to a time, not to a line: correcting speakers splits and merges
+    lines, and a note should stay with what it was written about. It is shown
+    with the line that holds that moment (see :func:`note_lines`).
+    """
+
+    at: float
+    text: str
+    written_utc: str = ""
+
+
+def note_lines(
+    segments: Sequence["Segment"], notes: Sequence[Note]
+) -> Dict[int, List[int]]:
+    """Which line each note belongs to: line index -> indexes into ``notes``.
+
+    The line holding the note's moment; in a gap, the line before it; before
+    the first line, the first. In the order the notes were written.
+    """
+    found: Dict[int, List[int]] = {}
+    if not segments:
+        return found
+    for n, note in enumerate(notes):
+        line = 0
+        for index, segment in enumerate(segments):
+            if segment.start <= note.at + 1e-6:
+                line = index
+            else:
+                break
+        found.setdefault(line, []).append(n)
+    return found
+
+
+@dataclass
 class TranscriptionResult:
     """The full result of transcribing one media file."""
 
@@ -322,6 +358,9 @@ class TranscriptionResult:
     # repeated it were taken out.
     verbatim: bool = False
     example_lines_removed: int = 0
+    # The analyst's notes on lines (not the model's output): saved in the
+    # project, and written out labelled as notes wherever they are included.
+    notes: List[Note] = field(default_factory=list)
 
     @property
     def skipped_seconds(self) -> float:
@@ -354,6 +393,7 @@ class TranscriptionResult:
         *,
         blank_lines: bool = False,
         times: bool = False,
+        notes: bool = True,
     ) -> str:
         """Plain-text transcript. When diarized, lines are prefixed with the
         speaker (optionally remapped via ``speaker_names``: id -> display name).
@@ -361,23 +401,35 @@ class TranscriptionResult:
         ``blank_lines`` puts an empty line between segments (between speaker turns
         when diarized) - easier to read and to paste into a document. ``times``
         starts each line with when it starts in the recording, ``[00:12:34]``.
+        ``notes`` puts the analyst's notes under their lines, indented and
+        labelled, so a note is never read as something said.
         """
         sep = "\n\n" if blank_lines else "\n"
+        by_line = note_lines(self.segments, self.notes) if notes else {}
 
         def at(segment: Segment) -> str:
             return f"[{clock_time(segment.start)}] " if times else ""
 
+        def with_notes(index: int, line: str) -> str:
+            return line + "".join(
+                "\n    Analyst note: " + self.notes[n].text.replace("\n", "\n    ")
+                for n in by_line.get(index, [])
+            )
+
         if not self.has_speakers:
             if self.segments:
-                return sep.join(at(segment) + segment.text for segment in self.segments)
+                return sep.join(
+                    with_notes(i, at(segment) + segment.text)
+                    for i, segment in enumerate(self.segments)
+                )
             return self.text
         labels = [
             self._speaker_label(segment.speaker, speaker_names)
             for segment in self.segments
         ]
         body = sep.join(
-            f"{at(segment)}[{label}] {segment.text}"
-            for label, segment in zip(labels, self.segments)
+            with_notes(i, f"{at(segment)}[{label}] {segment.text}")
+            for i, (label, segment) in enumerate(zip(labels, self.segments))
         )
         if any_leads(labels):
             # A transcript leaves this machine as this file; the marker on each
@@ -399,12 +451,14 @@ class TranscriptionResult:
             blocks.append(f"{index}\n{start} --> {end}\n{text}\n")
         return "\n".join(blocks)
 
-    def to_csv(self, speaker_names: Optional[Dict[str, str]] = None) -> str:
+    def to_csv(
+        self, speaker_names: Optional[Dict[str, str]] = None, *, notes: bool = True
+    ) -> str:
         """The transcript as a spreadsheet: one row per line.
 
         Columns: start and end (``hh:mm:ss.mmm``, and in seconds for sorting
         and arithmetic), speaker (as shown, unconfirmed-lead marker included),
-        the text, and whether any of it is low-confidence (the line, or any
+        the text, the analyst's notes on the line (with ``notes``), and whether any of it is low-confidence (the line, or any
         word in it, as the screen marks it). A cell that a
         spreadsheet would read as a formula (it begins ``=``, ``+``, ``-`` or
         ``@``) is stored as text: a transcript of someone else's speech must
@@ -424,9 +478,11 @@ class TranscriptionResult:
                 "Speaker",
                 "Text",
                 "Low confidence",
+                "Analyst note",
             ]
         )
-        for segment in self.segments:
+        by_line = note_lines(self.segments, self.notes) if notes else {}
+        for index, segment in enumerate(self.segments):
             speaker = (
                 self._speaker_label(segment.speaker, speaker_names)
                 if segment.speaker
@@ -441,6 +497,9 @@ class TranscriptionResult:
                     _as_text(speaker),
                     _as_text(segment.text.strip()),
                     "yes" if _shaky(segment) else "",
+                    _as_text(
+                        " | ".join(self.notes[n].text for n in by_line.get(index, []))
+                    ),
                 ]
             )
         return out.getvalue()

@@ -378,3 +378,15 @@ def test_a_searched_recording_other_than_the_transcript_is_flagged():
     text = _text(result=_result(), provenance=_provenance(), comparisons=[_search()])
     assert "is not the same as every recording compared below" in text
     assert "intercept-0914.wav" in text
+
+
+def test_the_report_shows_notes_under_their_lines_unless_left_out():
+    from sotto.reports import _transcript_lines
+    from sotto.transcription import Note, Segment, TranscriptionResult
+
+    result = TranscriptionResult(
+        "", "en", 1.0, 10.0, segments=[Segment(1.0, 3.0, "Meet at ten.")]
+    )
+    result.notes = [Note(1.0, "Which ten?")]
+    assert _transcript_lines(result)[-1] == "    Analyst note: Which ten?"
+    assert "Analyst note" not in "\n".join(_transcript_lines(result, notes=False))

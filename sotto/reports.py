@@ -23,7 +23,7 @@ from .matching import ComparisonResult, GalleryResult
 from .provenance import AnalysisProvenance
 from .speaker_names import LEAD_LEGEND, any_leads
 from .thresholds import DISCLAIMER, Thresholds, active, describe
-from .transcription import TranscriptionResult
+from .transcription import TranscriptionResult, note_lines
 
 PathLike = Union[str, Path]
 
@@ -47,15 +47,22 @@ def _clock(seconds: float) -> str:
 def _transcript_lines(
     result: Optional[TranscriptionResult],
     speaker_names: Optional[Dict[str, str]] = None,
+    *,
+    notes: bool = True,
 ) -> List[str]:
-    """The transcript with timestamps and speaker labels, one line per segment."""
+    """The transcript with timestamps and speaker labels, one line per segment.
+
+    With ``notes``, the analyst's notes follow their lines, indented and
+    labelled as notes.
+    """
     if result is None:
         return ["No transcript is attached to this analysis."]
     if not result.segments:
         return [result.text or "(empty transcript)"]
     lines: List[str] = []
     labels: List[str] = []
-    for segment in result.segments:
+    by_line = note_lines(result.segments, result.notes) if notes else {}
+    for index, segment in enumerate(result.segments):
         stamp = f"[{_clock(segment.start)}-{_clock(segment.end)}]"
         if segment.speaker:
             label = result._speaker_label(segment.speaker, speaker_names)
@@ -63,6 +70,9 @@ def _transcript_lines(
             lines.append(f"{stamp} [{label}] {segment.text}")
         else:
             lines.append(f"{stamp} {segment.text}")
+        lines += [
+            f"    Analyst note: {result.notes[n].text}" for n in by_line.get(index, [])
+        ]
     if any_leads(labels):
         return [LEAD_LEGEND, ""] + lines
     return lines
@@ -173,6 +183,7 @@ def build_report_sections(
     comparisons: Sequence[ReportEntry] = (),
     thresholds: Optional[Thresholds] = None,
     case_notes: str = "",
+    notes: bool = True,
 ) -> List[ReportSection]:
     """Assemble the report's content, in order, as headed sections."""
     # A result can only be interpreted against the numbers that produced it, so
@@ -229,7 +240,7 @@ def build_report_sections(
                 if result is not None
                 else []
             )
-            + _transcript_lines(result, speaker_names),
+            + _transcript_lines(result, speaker_names, notes=notes),
         ),
     ]
 
@@ -309,8 +320,12 @@ def write_analysis_report(
     thresholds: Optional[Thresholds] = None,
     case_notes: str = "",
     title: str = REPORT_TITLE,
+    notes: bool = True,
 ) -> Path:
-    """Build and write the full analysis report (``.docx``, or ``.txt`` by suffix)."""
+    """Build and write the full analysis report (``.docx``, or ``.txt`` by suffix).
+
+    ``notes`` includes the analyst's notes on transcript lines.
+    """
     sections = build_report_sections(
         result=result,
         speaker_names=speaker_names,
@@ -318,6 +333,7 @@ def write_analysis_report(
         comparisons=comparisons,
         thresholds=thresholds,
         case_notes=case_notes,
+        notes=notes,
     )
     out = Path(path)
     if out.suffix.lower() == ".txt":

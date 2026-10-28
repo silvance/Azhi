@@ -132,3 +132,31 @@ def test_a_current_project_keeps_confirmation(tmp_path):
     names = load_project_record(path).speaker_names
     assert names["voice::Viktor"] == "Viktor", "a confirmed name stays confirmed"
     assert is_lead(names["voice::Anna"]), "an unconfirmed lead stays a lead"
+
+
+def test_notes_are_kept_in_the_project(tmp_path):
+    from sotto.project import SCHEMA_VERSION, load_project_record, save_project
+    from sotto.transcription import Note, Segment, TranscriptionResult
+
+    result = TranscriptionResult(
+        "", "en", 1.0, 10.0, segments=[Segment(1.0, 3.0, "Meet at ten.")]
+    )
+    result.notes = [Note(1.0, "Which ten?", "2026-10-28T23:00:00+00:00")]
+    path = save_project(tmp_path / "case.sotto.json", result)
+    assert SCHEMA_VERSION == 4
+    loaded = load_project_record(path).result
+    assert [(n.at, n.text, n.written_utc) for n in loaded.notes] == [
+        (1.0, "Which ten?", "2026-10-28T23:00:00+00:00")
+    ]
+
+
+def test_a_project_from_before_notes_opens_with_none(tmp_path):
+    import json
+
+    from sotto.project import load_project_record
+
+    path = tmp_path / "old.sotto.json"
+    path.write_text(
+        json.dumps({"schema_version": 3, "result": {"segments": []}}), encoding="utf-8"
+    )
+    assert load_project_record(path).result.notes == []

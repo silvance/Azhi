@@ -14,10 +14,11 @@ lives in :mod:`sotto.editing`; this module is the Tk view around it.
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import datetime, timezone
 from functools import partial
 from tkinter import simpledialog
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, Dict, List, Optional, Tuple, cast
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 from ..editing import (
     coalesce_segments,
@@ -26,13 +27,17 @@ from ..editing import (
 )
 from ..speaker_names import bare_name, is_lead, shown_name
 from ..transcription import (
+    Note,
     TranscriptionResult,
+    clock_time,
     is_low_confidence_segment,
     is_low_confidence_word,
+    note_lines,
 )
 from ..watchlist import Matcher
 from .confirm_lead import ask_confirm_lead
 from .dialogs import active_window
+from .note_dialog import ask_note
 from .theme import palette
 from .watch_marks import mark, next_hit
 
@@ -222,6 +227,7 @@ class TranscriptView:
         def _do() -> None:
             result = self._result
             anchor = self._view_anchor() if keep_view else None
+            by_line = note_lines(result.segments, result.notes) if result else {}
             self.widget.configure(state="normal")
             self.widget.delete("1.0", "end")
             # Underlined as well as coloured: the red alone is the red used
@@ -263,6 +269,7 @@ class TranscriptView:
                                 line_tag, "<Leave>", self._cursor_handler("")
                             )
                         self.widget.insert("end", segment.text, tags)
+                        self._insert_notes(index, by_line)
                     self.widget.insert("end", "\n")
                 else:
                     self.widget.insert("end", result.text + "\n")
@@ -319,11 +326,13 @@ class TranscriptView:
                             if highlight and is_low_confidence_word(word):
                                 wtags = (wtag, "lowconf")
                             self.widget.insert("end", text, wtags)
+                        self._insert_notes(index, by_line)
                         self.widget.insert("end", line_end)
                     else:
                         self.widget.insert(
                             "end", f" {segment.text}", _lowconf_seg(segment)
                         )
+                        self._insert_notes(index, by_line)
                         self.widget.insert("end", line_end)
             self.widget.configure(state="disabled")
             if anchor is not None:
@@ -506,6 +515,7 @@ class TranscriptView:
                 ),
                 command=lambda: self._rename_speaker(current),
             )
+            self._add_note_items(menu, index)
             self._popup(menu, event)
 
         return handler
@@ -612,6 +622,10 @@ class TranscriptView:
         # A selection elsewhere would make the menus think this is a drag-select.
         self.widget.tag_remove("sel", "1.0", "end")
         names = self.widget.tag_names(idx)
+        note = self._note_at(names)
+        if note is not None:
+            self._note_menu(note, event)
+            return "break"
         seg = self._segment_at(idx)
         if seg is None:
             return None
@@ -626,18 +640,14 @@ class TranscriptView:
                     continue
                 self._word_menu_handler(seg, word)(event)
                 return "break"
-        if self._on_play is not None or self._on_save_clip is not None:
-            self._line_menu_handler(seg)(event)
-            return "break"
-        return None
+        self._line_menu_handler(seg)(event)
+        return "break"
 
     def _line_menu_handler(self, index: int) -> Callable[[object], None]:
-        """Right-click menu for a non-diarized line (just Play)."""
+        """Right-click menu for a line without speakers: play, save, note."""
 
         def handler(event: object) -> None:
             if self._has_selection():
-                return
-            if self._on_play is None and self._on_save_clip is None:
                 return
             menu = tk.Menu(self.root, tearoff=0)
             if self._on_play is not None:
@@ -645,9 +655,118 @@ class TranscriptView:
                     label="▶ Play this line", command=lambda: self._play_line(index)
                 )
             self._add_save_line(menu, index)
+            self._add_note_items(menu, index)
+            if menu.index("end") is None:
+                return  # nothing this line offers here
             self._popup(menu, event)
 
         return handler
+
+    # -- Analyst notes -------------------------------------------------------
+
+    def _insert_notes(self, index: int, by_line: Dict[int, List[int]]) -> None:
+        """The notes on line ``index``, each on its own line under it."""
+        result = self._result
+        if result is None:
+            return
+        self.widget.tag_config("note", foreground=palette().accent_active)
+        for n in by_line.get(index, []):
+            tag = f"note::{n}"
+            text = result.notes[n].text.replace("\n", "\n      ")
+            self.widget.insert("end", f"\n    \u270e {text}", ("note", tag))
+            self.widget.tag_bind(
+                tag, "<ButtonRelease-1>", partial(self._note_clicked, n)
+            )
+            self.widget.tag_bind(tag, "<Enter>", self._cursor_handler("hand2"))
+            self.widget.tag_bind(tag, "<Leave>", self._cursor_handler(""))
+
+    @staticmethod
+    def _note_at(names: "Sequence[str]") -> Optional[int]:
+        for tag in names:
+            if tag.startswith("note::"):
+                try:
+                    return int(tag.split("::")[1])
+                except (IndexError, ValueError):
+                    continue
+        return None
+
+    def _note_clicked(self, n: int, _event: object = None) -> Optional[str]:
+        if self._has_selection():
+            return None  # the end of a drag-select, not a click on the note
+        self._edit_note(n)
+        return "break"
+
+    def _note_menu(self, n: int, event: object) -> None:
+        if not self._editable:
+            menu = tk.Menu(self.root, tearoff=0)
+            self._add_paused_note(menu)
+            self._popup(menu, event)
+            return
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Change the note…", command=lambda: self._edit_note(n))
+        menu.add_command(label="Delete the note", command=lambda: self._delete_note(n))
+        self._popup(menu, event)
+
+    def _add_note_items(self, menu: tk.Menu, index: int) -> None:
+        """ "Add a note…" on a line, while the transcript can be changed."""
+        if not self._editable or self._result is None:
+            return
+        if menu.index("end") is not None:
+            menu.add_separator()
+        menu.add_command(label="Add a note…", command=lambda: self._add_note(index))
+
+    def _add_note(self, index: int) -> None:
+        result = self._result
+        if not self._editable or result is None or index >= len(result.segments):
+            return
+        segment = result.segments[index]
+        answer = ask_note(
+            self.root, line=segment.text.strip(), when=clock_time(segment.start)
+        )
+        if answer is None or answer[0] != "save":
+            return
+        result.notes.append(
+            Note(
+                at=segment.start,
+                text=answer[1],
+                written_utc=datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat(),
+            )
+        )
+        self._changed()
+
+    def _edit_note(self, n: int) -> None:
+        result = self._result
+        if not self._editable or result is None or n >= len(result.notes):
+            return
+        note = result.notes[n]
+        line = next(
+            (
+                i
+                for i, ns in note_lines(result.segments, result.notes).items()
+                if n in ns
+            ),
+            None,
+        )
+        said = result.segments[line].text.strip() if line is not None else ""
+        answer = ask_note(
+            self.root, line=said, when=clock_time(note.at), text=note.text
+        )
+        if answer is None:
+            return
+        if answer[0] == "delete":
+            del result.notes[n]
+        else:
+            note.text = answer[1]
+        self._changed()
+
+    def _delete_note(self, n: int) -> None:
+        result = self._result
+        if not self._editable or result is None or n >= len(result.notes):
+            return
+        del result.notes[n]
+        self._changed()
 
     def _add_save_line(self, menu: tk.Menu, index: int) -> None:
         """ "Save this line as audio…", where a passage can be saved."""

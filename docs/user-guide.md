@@ -435,6 +435,23 @@ wrong people it is one click to swap them.
 **Find**, under the transcript, jumps through matches: Enter for the next,
 Shift+Enter for the previous.
 
+### Analyst notes
+
+Right-click a line's `[speaker]` tag (or the line, without speakers) and
+choose **Add a note…** to write down what you make of it: who you think it
+is, what to check, what the background noise was. The note appears under the
+line, in blue and marked ✎. Click it to change it; right-click it to delete.
+
+- A note is yours, not the recording's. It is always labelled as an analyst
+  note, so it is never read as something that was said, and the watch list
+  never counts a word in it.
+- It is pinned to the moment the line starts, so when a line is split or
+  joined while correcting speakers, the note stays with what it was about.
+- Notes are saved in the project. They go into saved transcripts, copies,
+  the spreadsheet (a column of their own) and the analysis report, unless
+  **Include analyst notes…** under Advanced options is turned off. Each
+  records when it was written.
+
 ### Watch list
 
 Names, places, call signs, anything you want picked out of every transcript:
@@ -495,11 +512,15 @@ Under the transcript:
 Save a project whenever you have put real work into corrections. Re-doing them
 is the most annoying way to lose an hour.
 
-Two options under **Advanced options** change what is written:
+Three options under **Advanced options** change what is written:
 
 - **Put the time on each line** starts every line of the text and Word
   transcripts (and a copy) with when it was said, as `[00:12:34]`, so a
   report can point at the moment in the recording.
+- **Include analyst notes** puts your notes under their lines in text and
+  Word transcripts, copies and the analysis report, labelled "Analyst note",
+  and in their own column of the spreadsheet. Turn it off for a copy that
+  holds only what was said.
 - **Also save a spreadsheet (.csv)** writes one row per line beside the
   transcript: start and end (as times and in seconds), speaker, text, and
   whether the line has low-confidence words. It opens in Excel with every
