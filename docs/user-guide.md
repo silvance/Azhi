@@ -435,6 +435,25 @@ wrong people it is one click to swap them.
 **Find**, under the transcript, jumps through matches: Enter for the next,
 Shift+Enter for the previous.
 
+### Watch list
+
+Names, places, call signs, anything you want picked out of every transcript:
+under the transcript, **Watch** › **Edit list…**, one per line. Every
+transcript is then searched for them as it is shown, on the Transcribe page
+and in the live transcript, and each hit is highlighted in violet. The line
+beside the buttons counts them ("Watch list: Ann ×2, the bridge ×1"), and
+**Next hit** steps through them.
+
+- Matched as whole words, in any case: "Ann" finds "ANN" but not "Anna" or
+  "Joanne". A term of several words matches however it is spaced.
+- Speaker tags are not searched, so a speaker you have named does not count
+  as a hit; only what was said does.
+- A hit means the transcript has those letters, and a miss means it does not.
+  The model may spell a name another way, so a miss is not proof it was never
+  said.
+- The list is saved with your settings on this machine, and with an operation
+  profile, so each operation can keep its own.
+
 **Hard to catch a word?** The box beside **Stop audio** plays lines slower:
 0.75× or 0.5× speed. The pitch stays the same, so a voice still sounds like
 itself. Use it with the listening filters (Advanced options) for the worst

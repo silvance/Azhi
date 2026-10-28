@@ -86,6 +86,9 @@ which can be a different file on each run.
 - [ ] Find, Copy transcript, Save as… (Word, spreadsheet and text), Analysis
       report…, Save project…, Open project… all still work, and clicking a
       speaker tag or dragging a run of words still reassigns speech.
+- [ ] **Watch › Edit list…** with a name in it highlights that name in the
+      transcript (not in speaker tags), counts it, and **Next hit** steps to
+      it; the live transcript highlights it too.
 - [ ] The speed box beside Stop audio plays a clicked line slower at the same
       pitch; **Save this line as audio…** (right-click) writes a WAV with a
       `.clip.json` record beside it.

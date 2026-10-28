@@ -30,9 +30,11 @@ from ..transcription import (
     is_low_confidence_segment,
     is_low_confidence_word,
 )
+from ..watchlist import Matcher
 from .confirm_lead import ask_confirm_lead
 from .dialogs import active_window
 from .theme import palette
+from .watch_marks import mark, next_hit
 
 # Foreground colour for low-confidence text when highlighting is enabled.
 _LOW_CONFIDENCE_COLOR = "#ff7a7a"
@@ -69,6 +71,7 @@ class TranscriptView:
         on_compare: Optional[Callable[[str], None]] = None,
         placeholder: str = "",
         on_save_clip: Optional[Callable[[float, float], None]] = None,
+        on_watch: Optional[Callable[[Dict[str, int]], None]] = None,
     ) -> None:
         self.root = root
         self.blank_lines_var = blank_lines_var
@@ -89,6 +92,10 @@ class TranscriptView:
         # Save a [start, end] passage of the recording as audio; None where
         # there is nothing to cut it with.
         self._on_save_clip = on_save_clip
+        # The watch list, highlighted after every render; told the hit counts.
+        self._watch: Optional[Matcher] = None
+        self._on_watch = on_watch
+        self._watch_pos = "1.0"
         self._result: Optional[TranscriptionResult] = None
         self._speaker_names: Dict[str, str] = {}
         # Off while a run or redo is going: an edit made then was lost when the
@@ -322,8 +329,31 @@ class TranscriptView:
             if anchor is not None:
                 self._restore_view(anchor)
             self._mark_moved()
+            self._mark_watch()
 
         self.root.after(0, _do)
+
+    # -- The watch list -----------------------------------------------------
+
+    def set_watch(self, found: Optional[Matcher]) -> None:
+        """Highlight ``found``'s terms now and in every transcript shown after."""
+        self._watch = found
+        self._mark_watch()
+
+    def _mark_watch(self) -> None:
+        # Never the first-run placeholder: there is nothing said in it.
+        counts = mark(self.widget, self._watch if self._result is not None else None)
+        self._watch_pos = "1.0"
+        if self._on_watch is not None:
+            self._on_watch(counts)
+
+    def next_watch_hit(self) -> bool:
+        """Show the next hit after the last one shown (wrapping); False if none."""
+        pos = next_hit(self.widget, self._watch_pos)
+        if pos is None:
+            return False
+        self._watch_pos = pos
+        return True
 
     def _changed(self) -> None:
         """Re-render after an edit and notify the owner to persist the change."""

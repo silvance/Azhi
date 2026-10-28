@@ -160,6 +160,13 @@ launch, so you don't re-set them each time. Stored in a small per-user JSON file
 (Enter = next, Shift+Enter = previous); every hit is highlighted and the current
 one is centred.
 
+**Watch list.** **Watch › Edit list…** keeps names, places and other terms (one
+per line) that are highlighted in every transcript as it is shown, and in the
+live transcript; the hits are counted and **Next hit** steps through them.
+Whole words, any case, phrases with any spacing; speaker tags are not searched
+(`sotto/watchlist.py`). The list is saved with the settings and in operation
+profiles.
+
 When **Convert video to audio first (ffmpeg)** is enabled (the default), choosing a
 video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
 mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output

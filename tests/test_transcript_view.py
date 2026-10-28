@@ -312,3 +312,37 @@ def test_a_line_saves_from_its_speaker_tag(saving):
     saving.view._context_menu(_event_at(saving.view, "line::3.first"))
     assert _choose(saving.menus[-1], "Save this line as audio…")
     assert saving.saved == [(12.0, 15.0)]
+
+
+def test_watch_list_hits_are_marked_but_never_in_speaker_tags(view):
+    from sotto.watchlist import Matcher
+
+    counts = []
+    view.view._on_watch = counts.append
+    # "Speaker" is in every tag, and "w3_1" is said once.
+    view.view.set_watch(Matcher(["Speaker", "w3_1"]))
+    w = view.view.widget
+    marked = w.tag_ranges("watch")
+    assert [w.get(a, b) for a, b in zip(marked[0::2], marked[1::2])] == ["w3_1"]
+    assert counts[-1] == {"w3_1": 1}
+    # Shown again after a re-render, as it is for every transcript.
+    view.view.render()
+    _settle(view.root)
+    assert w.tag_ranges("watch")
+    # Below the selection and Find's highlight, so neither is hidden.
+    assert w.tag_names().index("watch") < w.tag_names().index("sel")
+
+
+def test_next_hit_steps_through_and_wraps(view):
+    from sotto.watchlist import Matcher
+
+    view.view.set_watch(Matcher(["w2_0", "w40_2"]))
+    w = view.view.widget
+    shown = []
+    for _ in range(3):
+        assert view.view.next_watch_hit()
+        current = w.tag_ranges("watch_current")
+        shown.append(w.get(current[0], current[1]))
+    assert shown == ["w2_0", "w40_2", "w2_0"]
+    view.view.set_watch(None)
+    assert not view.view.next_watch_hit()
