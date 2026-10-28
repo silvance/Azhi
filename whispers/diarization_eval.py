@@ -531,7 +531,7 @@ def _transcribe_and_separate(
             progress(f"{case.name}: re-timing words…")
             retimed = deepcopy(list(result.segments))
             alignment.align_segments(retimed, wav, progress=progress)
-        backend = chosen_backend(engine)
+        backend = chosen_backend(engine, speakers)
         progress(f"{case.name}: separating speakers ({backend})…")
         turns = diarize(wav, backend=backend, num_speakers=speakers, progress=progress)
     finally:

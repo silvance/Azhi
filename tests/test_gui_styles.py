@@ -267,3 +267,11 @@ def test_hesitations_are_kept_by_default_and_the_choice_is_remembered(app):
     page.verbatim_var.set(True)
     page.apply_settings(saved)
     assert page.verbatim_var.get() is False
+
+
+def test_a_method_saved_under_an_old_label_keeps_its_choice(app):
+    page = app.transcribe
+    page.apply_settings({"engine": "pyannote - most accurate"})
+    assert page.engine_var.get() == "pyannote (strong on noisy audio)"
+    page.apply_settings({"engine": "Auto (pyannote if available)"})
+    assert page.engine_var.get() == "Auto (recommended)"

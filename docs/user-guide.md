@@ -331,17 +331,20 @@ to label a few of your own recordings and score the tool on them, offline.
 ### Method and sensitivity
 
 In *Advanced options* → *Speaker separation*, **Method** picks the engine.
-Leave it on **Auto** unless you have a reason. In a bundle with both:
+Leave it on **Auto** unless you have a reason; the line under it says which
+method Auto uses in your copy.
 
-- **pyannote** is much better on hard, noisy or overlapping audio.
-- **sherpa** is lighter and faster, and fine on clean audio.
-- **Nemotron** appears only in a copy built with it. It is a trial: a newer
-  kind of model, meant to be better at quick back-and-forth and at people
-  talking over each other, but not yet measured on recordings like yours.
-  It uses the number of people you give: if it heard more voices than that,
-  each moment of the extra ones goes to whichever of your speakers is most
-  likely. If it heard fewer, it cannot split them, and the status says so —
-  **Redo speaker separation…** with pyannote or sherpa may do better there.
+- **Nemotron** is what Auto uses wherever the copy includes it. It has been the
+  best at quick back-and-forth and at people talking over each other, and
+  faster than sherpa. It can tell up to eight people apart; for more, Auto uses
+  one of the others. It uses the number of people you give: if it heard more
+  voices than that, each moment of the extra ones goes to whichever of your
+  speakers is most likely. If it heard fewer, it cannot split them, and the
+  status says so. **Redo speaker separation…** with pyannote may do better
+  there.
+- **pyannote** is strong on noisy audio, and is what Auto uses in a copy
+  without Nemotron.
+- **sherpa** is the lightest, and fine on clean audio.
 
 **Grouping sensitivity** only applies to sherpa, and only when you have not
 given a count. Higher merges more (fewer speakers), lower splits more.

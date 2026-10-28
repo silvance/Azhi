@@ -154,18 +154,41 @@ COMMON_LANGUAGES = [
     "hi",
 ]
 
-# Diarization engine choices: dropdown label -> diarize() backend. "Auto" uses
-# pyannote when it's available, else sherpa. pyannote is best on hard/overlapping
-# audio; sherpa is lighter and faster and fine for clean audio.
-# Nemotron is offered only by a build that includes it, and Auto never picks
-# it: it has not been measured on this deployment's recordings yet.
+# Diarization engine choices: dropdown label -> diarize() backend. Auto takes
+# Nemotron where the build includes it, then pyannote, then sherpa (see
+# diarization.chosen_backend). Nemotron is offered only by a build with it.
 ENGINE_CHOICES = {
+    "Auto (recommended)": "auto",
+    "Nemotron (best with quick back-and-forth)": "nemotron",
+    "pyannote (strong on noisy audio)": "pyannote",
+    "sherpa (lightest, for clean audio)": "sherpa",
+}
+ENGINE_LABELS = list(ENGINE_CHOICES)
+# Labels earlier builds saved in settings and operation profiles, so a choice
+# made there survives the relabelling instead of quietly becoming Auto.
+_OLD_ENGINE_LABELS = {
     "Auto (pyannote if available)": "auto",
     "pyannote - most accurate": "pyannote",
     "sherpa - faster, for clean audio": "sherpa",
     "Nemotron - trial, counts speakers": "nemotron",
 }
-ENGINE_LABELS = list(ENGINE_CHOICES)
+
+
+def engine_label(engine: str) -> str:
+    """The dropdown label for a backend name."""
+    for label, value in ENGINE_CHOICES.items():
+        if value == engine:
+            return label
+    return ENGINE_LABELS[0]
+
+
+def auto_engine_note() -> str:
+    """Which method Auto runs in this copy, for under the dropdown."""
+    from ..diarization import chosen_backend
+
+    names = {"nemotron": "Nemotron", "pyannote": "pyannote", "sherpa": "sherpa"}
+    engine = chosen_backend("auto")
+    return f"Auto uses {names.get(engine, engine)} in this copy."
 
 
 def engine_labels() -> List[str]:
@@ -862,7 +885,10 @@ class TranscribeTab:
 
         ttk.Label(
             frame,
-            text="How many people are speaking is asked in Options, above.",
+            text=(
+                f"{auto_engine_note()} How many people are speaking is asked "
+                "in Options, above."
+            ),
             style=Style.META,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=SPACE_XS)
         # Choosing a count reveals a name field per speaker (filled in below).
@@ -2244,7 +2270,8 @@ class TranscribeTab:
             # afterwards named whatever Method said when the run finished - and
             # Method can be changed while a run is going.
             self._diar_engine_used = chosen_backend(
-                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                self._parse_num_speakers(),
             )
             speaker_segments = diarize(
                 diar_wav,
@@ -2497,7 +2524,7 @@ class TranscribeTab:
             )
             self._begin_phase("Identifying speakers…")
             self._diar_engine_used = chosen_backend(
-                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto"), requested
             )
             speaker_segments = diarize(
                 wav,
@@ -3634,6 +3661,10 @@ class TranscribeTab:
         # otherwise sit in the dropdown and resolve to Auto silently.
         if self.device_var.get() not in _DEVICE_MODES:
             self.device_var.set(_device_label(default_mode()))
+        # A Method saved under an earlier build's label keeps its choice.
+        old = _OLD_ENGINE_LABELS.get(self.engine_var.get())
+        if old is not None:
+            self.engine_var.set(engine_label(old))
         # Likewise a Method this build does not offer (Nemotron, chosen on a
         # copy that had it): back to Auto rather than a run that cannot start.
         if self.engine_var.get() not in engine_labels():

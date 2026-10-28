@@ -374,12 +374,30 @@ def test_without_the_bundle_it_says_to_choose_another_method(tmp_path, monkeypat
 
 
 @needs_compiler
-def test_offered_only_when_bundled_and_never_chosen_by_auto(bundle):
+def test_auto_takes_nemotron_where_the_build_includes_it(bundle):
     assert "nemotron" in diarization.available_backends()
-    assert diarization.chosen_backend("auto") != "nemotron"
+    assert diarization.chosen_backend("auto") == "nemotron"
+    assert diarization.chosen_backend("auto", 2) == "nemotron"
+    # More people than it can hold apart: one of the others.
+    assert diarization.chosen_backend("auto", nemotron.MAX_SPEAKERS + 1) != "nemotron"
+    # A method chosen by name is the method run.
+    assert diarization.chosen_backend("sherpa", 2) == "sherpa"
     bundle["model"].unlink()
     assert resources.bundled_nemotron() is None
     assert "nemotron" not in diarization.available_backends()
+    assert diarization.chosen_backend("auto") != "nemotron"
+
+
+def test_auto_runs_nemotron_when_diarizing(bundle, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        nemotron,
+        "diarize",
+        lambda wav, **kwargs: calls.append(kwargs) or [(0.0, 1.0, "SPEAKER_00")],
+    )
+    turns = diarization.diarize("a.wav", num_speakers=2)
+    assert calls and calls[0]["num_speakers"] == 2
+    assert turns[0].speaker == "SPEAKER_00"
 
 
 def test_shipped_copy_starts_the_worker_through_its_own_executable(monkeypatch):
@@ -443,7 +461,11 @@ def test_method_list_offers_nemotron_only_when_bundled(bundle):
     from whispers.gui import transcribe_tab
 
     offered = transcribe_tab.engine_labels()
-    assert [transcribe_tab.ENGINE_CHOICES[label] for label in offered][-1] == "nemotron"
+    # Straight after Auto, which runs it.
+    assert [transcribe_tab.ENGINE_CHOICES[label] for label in offered][:2] == [
+        "auto",
+        "nemotron",
+    ]
     bundle["model"].unlink()
     offered = transcribe_tab.engine_labels()
     assert "nemotron" not in {transcribe_tab.ENGINE_CHOICES[label] for label in offered}

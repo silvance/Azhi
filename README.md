@@ -13,8 +13,8 @@ lead for an analyst to review - never an identification.
 
 **What it runs on.** Transcription uses OpenAI's Whisper speech-recognition
 models through [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-(CTranslate2). Speaker separation uses pyannote.audio, sherpa-onnx or,
-optionally, NVIDIA's Nemotron 3 Diarization; translation uses Argos Translate,
+(CTranslate2). Speaker separation uses NVIDIA's Nemotron 3 Diarization,
+pyannote.audio or sherpa-onnx; translation uses Argos Translate,
 and OCR Tesseract. Reports name the exact models a result came from. Licences:
 [`LICENSE`](LICENSE) for Whispers, [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 for everything it ships.
@@ -193,13 +193,13 @@ swap.
   embedding model at `whispers_assets/diarization/segmentation.onnx` and
   `.../embedding.onnx` (embedding is NeMo TitaNet-large, English).
 
-- **Nemotron** (trial; NVIDIA Nemotron 3 Diarization through the
+- **Nemotron** (the default; NVIDIA Nemotron 3 Diarization through the
   [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) CPU runtime) — one
   model that decides every 10 ms which of up to eight people is speaking,
   overlapping speech included, instead of cutting, measuring and grouping. Built
   for exactly the case the other two find hardest: short turns in quick
-  succession. Only in a bundle built with `nemotron=yes`, and only when chosen:
-  Auto never picks it. Turns are built from the model's own per-10 ms speaker
+  succession. In bundles built with `nemotron=yes` (the default), where Auto
+  picks it for up to eight speakers. Turns are built from the model's own per-10 ms speaker
   probabilities — each moment goes to the most likely speaker — rather than from
   the runtime's turns, which are widened, bridged across short gaps and drop
   anything under half a second, and so lost one-word replies. With a speaker
@@ -208,12 +208,12 @@ swap.
   one, and says so. The model is licensed **OpenMDW-1.1**
   (the runtime is Apache-2.0) — have that reviewed before distributing a bundle
   that carries it. NVIDIA's published results (DIHARD III 12.7% DER against 21.4%
-  for pyannote 3.1) are its own, on its own benchmarks; measure it on your
-  recordings with the [test set](docs/test-set.md) (`--engine nemotron`) before
-  relying on it.
+  for pyannote 3.1) are its own, on its own benchmarks; in this office's use it
+  has also been faster than sherpa and more accurate than pyannote. The
+  [test set](docs/test-set.md) measures it on your own recordings.
 
-**Auto** uses pyannote when it's installed/bundled and otherwise falls back to
-sherpa; pick a specific engine to force it (e.g. sherpa for a quick pass on clean
+**Auto** uses Nemotron where the bundle has it (and the speaker count is eight
+or fewer), then pyannote when it's installed/bundled, then sherpa; pick a specific engine to force it (e.g. sherpa for a quick pass on clean
 audio). A `both` bundle (see below) ships both so you can switch per recording.
 **Grouping sensitivity** applies to sherpa only.
 

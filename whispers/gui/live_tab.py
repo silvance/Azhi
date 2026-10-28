@@ -411,7 +411,7 @@ class LiveTab:
             reviewer = SpeakerReviewer(
                 on_change=self._on_speakers_change,
                 backend=chosen_backend(
-                    ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+                    ENGINE_CHOICES.get(self.engine_var.get(), "auto"), people
                 ),
                 num_speakers=people,
                 on_status=self._on_status,
