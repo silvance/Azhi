@@ -420,3 +420,240 @@ def test_the_record_says_whether_earlier_text_was_context():
         "as context" in line
         for line in AnalysisProvenance(transcription=older).describe()
     )
+
+
+# -- verbatim: keeping the hesitations ----------------------------------------
+
+
+def test_only_a_line_that_is_nothing_but_the_example_counts_as_leaked():
+    leaked = transcription.is_leaked_example
+    assert leaked(transcription.VERBATIM_EXAMPLE)
+    assert leaked(" Umm, let me think like, hmm.")
+    assert leaked("Okay, here's what I'm, like, thinking.")
+    # Things people say, even where they overlap the example.
+    assert not leaked("Okay.")
+    assert not leaked("Let me think like...")
+    assert not leaked("Okay, here's what I'm thinking about the car.")
+    assert not leaked("I, I, I went - I drove there.")
+
+
+@pytest.mark.parametrize(
+    "language, model, expected",
+    [
+        ("en", "medium", True),
+        ("en-GB", "turbo", True),
+        ("ru", "medium", False),
+        (None, "medium.en", True),
+        (None, "/models/small.en", True),
+        (None, "turbo", None),
+    ],
+)
+def test_english_is_known_up_front_only_when_set_or_english_only(
+    language, model, expected
+):
+    assert transcription.known_english(language, model) is expected
+
+
+class _Seg:
+    def __init__(self, start, end, text):
+        self.start, self.end, self.text = start, end, text
+        self.words = []
+        self.avg_logprob = -0.2
+
+
+class _Info(_FakeInfo):
+    def __init__(self, language="en"):
+        self.language = language
+
+
+class _DetectingModel(_FakeModel):
+    """Answers language detection, and returns the given lines."""
+
+    def __init__(self, detected="en", lines=()):
+        super().__init__()
+        self.detected = detected
+        self.lines = list(lines)
+        self.detected_on = None
+
+    def detect_language(self, audio, vad_filter, vad_parameters):
+        self.detected_on = audio
+        return self.detected, 0.93, []
+
+    def transcribe(self, path, **kwargs):
+        self.kwargs = kwargs
+        self.audio = path
+        return iter(self.lines), _Info(kwargs.get("language") or self.detected)
+
+
+@pytest.fixture
+def fake_decoder(monkeypatch):
+    """faster-whisper's audio decoder and VAD options, without the library."""
+    import sys
+    import types
+
+    audio_mod = types.ModuleType("faster_whisper.audio")
+    audio_mod.decode_audio = lambda path, sampling_rate: f"samples of {path}"
+    vad_mod = types.ModuleType("faster_whisper.vad")
+    vad_mod.VadOptions = lambda **kwargs: ("vad", tuple(sorted(kwargs)))
+    package = types.ModuleType("faster_whisper")
+    for name, module in (
+        ("faster_whisper", package),
+        ("faster_whisper.audio", audio_mod),
+        ("faster_whisper.vad", vad_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+
+
+def _verbatim_run(monkeypatch, tmp_path, model, **overrides):
+    monkeypatch.setattr(transcription, "_load_model", lambda *a, **k: model)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"\x00")
+    return transcription.transcribe_audio(audio, verbatim=True, **overrides)
+
+
+def test_verbatim_gives_every_stretch_the_example(monkeypatch, tmp_path):
+    model = _DetectingModel()
+    result = _verbatim_run(
+        monkeypatch,
+        tmp_path,
+        model,
+        model_size="medium",
+        language="en",
+        initial_prompt="Kowalczyk",
+    )
+    # Expected words as before; the example ahead of every stretch, where a
+    # reset of the running context cannot drop it.
+    assert model.kwargs["initial_prompt"] == "Kowalczyk"
+    assert model.kwargs["hotwords"] == transcription.VERBATIM_EXAMPLE
+    assert result.verbatim is True
+    assert model.detected_on is None  # English was known; nothing detected
+
+
+def test_turbo_gets_the_expected_words_and_the_example_together(monkeypatch, tmp_path):
+    model = _DetectingModel()
+    _verbatim_run(
+        monkeypatch,
+        tmp_path,
+        model,
+        model_size="turbo",
+        language="en",
+        initial_prompt="Kowalczyk",
+    )
+    assert model.kwargs["initial_prompt"] is None
+    assert model.kwargs["hotwords"] == f"Kowalczyk {transcription.VERBATIM_EXAMPLE}"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"language": "ru"},
+        {"language": "en", "task": "translate"},
+    ],
+)
+def test_no_example_for_other_languages_or_translations(
+    monkeypatch, tmp_path, overrides
+):
+    model = _DetectingModel()
+    result = _verbatim_run(
+        monkeypatch, tmp_path, model, model_size="medium", **overrides
+    )
+    assert model.kwargs["hotwords"] is None
+    assert result.verbatim is False
+
+
+def test_with_auto_language_english_is_detected_before_the_example_is_given(
+    monkeypatch, tmp_path, fake_decoder
+):
+    model = _DetectingModel(detected="en")
+    result = _verbatim_run(monkeypatch, tmp_path, model, model_size="turbo")
+    assert model.detected_on.startswith("samples of")
+    # Decoded once: the same samples go on to be transcribed.
+    assert model.audio == model.detected_on
+    assert model.kwargs["language"] == "en"
+    assert model.kwargs["hotwords"] == transcription.VERBATIM_EXAMPLE
+    # The probability is the detection's, not the 1.0 of a language given.
+    assert result.language_probability == pytest.approx(0.93)
+
+
+def test_auto_language_that_is_not_english_gets_no_example(
+    monkeypatch, tmp_path, fake_decoder
+):
+    model = _DetectingModel(detected="ru")
+    result = _verbatim_run(monkeypatch, tmp_path, model, model_size="medium")
+    assert model.kwargs["language"] == "ru"
+    assert model.kwargs["hotwords"] is None
+    assert result.verbatim is False and result.language == "ru"
+
+
+def test_a_line_that_only_repeats_the_example_is_left_out_and_counted(
+    monkeypatch, tmp_path
+):
+    model = _DetectingModel(
+        lines=[
+            _Seg(0.0, 2.0, " I, I went - I drove there."),
+            _Seg(
+                2.0,
+                9.0,
+                " Umm, let me think like, hmm... Okay, here's what I'm, like, thinking.",
+            ),
+            _Seg(9.0, 10.0, " Okay."),
+        ]
+    )
+    said = []
+    result = _verbatim_run(
+        monkeypatch,
+        tmp_path,
+        model,
+        model_size="medium",
+        language="en",
+        progress=said.append,
+    )
+    assert [s.text for s in result.segments] == ["I, I went - I drove there.", "Okay."]
+    assert result.example_lines_removed == 1
+    assert "repeated the verbatim example" in " ".join(said)
+    assert "Umm, let me think" not in result.text
+
+
+def test_without_verbatim_a_matching_line_is_left_alone(monkeypatch, tmp_path):
+    # The guard is for text the example put there; with no example given, a
+    # line is speech however it reads.
+    model = _DetectingModel(lines=[_Seg(0.0, 3.0, " Umm, let me think like, hmm.")])
+    monkeypatch.setattr(transcription, "_load_model", lambda *a, **k: model)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"\x00")
+    result = transcription.transcribe_audio(audio, language="en")
+    assert len(result.segments) == 1 and result.example_lines_removed == 0
+
+
+def test_the_record_says_whether_hesitations_were_kept():
+    from whispers.provenance import AnalysisProvenance, TranscriptionProvenance
+
+    record = TranscriptionProvenance(
+        model_name="turbo", verbatim=True, example_lines_removed=2
+    )
+    assert TranscriptionProvenance.from_dict(record.to_dict()) == record
+    lines = AnalysisProvenance(transcription=record).describe()
+    assert (
+        "Hesitations and repeats kept (verbatim example given): yes; 2 line(s) "
+        "that only repeated the example were left out"
+    ) in lines
+    older = TranscriptionProvenance.from_dict({"model_name": "turbo"})
+    assert older.verbatim is None
+    assert not any(
+        "Hesitations" in line
+        for line in AnalysisProvenance(transcription=older).describe()
+    )
+
+
+def test_a_recording_with_nothing_to_detect_is_transcribed_without_the_example(
+    monkeypatch, tmp_path, fake_decoder
+):
+    class Silent(_DetectingModel):
+        def detect_language(self, audio, vad_filter, vad_parameters):
+            raise ValueError("max() arg is an empty sequence")
+
+    model = Silent()
+    result = _verbatim_run(monkeypatch, tmp_path, model, model_size="medium")
+    assert model.kwargs["language"] is None  # left to faster-whisper, as before
+    assert model.kwargs["hotwords"] is None
+    assert result.verbatim is False

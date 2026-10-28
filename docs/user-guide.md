@@ -126,7 +126,7 @@ you need it. What is in there:
 | Card | Holds |
 | --- | --- |
 | **Audio and output** | Skip silence, noise reduction, the easier-to-listen-to copy, low-confidence highlighting, `.srt` subtitles, video conversion |
-| **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English — with **medium** or **large-v3** only: *turbo* and the *.en* models cannot translate, and the run is refused with them) and **Expected words** |
+| **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English — with **medium** or **large-v3** only: *turbo* and the *.en* models cannot translate, and the run is refused with them), **Expected words**, and **Keep hesitations, repeats and false starts** (English) |
 | **Speaker separation** | Method and grouping sensitivity — used only when *Identify who is speaking* is on |
 | **Processing hardware** | Usually just says **CPU** — see below |
 | **Operation profile** | Settings and learned voices kept per operation — see below |
@@ -157,6 +157,18 @@ run takes.
   jargon likely to come up. It steers the model towards them, and proper nouns
   are what it otherwise mangles most. Type them as they are normally written,
   not in capitals: the model copies the style as well as the words.
+- **Keep hesitations, repeats and false starts** (*Advanced options* →
+  *Language and vocabulary*, on by default) keeps the "um"s, repeated words and
+  restarts as someone searches for what to say. Left to themselves, the models
+  mostly write the sentence the speaker meant instead. It works by showing the
+  model a short example written that way, so:
+  - it is for **English** transcription only. With the language on *Auto*, the
+    language is detected first; other languages and translations are
+    transcribed as usual, and the status line says so.
+  - over silence or noise, a model can write the example out as if someone had
+    said it. A line that is nothing but the example is left out, and the status
+    line and the report say how many were.
+  - it applies on the Transcribe page, not on Live.
 - **turbo and large-v3** sometimes write a stretch of a hard recording in
   capitals. Each 30-second stretch they transcribe starts afresh rather than
   following on from the text before it, so a lapse into capitals stays where it

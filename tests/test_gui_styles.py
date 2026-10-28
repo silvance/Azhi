@@ -256,3 +256,14 @@ def test_a_transcript_speaker_can_be_searched_against_every_profile(
     # Edited by hand, the ranges are no longer "Anna's lines".
     compare.ranges_var.set("0:00-0:02")
     assert "Anna" not in compare._selection_description([(0.0, 2.0)])
+
+
+def test_hesitations_are_kept_by_default_and_the_choice_is_remembered(app):
+    page = app.transcribe
+    assert page.verbatim_var.get() is True
+    page.verbatim_var.set(False)
+    saved = page.get_settings()
+    assert saved["verbatim"] is False
+    page.verbatim_var.set(True)
+    page.apply_settings(saved)
+    assert page.verbatim_var.get() is False

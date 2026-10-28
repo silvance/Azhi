@@ -334,6 +334,10 @@ class TranscribeTab:
         self.blank_lines_var = tk.BooleanVar(value=True)
         # Optional vocabulary hint (names/jargon) to prime the decoder.
         self.vocab_var = tk.StringVar(value="")
+        # Keep hesitations, repeats and false starts in English transcripts.
+        # On by default: how someone searches for words can matter as much as
+        # the words they settle on, and the models leave it out unless asked.
+        self.verbatim_var = tk.BooleanVar(value=True)
         # Colour low-confidence words/segments so they can be verified.
         self.highlight_conf_var = tk.BooleanVar(value=False)
         self.progress_label_var = tk.StringVar(value="Idle")
@@ -770,6 +774,24 @@ class TranscribeTab:
             text="Names, places, jargon or callsigns to expect, so they are spelled right.",
             style=Style.META,
         ).grid(row=2, column=1, sticky="w")
+        ttk.Checkbutton(
+            language.body,
+            text="Keep hesitations, repeats and false starts (English)",
+            variable=self.verbatim_var,
+            style=Style.CHECK,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
+        ttk.Label(
+            language.body,
+            text=(
+                "Without this, the models mostly write the sentence a speaker "
+                "meant and leave out the \u201cum\u201ds, repeated words and "
+                "restarts on the way to it. Only for English transcription; "
+                "other languages and translations are left as they come."
+            ),
+            style=Style.MUTED,
+            wraplength=560,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
 
         hardware = Card(body, "Processing hardware")
         hardware.pack(fill="x", pady=(SPACE_MD, 0))
@@ -2030,6 +2052,7 @@ class TranscribeTab:
                     vad_filter=self.vad_var.get(),
                     word_timestamps=need_words,
                     initial_prompt=self.vocab_var.get().strip() or None,
+                    verbatim=self.verbatim_var.get(),
                     progress=self._step,
                     on_progress=lambda f: self._set_progress(f, transcribe_label),
                     cancelled=self._cancel_event.is_set,
@@ -2062,6 +2085,10 @@ class TranscribeTab:
                     vad=self.vad_var.get(),
                     initial_prompt=self.vocab_var.get().strip(),
                     previous_text_context=carries_context(str(model)),
+                    verbatim=result.verbatim,
+                    example_lines_removed=(
+                        result.example_lines_removed if result.verbatim else None
+                    ),
                     denoised=enhancement is not None,
                     denoiser_sha256=(
                         enhancement.model_sha256 if enhancement is not None else ""
@@ -2081,6 +2108,22 @@ class TranscribeTab:
                 f"({result.language_probability:.0%}), "
                 f"duration: {result.duration:.1f}s",
             )
+            if result.example_lines_removed:
+                append_line(
+                    self.status,
+                    f"{src.name}: left out {result.example_lines_removed} "
+                    "line(s) that only repeated the verbatim example the model "
+                    "is given - text it can produce over silence or noise, "
+                    "not speech.",
+                )
+            elif (
+                self.verbatim_var.get() and task == "transcribe" and not result.verbatim
+            ):
+                append_line(
+                    self.status,
+                    "Hesitations and repeats are kept for English only; this "
+                    f"recording ({result.language}) was transcribed as usual.",
+                )
             if (
                 task == "translate"
                 and untranslated_share(result.segments) > UNTRANSLATED_SHARE
@@ -3555,6 +3598,7 @@ class TranscribeTab:
             "srt": self.srt_var,
             "blank_lines": self.blank_lines_var,
             "highlight_conf": self.highlight_conf_var,
+            "verbatim": self.verbatim_var,
             "diarize": self.diarize_var,
             "engine": self.engine_var,
             "retime_words": self.retime_var,
