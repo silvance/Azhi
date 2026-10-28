@@ -361,3 +361,62 @@ def test_a_translation_left_in_chinese_is_spotted():
     assert untranslated_share(chinese) > UNTRANSLATED_SHARE
     assert untranslated_share(english) < UNTRANSLATED_SHARE
     assert untranslated_share([Segment(0, 1, "85 60 ...")]) == 0.0
+
+
+# -- a lapse into capitals stays where it happened ------------------------------
+
+
+@pytest.mark.parametrize(
+    "model, expected",
+    [
+        ("medium", True),
+        ("small.en", True),
+        ("large-v3", False),
+        ("turbo", False),
+        ("/assets/models/turbo", False),
+        ("/models/faster-whisper-large-v3-turbo", False),
+        ("distil-large-v3", False),
+    ],
+)
+def test_large_v3_and_turbo_do_not_carry_earlier_text(model, expected):
+    assert transcription.carries_context(model) is expected
+
+
+def test_a_model_that_carries_context_is_primed_once(monkeypatch, tmp_path):
+    model, _ = _run(
+        monkeypatch, tmp_path, model_size="medium", initial_prompt="Kowalczyk"
+    )
+    assert model.kwargs["condition_on_previous_text"] is True
+    assert model.kwargs["initial_prompt"] == "Kowalczyk"
+    assert model.kwargs["hotwords"] is None
+
+
+def test_turbo_starts_each_stretch_afresh_but_keeps_the_expected_words(
+    monkeypatch, tmp_path
+):
+    # As an initial prompt, the expected words would reach only the first
+    # 30 s once earlier text is not carried; as hotwords they reach them all.
+    model, _ = _run(
+        monkeypatch, tmp_path, model_size="turbo", initial_prompt="Kowalczyk"
+    )
+    assert model.kwargs["condition_on_previous_text"] is False
+    assert model.kwargs["initial_prompt"] is None
+    assert model.kwargs["hotwords"] == "Kowalczyk"
+
+
+def test_the_record_says_whether_earlier_text_was_context():
+    from whispers.provenance import AnalysisProvenance, TranscriptionProvenance
+
+    record = TranscriptionProvenance(model_name="turbo", previous_text_context=False)
+    assert TranscriptionProvenance.from_dict(record.to_dict()) == record
+    lines = AnalysisProvenance(transcription=record).describe()
+    assert (
+        "Earlier text given to the model as context: no "
+        "(each 30-second stretch started afresh)"
+    ) in lines
+    older = TranscriptionProvenance.from_dict({"model_name": "turbo"})
+    assert older.previous_text_context is None
+    assert not any(
+        "as context" in line
+        for line in AnalysisProvenance(transcription=older).describe()
+    )

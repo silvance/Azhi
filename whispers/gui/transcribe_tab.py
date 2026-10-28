@@ -93,6 +93,7 @@ from ..transcription import (
     ModelUnavailable,
     Segment,
     TranscriptionResult,
+    carries_context,
     convert_to_wav,
     is_video,
     resolve_model_choice,
@@ -2060,6 +2061,7 @@ class TranscribeTab:
                     detected_language=result.language,
                     vad=self.vad_var.get(),
                     initial_prompt=self.vocab_var.get().strip(),
+                    previous_text_context=carries_context(str(model)),
                     denoised=enhancement is not None,
                     denoiser_sha256=(
                         enhancement.model_sha256 if enhancement is not None else ""

@@ -155,7 +155,13 @@ run takes.
 - **Expected words** (*Advanced options* → *Language and vocabulary*) is the
   cheapest accuracy win available. Type in the names, places, callsigns and
   jargon likely to come up. It steers the model towards them, and proper nouns
-  are what it otherwise mangles most.
+  are what it otherwise mangles most. Type them as they are normally written,
+  not in capitals: the model copies the style as well as the words.
+- **turbo and large-v3** sometimes write a stretch of a hard recording in
+  capitals. Each 30-second stretch they transcribe starts afresh rather than
+  following on from the text before it, so a lapse into capitals stays where it
+  happened instead of running on to the end. (Other models do follow on, which
+  keeps spellings consistent.) The report says which way a transcript was made.
 - **Highlight low-confidence words** (*Advanced options* → *Audio and output*)
   colours the parts the model was unsure
   about, so you can go straight to what needs checking rather than re-reading

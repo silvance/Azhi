@@ -184,3 +184,24 @@ def test_each_chunk_goes_to_the_speaker_reviewer_with_word_times(tmp_path, monke
     assert reviewer.chunks == [("seg_00000.wav", ["x"]), ("seg_00001.wav", ["x"])]
     assert reviewer.finished
     assert texts == ["text seg_00000", "text seg_00001"]
+
+
+@pytest.mark.parametrize("model, primed", [("base.en", True), ("turbo", False)])
+def test_earlier_chunks_prime_the_next_only_where_the_model_carries_context(
+    monkeypatch, tmp_path, model, primed
+):
+    from whispers.transcription import TranscriptionResult
+
+    prompts = []
+
+    def fake_transcribe(path, **kwargs):
+        prompts.append(kwargs["initial_prompt"])
+        return TranscriptionResult(
+            text="WORDS", language="en", language_probability=1.0, duration=1.0
+        )
+
+    monkeypatch.setattr(live, "transcribe_audio", fake_transcribe)
+    transcriber = live.LiveTranscriber("rtmp://x", model_size=model)
+    transcriber._transcribe_segment(tmp_path / "a.wav", "")
+    transcriber._transcribe_segment(tmp_path / "b.wav", "WORDS")
+    assert prompts == [None, "WORDS" if primed else None]
