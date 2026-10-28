@@ -33,7 +33,7 @@ on:
         options: [both, pyannote, sherpa]
         default: both
       nemotron:
-        description: "Bundle NVIDIA Nemotron 3 Diarization (+ NeMo-Speech.cpp runtime, ~125 MB), the default speaker-separation Method where included. The model is licensed OpenMDW-1.1: have it reviewed before distributing a bundle that carries it."
+        description: "Bundle NVIDIA Nemotron 3 Diarization (+ NeMo-Speech.cpp runtime, ~125 MB), the default speaker-separation Method where included. The model is licensed OpenMDW-1.1 (permissive); its text and NVIDIA's model card ship beside it, as the licence asks."
         type: choice
         options: ["yes", "no"]
         default: "yes"

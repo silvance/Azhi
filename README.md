@@ -205,9 +205,10 @@ swap.
   anything under half a second, and so lost one-word replies. With a speaker
   count given, the voices heard longest are kept and each moment of any other
   goes to whichever of them is more likely; it cannot split a voice it heard as
-  one, and says so. The model is licensed **OpenMDW-1.1**
-  (the runtime is Apache-2.0) — have that reviewed before distributing a bundle
-  that carries it. NVIDIA's published results (DIHARD III 12.7% DER against 21.4%
+  one, and says so. The model is licensed **OpenMDW-1.1** (the runtime is
+  Apache-2.0), which is permissive: a copy must keep the agreement and NVIDIA's
+  notices, and the build puts both beside the model (see
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). NVIDIA's published results (DIHARD III 12.7% DER against 21.4%
   for pyannote 3.1) are its own, on its own benchmarks; in this office's use it
   has also been faster than sherpa and more accurate than pyannote. The
   [test set](docs/test-set.md) measures it on your own recordings.
