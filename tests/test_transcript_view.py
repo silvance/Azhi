@@ -346,3 +346,106 @@ def test_next_hit_steps_through_and_wraps(view):
     assert shown == ["w2_0", "w40_2", "w2_0"]
     view.view.set_watch(None)
     assert not view.view.next_watch_hit()
+
+
+@pytest.fixture
+def noting(view, monkeypatch):
+    """The view, with the note dialog answering as the test says."""
+    import sotto.gui.transcript_view as tv
+
+    answers = []
+    asked = []
+
+    def ask(root, *, line, when, text=""):
+        asked.append((line, when, text))
+        return answers.pop(0) if answers else None
+
+    monkeypatch.setattr(tv, "ask_note", ask)
+    menus = []
+    view.view._popup = lambda menu, _event: menus.append(menu)
+    view.answers, view.asked, view.menus = answers, asked, menus
+    return view
+
+
+def _labels(menu):
+    return [
+        menu.entrycget(i, "label")
+        for i in range(menu.index("end") + 1)
+        if menu.type(i) == "command"
+    ]
+
+
+def test_a_note_is_added_from_the_speaker_tag_and_shown_under_its_line(noting):
+    noting.answers.append(("save", "Sounds rehearsed."))
+    noting.view._context_menu(_event_at(noting.view, "line::3.first"))
+    assert _choose(noting.menus[-1], "Add a note…")
+    _settle(noting.root)
+    assert noting.asked[0][:2] == ("w3_0 w3_1 w3_2", "00:00:12")
+    note = noting.view._result.notes[0]
+    assert (note.at, note.text) == (12.0, "Sounds rehearsed.")
+    assert note.written_utc  # when it was written, for the record
+    w = noting.view.widget
+    shown = w.get("note::0.first", "note::0.last")
+    assert shown.strip() == "✎ Sounds rehearsed."
+    # Directly under line 3, before line 4 starts.
+    assert w.compare("note::0.first", ">=", "word::3::2.last")
+    assert w.compare("note::0.last", "<", "line::4.first")
+    assert noting.changes  # saved like any other edit
+
+
+def test_a_note_is_changed_by_clicking_it_and_deleted_from_its_menu(noting):
+    from sotto.transcription import Note
+
+    noting.view._result.notes.append(Note(12.0, "first thought"))
+    noting.view.render()
+    _settle(noting.root)
+    noting.answers.append(("save", "second thought"))
+    noting.view._note_clicked(0)
+    _settle(noting.root)
+    assert noting.asked[-1][2] == "first thought"
+    assert noting.view._result.notes[0].text == "second thought"
+    noting.view._context_menu(_event_at(noting.view, "note::0.first +3c"))
+    assert _labels(noting.menus[-1]) == ["Change the note…", "Delete the note"]
+    assert _choose(noting.menus[-1], "Delete the note")
+    _settle(noting.root)
+    assert noting.view._result.notes == []
+    assert not noting.view.widget.tag_ranges("note")
+
+
+def test_a_note_stays_with_its_moment_when_the_line_is_split(noting):
+    from sotto.transcription import Note
+
+    noting.view._result.notes.append(Note(12.0, "about the start"))
+    other = (
+        "SPEAKER_00"
+        if noting.view._result.segments[3].speaker == "SPEAKER_01"
+        else "SPEAKER_01"
+    )
+    noting.view._reassign_word_span(3, 2, other, False)  # split off the last word
+    _settle(noting.root)
+    w = noting.view.widget
+    # Still after the word it was written at, not after the moved one.
+    assert w.compare("note::0.first", ">=", "word::3::1.last")
+    # ...and before the word that moved away to the other speaker.
+    moved = next(
+        tag
+        for tag in w.tag_names()
+        if tag.startswith("word::")
+        and w.tag_ranges(tag)
+        and w.get(f"{tag}.first", f"{tag}.last").strip() == "w3_2"
+    )
+    assert w.compare("note::0.last", "<=", f"{moved}.first")
+
+
+def test_watch_list_hits_are_never_inside_a_note(noting):
+    from sotto.transcription import Note
+    from sotto.watchlist import Matcher
+
+    noting.view._result.notes.append(Note(12.0, "w3_1 again"))
+    noting.view.render()
+    _settle(noting.root)
+    noting.view.set_watch(Matcher(["w3_1"]))
+    w = noting.view.widget
+    marked = w.tag_ranges("watch")
+    assert len(marked) == 2  # the word said, not the note about it
+    assert "note" not in w.tag_names(marked[0])

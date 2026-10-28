@@ -22,7 +22,7 @@ from typing import Dict, Optional, Tuple, Union
 from .atomicio import write_json_atomic
 from .provenance import AnalysisProvenance
 from .speaker_names import as_lead
-from .transcription import Segment, TranscriptionResult, Word
+from .transcription import Note, Segment, TranscriptionResult, Word
 
 PathLike = Union[str, Path]
 
@@ -40,7 +40,8 @@ VOICE_PREFIX = "voice::"
 #    "(unconfirmed voice lead)" marker until the operator confirms it, so a
 #    bare name on a voice:: speaker is a confirmed one. Before 3 every
 #    recognised name was stored bare - see _mark_unconfirmed_leads.
-SCHEMA_VERSION = 3
+# 4: adds the analyst's notes on lines (result.notes), each anchored to a time.
+SCHEMA_VERSION = 4
 _VERSION = SCHEMA_VERSION
 
 
@@ -85,6 +86,10 @@ def save_project(
                     ],
                 }
                 for seg in result.segments
+            ],
+            "notes": [
+                {"at": note.at, "text": note.text, "written_utc": note.written_utc}
+                for note in result.notes
             ],
         },
     }
@@ -138,6 +143,15 @@ def load_project_record(path: PathLike) -> ProjectRecord:
         language_probability=raw.get("language_probability", 0.0),
         duration=raw.get("duration", 0.0),
         segments=segments,
+        notes=[
+            Note(
+                at=float(note.get("at", 0.0)),
+                text=str(note.get("text", "")),
+                written_utc=str(note.get("written_utc", "")),
+            )
+            for note in raw.get("notes", [])
+            if isinstance(note, dict) and str(note.get("text", "")).strip()
+        ],
     )
     raw_provenance = data.get("provenance")
     version = data.get("schema_version") or data.get("version") or 1

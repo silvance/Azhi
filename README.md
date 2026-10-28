@@ -160,6 +160,13 @@ launch, so you don't re-set them each time. Stored in a small per-user JSON file
 (Enter = next, Shift+Enter = previous); every hit is highlighted and the current
 one is centred.
 
+**Analyst notes.** Right-click a line › **Add a note…** pins a note to the
+moment the line starts (`TranscriptionResult.notes`), so it stays with what it
+was about when lines are split or joined. Notes are shown under their lines,
+saved in the project (schema 4), and written out labelled "Analyst note" in
+text, Word, the spreadsheet's own column and the analysis report, unless the
+option to include them is off.
+
 **Watch list.** **Watch › Edit list…** keeps names, places and other terms (one
 per line) that are highlighted in every transcript as it is shown, and in the
 live transcript; the hits are counted and **Next hit** steps through them.

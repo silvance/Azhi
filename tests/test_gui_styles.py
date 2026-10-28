@@ -382,3 +382,25 @@ def test_the_live_transcript_follows_the_same_watch_list(app, tmp_path):
         "bridge",
     ]
     live._reviewer = None
+
+
+def test_copy_carries_the_lead_legend_once_with_times_and_notes(app, tmp_path):
+    from sotto.speaker_names import LEAD_LEGEND, as_lead
+    from sotto.transcription import Note
+
+    page = _page_with_transcript(app, tmp_path)
+    page._speaker_names = {"SPEAKER_00": as_lead("Anna")}
+    page.transcript_view.set_result(page._result, page._speaker_names)
+    page._result.notes = [Note(75.0, "Door slams first.")]
+    page.times_var.set(True)
+    for _ in range(5):
+        app.root.update()
+    page._copy_transcript()
+    copied = app.root.clipboard_get()
+    assert copied.count(LEAD_LEGEND) == 1  # it used to be there twice
+    assert "[00:01:15]" in copied
+    assert "    Analyst note: Door slams first." in copied
+    page.notes_var.set(False)
+    page._copy_transcript()
+    assert "Analyst note" not in app.root.clipboard_get()
+    assert page.get_settings()["notes"] is False

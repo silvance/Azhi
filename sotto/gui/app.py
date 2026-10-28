@@ -295,6 +295,8 @@ class SottoApp:
             "   callsigns you expect, so they are spelled correctly.\n"
             "• Copy transcript and Save as… (Word, spreadsheet or text) are\n"
             "   below the transcript.\n"
+            "• Right-click a line › Add a note… to write down what you make\n"
+            "   of it; notes are saved with the project, labelled as notes.\n"
             "• Watch › Edit list…: names or places to pick out of every\n"
             "   transcript, highlighted wherever they are said.\n"
             "\n"
