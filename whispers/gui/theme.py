@@ -101,6 +101,8 @@ class Style:
     WARNING = "Warning.TLabel"
     DANGER = "Danger.TLabel"
     ACCENT = "Accent.TLabel"
+    # On the page itself: a microphone is being recorded.
+    RECORDING = "Recording.TLabel"
 
     # Buttons
     PRIMARY = "Primary.TButton"
@@ -340,6 +342,7 @@ def _configure_text(style: ttk.Style, t: Theme) -> None:
         (Style.WARNING, t.body, c.warning, c.surface),
         (Style.DANGER, t.body, c.danger_active, c.surface),
         (Style.ACCENT, t.body, c.accent_active, c.surface),
+        (Style.RECORDING, t.section, c.danger_active, c.background),
     )
     for name, font, foreground, background in roles:
         style.configure(name, font=font, foreground=foreground, background=background)

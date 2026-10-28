@@ -1,16 +1,23 @@
-"""The Live tab: near-real-time transcription of a stream (RTMP/UDP/HTTP…).
+"""The Live tab: near-real-time transcription of a stream or a microphone.
 
 Point it at a stream ffmpeg can read - e.g. a GoPro pushing RTMP to a local RTMP
-server - and it transcribes short segments as they arrive (see
-:mod:`whispers.live`). Kept deliberately simple: a URL, a model, Start/Stop, and a
-live-updating transcript. Optionally, who is speaking is worked out behind the
-words (:mod:`whispers.live_speakers`) and the transcript relabelled as it goes.
+server - or at a microphone on this PC, and it transcribes short segments as
+they arrive (see :mod:`whispers.live`). Kept deliberately simple: a source, a
+model, Start/Stop, and a live-updating transcript. Optionally, who is speaking
+is worked out behind the words (:mod:`whispers.live_speakers`) and the
+transcript relabelled as it goes.
+
+A microphone's audio exists nowhere else, so all of it is kept in a folder the
+analyst chose, with a record of the capture beside it
+(:mod:`whispers.microphone`), and the page says plainly while it is recording.
 """
 
 from __future__ import annotations
 
 import threading
 import tkinter as tk
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -20,9 +27,19 @@ from .. import speaker_count
 from ..atomicio import write_text_atomic
 from ..diarization import chosen_backend
 from ..diarization import is_available as diarization_available
+from ..hashing import short
 from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber, test_connection
 from ..live_speakers import SpeakerReviewer
-from ..resources import bundled_models, is_bundle
+from ..microphone import (
+    Microphone,
+    MicrophoneError,
+    explain_capture_error,
+    list_microphones,
+    read_capture_record,
+    recording_path,
+    write_capture_record,
+)
+from ..resources import bundled_models, find_ffmpeg, is_bundle
 from ..speaker_names import shown_name
 from ..transcription import (
     MODEL_SIZES,
@@ -50,6 +67,47 @@ from .widgets import (
 _LANGUAGES = ["Auto", "en", "es", "fr", "de", "it", "pt", "ru", "ar", "zh", "ja", "ko"]
 
 
+def default_recording_folder() -> Path:
+    """Documents/Whispers recordings, or under the home folder without one."""
+    home = Path.home()
+    documents = home / "Documents"
+    return (documents if documents.is_dir() else home) / "Whispers recordings"
+
+
+@dataclass
+class Capture:
+    """A microphone session: what is being recorded, from what, since when."""
+
+    device: str
+    started: datetime
+    path: Path
+    model: str
+
+
+def finish_capture(capture: Capture) -> str:
+    """Write the record beside a finished recording; say where it is."""
+    if not capture.path.is_file():
+        return "Nothing was recorded."
+    try:
+        write_capture_record(
+            capture.path,
+            device=capture.device,
+            started=capture.started,
+            stopped=datetime.now().astimezone(),
+            transcription_model=capture.model,
+        )
+        digest = read_capture_record(capture.path).get("sha256")
+    except (OSError, ValueError) as exc:
+        return (
+            f"The recording is in {capture.path}, but its record could not be "
+            f"written: {friendly_error(exc)}"
+        )
+    return (
+        f"Recording kept: {capture.path.name} (SHA-256 {short(str(digest))}\u2026) "
+        f"in {capture.path.parent}."
+    )
+
+
 class LiveTab:
     """Builds and drives the Live (stream) tab inside ``parent``."""
 
@@ -71,8 +129,12 @@ class LiveTab:
             else:
                 default_model = next(iter(self._bundled_models))
 
+        self.source_kind_var = tk.StringVar(value="stream")
         self.source_var = tk.StringVar(value="rtmp://localhost/live/stream")
         self.listen_var = tk.BooleanVar(value=False)
+        self.mic_var = tk.StringVar(value="")
+        self.record_dir_var = tk.StringVar(value=str(default_recording_folder()))
+        self.recording_var = tk.StringVar(value="")
         self.model_var = tk.StringVar(value=default_model)
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
@@ -96,6 +158,12 @@ class LiveTab:
         self._save_failed = False
         # Lines that ended before Clear was pressed are not shown again.
         self._hide_before = 0.0
+        self._mics: List[Microphone] = []
+        self._mics_listed = False
+        self._capture: Optional[Capture] = None
+        self._tick_job: Optional[str] = None
+        # What Stop said about the recording, kept for the speakers' last word.
+        self._stopped_note = ""
 
         self._build()
 
@@ -107,27 +175,49 @@ class LiveTab:
         PageHeader(
             container,
             "Live",
-            "Transcribe a stream as it arrives, a few seconds at a time.",
+            "Transcribe a stream or a microphone as it is heard, a few seconds "
+            "at a time.",
         ).pack(fill="x", pady=(0, SPACE_LG))
 
-        stream_card = Card(container, "Stream")
-        stream_card.pack(fill="x")
-        settings = stream_card.body
+        source_card = Card(container, "Source")
+        source_card.pack(fill="x")
+        settings = source_card.body
         settings.columnconfigure(1, weight=1)
 
-        ttk.Label(settings, text="Stream URL", style=Style.FIELD_LABEL).grid(
+        ttk.Label(settings, text="Listen to", style=Style.FIELD_LABEL).grid(
             row=0, column=0, sticky="w", padx=(0, 8), pady=4
         )
-        ttk.Entry(settings, textvariable=self.source_var).grid(
-            row=0, column=1, columnspan=2, sticky="ew", pady=4
-        )
-        ttk.Checkbutton(
+        kinds = ttk.Frame(settings, style=Style.CARD_INNER)
+        kinds.grid(row=0, column=1, columnspan=2, sticky="w", pady=4)
+        self._kind_buttons = []
+        for value, label in (
+            ("stream", "A stream"),
+            ("microphone", "A microphone on this PC"),
+        ):
+            button = ttk.Radiobutton(
+                kinds,
+                text=label,
+                value=value,
+                variable=self.source_kind_var,
+                command=self._show_source_kind,
+                style=Style.RADIO,
+            )
+            button.pack(side="left", padx=(0, SPACE_LG))
+            self._kind_buttons.append(button)
+
+        # Rows 1-3 hold either the stream's settings or the microphone's.
+        url_label = ttk.Label(settings, text="Stream URL", style=Style.FIELD_LABEL)
+        url_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        url_entry = ttk.Entry(settings, textvariable=self.source_var)
+        url_entry.grid(row=1, column=1, columnspan=2, sticky="ew", pady=4)
+        listen = ttk.Checkbutton(
             settings,
             text="Wait for an incoming connection (this PC hosts the stream)",
             variable=self.listen_var,
             style=Style.CHECK,
-        ).grid(row=1, column=1, columnspan=2, sticky="w")
-        ttk.Label(
+        )
+        listen.grid(row=2, column=1, columnspan=2, sticky="w")
+        stream_hint = ttk.Label(
             settings,
             text=(
                 "For example, a GoPro streaming to a local RTMP server. Tick "
@@ -136,13 +226,57 @@ class LiveTab:
             wraplength=560,
             justify="left",
             style=Style.META,
-        ).grid(row=2, column=1, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
+        )
+        stream_hint.grid(row=3, column=1, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
+        self._stream_rows = [url_label, url_entry, listen, stream_hint]
+
+        mic_label = ttk.Label(settings, text="Microphone", style=Style.FIELD_LABEL)
+        mic_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        mic_row = ttk.Frame(settings, style=Style.CARD_INNER)
+        mic_row.grid(row=1, column=1, columnspan=2, sticky="ew", pady=4)
+        mic_row.columnconfigure(0, weight=1)
+        self.mic_combo = ttk.Combobox(
+            mic_row, textvariable=self.mic_var, values=[], state="readonly"
+        )
+        self.mic_combo.grid(row=0, column=0, sticky="ew")
+        self.refresh_button = secondary_button(
+            mic_row, "Refresh", self._refresh_microphones
+        )
+        self.refresh_button.grid(row=0, column=1, padx=(8, 0))
+        folder_label = ttk.Label(
+            settings, text="Keep recordings in", style=Style.FIELD_LABEL
+        )
+        folder_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        folder_row = ttk.Frame(settings, style=Style.CARD_INNER)
+        folder_row.grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
+        folder_row.columnconfigure(0, weight=1)
+        self.record_dir_entry = ttk.Entry(folder_row, textvariable=self.record_dir_var)
+        self.record_dir_entry.grid(row=0, column=0, sticky="ew")
+        self.record_dir_button = secondary_button(
+            folder_row, "Choose…", self._choose_record_dir
+        )
+        self.record_dir_button.grid(row=0, column=1, padx=(8, 0))
+        mic_hint = ttk.Label(
+            settings,
+            text=(
+                "Everything the microphone hears is kept in this folder as a WAV "
+                "file, with a record beside it of the device, the times and the "
+                "file's SHA-256. Nothing is sent anywhere."
+            ),
+            wraplength=560,
+            justify="left",
+            style=Style.META,
+        )
+        mic_hint.grid(row=3, column=1, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
+        self._mic_rows = [mic_label, mic_row, folder_label, folder_row, mic_hint]
+        for widget in self._mic_rows:
+            widget.grid_remove()
 
         model_values = (
             list(self._bundled_models) if self._bundled_models else list(MODEL_SIZES)
         )
         ttk.Label(settings, text="Model", style=Style.FIELD_LABEL).grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=4
+            row=4, column=0, sticky="w", padx=(0, 8), pady=4
         )
         # Pick-only wherever models are bundled, and always in a shipped copy:
         # a typed name the bundle does not hold could only be downloaded.
@@ -153,48 +287,48 @@ class LiveTab:
             values=model_values,
             width=18,
             state="readonly" if locked else "normal",
-        ).grid(row=3, column=1, sticky="w", pady=4)
+        ).grid(row=4, column=1, sticky="w", pady=4)
         ttk.Label(
             settings,
             text="Use a small model (base.en / small.en) so it keeps up with live.",
             style=Style.META,
-        ).grid(row=4, column=1, columnspan=2, sticky="w")
+        ).grid(row=5, column=1, columnspan=2, sticky="w")
 
         ttk.Label(settings, text="Language", style=Style.FIELD_LABEL).grid(
-            row=5, column=0, sticky="w", padx=(0, 8), pady=4
+            row=6, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Combobox(
             settings,
             textvariable=self.language_var,
             values=_LANGUAGES,
             width=10,
-        ).grid(row=5, column=1, sticky="w", pady=4)
+        ).grid(row=6, column=1, sticky="w", pady=4)
 
         ttk.Label(
             settings, text="Chunk length (seconds)", style=Style.FIELD_LABEL
-        ).grid(row=6, column=0, sticky="w", padx=(0, 8), pady=4)
+        ).grid(row=7, column=0, sticky="w", padx=(0, 8), pady=4)
         ttk.Entry(settings, textvariable=self.segment_var, width=8).grid(
-            row=6, column=1, sticky="w", pady=4
+            row=7, column=1, sticky="w", pady=4
         )
         ttk.Label(
             settings,
             text="Shorter = more live but choppier; longer = smoother but more lag.",
             style=Style.META,
-        ).grid(row=7, column=1, columnspan=2, sticky="w")
+        ).grid(row=8, column=1, columnspan=2, sticky="w")
 
         ttk.Checkbutton(
             settings,
             text="Skip silence",
             variable=self.vad_var,
             style=Style.CHECK,
-        ).grid(row=8, column=1, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=9, column=1, columnspan=2, sticky="w", pady=(4, 0))
 
         if diarization_available():
-            self._build_speaker_rows(settings, row=9)
+            self._build_speaker_rows(settings, row=10)
 
         # Optional: append the live transcript to a file as it comes in.
         save_row = ttk.Frame(settings, style=Style.CARD_INNER)
-        save_row.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        save_row.grid(row=14, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         save_row.columnconfigure(1, weight=1)
         ttk.Checkbutton(
             save_row,
@@ -222,9 +356,14 @@ class LiveTab:
             controls, "Test connection", self._test_connection
         )
         self.test_button.pack(side="left", padx=(SPACE_SM, 0))
-        ttk.Label(
+        # Shown only while a microphone is being recorded.
+        self.recording_label = ttk.Label(
+            container, textvariable=self.recording_var, style=Style.RECORDING
+        )
+        self.status_label = ttk.Label(
             container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
-        ).pack(anchor="w", pady=(SPACE_SM, 0))
+        )
+        self.status_label.pack(anchor="w", pady=(SPACE_SM, 0))
 
         # --- Live transcript ----------------------------------------------
         # Watching a feed come in is the case for a second screen even more
@@ -295,6 +434,119 @@ class LiveTab:
             style=Style.META,
         ).grid(row=row + 3, column=1, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
 
+    # -- Source: a stream or a microphone ------------------------------------
+
+    @property
+    def microphone_chosen(self) -> bool:
+        return self.source_kind_var.get() == "microphone"
+
+    def _show_source_kind(self) -> None:
+        microphone = self.microphone_chosen
+        for widget in self._stream_rows:
+            if microphone:
+                widget.grid_remove()
+            else:
+                widget.grid()
+        for widget in self._mic_rows:
+            if microphone:
+                widget.grid()
+            else:
+                widget.grid_remove()
+        if microphone:
+            self.test_button.pack_forget()
+            if not self._mics_listed:
+                self._refresh_microphones()
+        else:
+            self.test_button.pack(
+                side="left", padx=(SPACE_SM, 0), after=self.stop_button
+            )
+
+    def _refresh_microphones(self) -> None:
+        """Ask ffmpeg what is plugged in, off the UI thread."""
+        ffmpeg = find_ffmpeg()
+        if ffmpeg is None:
+            self.status_var.set("ffmpeg was not found, so microphones can't be listed.")
+            return
+        self.refresh_button.configure(state="disabled")
+        self.status_var.set("Looking for microphones…")
+
+        def _worker() -> None:
+            problem: Optional[str] = None
+            try:
+                found = list_microphones(ffmpeg)
+            except MicrophoneError as exc:
+                found, problem = [], str(exc)
+            self.root.after(0, lambda: self._show_microphones(found, problem))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _show_microphones(
+        self, found: List[Microphone], problem: Optional[str] = None
+    ) -> None:
+        self._mics = found
+        self._mics_listed = True
+        if self._live is None:
+            self.refresh_button.configure(state="normal")
+        names = [mic.name for mic in found]
+        self.mic_combo.configure(values=names)
+        if self.mic_var.get() not in names:
+            self.mic_var.set(names[0] if names else "")
+        if problem:
+            self.status_var.set(problem)
+        elif not names:
+            self.status_var.set("No microphone found. Plug one in, then press Refresh.")
+        else:
+            self.status_var.set(
+                "Found 1 microphone."
+                if len(names) == 1
+                else f"Found {len(names)} microphones."
+            )
+
+    def _choose_record_dir(self) -> None:
+        folder = filedialog.askdirectory(
+            title="Keep microphone recordings in",
+            initialdir=self.record_dir_var.get() or str(Path.home()),
+            parent=active_window(self.root),
+        )
+        if folder:
+            self.record_dir_var.set(folder)
+
+    def _set_source_locked(self, locked: bool) -> None:
+        """While a session runs its source can't change under it."""
+        state = "disabled" if locked else "normal"
+        for button in self._kind_buttons:
+            button.configure(state=state)
+        self.mic_combo.configure(state="disabled" if locked else "readonly")
+        for widget in (
+            self.refresh_button,
+            self.record_dir_entry,
+            self.record_dir_button,
+        ):
+            widget.configure(state=state)
+
+    def _tick(self) -> None:
+        """Keep the recording line true: device and time, or that it ended."""
+        if self._tick_job is not None:
+            self.root.after_cancel(self._tick_job)
+            self._tick_job = None
+        capture, live = self._capture, self._live
+        if capture is None:
+            self.recording_var.set("")
+            self.recording_label.pack_forget()
+            return
+        if live is not None and not live.running:
+            self.recording_var.set(
+                "\u25a0 Recording ended: the microphone closed. Press Stop to finish."
+            )
+            return
+        seconds = int((datetime.now().astimezone() - capture.started).total_seconds())
+        minutes, secs = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        self.recording_var.set(
+            f"\u25cf Recording from {capture.device}   {hours}:{minutes:02d}:{secs:02d}"
+        )
+        self._tick_job = self.root.after(1000, self._tick)
+
     def _popout_failed(self, detail: str) -> None:
         """Tk refused to give the panel a window. Say so where the eye is."""
         self.status_var.set(f"Could not move the live transcript window: {detail}")
@@ -350,7 +602,15 @@ class LiveTab:
 
     def _start(self) -> None:
         source = self.source_var.get().strip()
-        if not source:
+        mic: Optional[Microphone] = None
+        if self.microphone_chosen:
+            mic = next((m for m in self._mics if m.name == self.mic_var.get()), None)
+            if mic is None:
+                self.status_var.set(
+                    "Pick a microphone first. Press Refresh to look again."
+                )
+                return
+        elif not source:
             self.status_var.set("Enter a stream URL first.")
             return
         language = self.language_var.get().strip()
@@ -371,6 +631,24 @@ class LiveTab:
                 self.status_var.set(
                     "People speaking should be a number from 1 to "
                     f"{speaker_count.MAX_SPEAKERS}, or empty to work it out."
+                )
+                return
+
+        # A microphone is always recorded: make room for it before anything
+        # else is opened, so a folder that can't be used stops nothing midway.
+        started = datetime.now().astimezone()
+        record_to: Optional[Path] = None
+        if mic is not None:
+            folder = self.record_dir_var.get().strip()
+            if not folder:
+                self.status_var.set("Choose a folder to keep the recording in.")
+                return
+            try:
+                Path(folder).mkdir(parents=True, exist_ok=True)
+                record_to = recording_path(folder, started)
+            except OSError as exc:
+                self.status_var.set(
+                    f"The recording folder can't be used: {friendly_error(exc)}"
                 )
                 return
 
@@ -421,7 +699,13 @@ class LiveTab:
             vad_filter=self.vad_var.get(),
             listen=self.listen_var.get(),
             speakers=reviewer,
+            input_args=mic.input_args if mic is not None else None,
+            record_to=record_to,
+            watch_silence=mic is not None,
         )
+        if mic is not None and record_to is not None:
+            # Before start: ffmpeg's first complaint is about this microphone.
+            self._capture = Capture(mic.name, started, record_to, self.model_var.get())
         try:
             self._live.start(
                 on_text=self._on_text,
@@ -432,6 +716,7 @@ class LiveTab:
             self.status_var.set(friendly_error(exc))
             self._close_save_fh()
             self._live = None
+            self._capture = None
             if reviewer is not None:
                 reviewer.cancel()
                 self._reviewer = None
@@ -439,7 +724,14 @@ class LiveTab:
         self.start_button.configure(state="disabled")
         self.test_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+        self._set_source_locked(True)
+        self._stopped_note = ""
         self.status_var.set("Listening…")
+        if self._capture is not None:
+            self.recording_label.pack(
+                anchor="w", pady=(SPACE_SM, 0), before=self.status_label
+            )
+            self._tick()
 
     def _stop(self) -> None:
         # stop() blocks (it joins the ffmpeg process + threads), so run it off the
@@ -449,26 +741,32 @@ class LiveTab:
             return
         self.stop_button.configure(state="disabled")
         self.status_var.set("Stopping…")
+        capture = self._capture
 
         def _worker() -> None:
+            note = ""
             try:
                 live.stop()
             finally:
-                self.root.after(0, self._on_stopped)
+                # Hashing a long recording takes a moment: not on the UI thread.
+                if capture is not None:
+                    note = finish_capture(capture)
+                self.root.after(0, lambda: self._on_stopped(note))
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_stopped(self) -> None:
+    def _on_stopped(self, note: str = "") -> None:
         self._live = None
+        self._capture = None
+        self._stopped_note = note
+        self._tick()
         self._close_save_fh()
+        self._set_source_locked(False)
         self.start_button.configure(state="normal")
         self.test_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
-        self.status_var.set(
-            "Stopped. Checking the speakers once more…"
-            if self._reviewer is not None
-            else "Stopped."
-        )
+        speakers = " Checking the speakers once more…" if self._reviewer else ""
+        self.status_var.set(" ".join(filter(None, ["Stopped.", note])) + speakers)
 
     # -- Callbacks (from background threads) -------------------------------
 
@@ -488,7 +786,9 @@ class LiveTab:
         self.root.after(0, lambda: self.status_var.set(message))
 
     def _on_error(self, exc: Exception) -> None:
-        self.root.after(0, lambda: self.status_var.set(friendly_error(exc)))
+        explained = explain_capture_error(str(exc)) if self._capture else None
+        message = explained or friendly_error(exc)
+        self.root.after(0, lambda: self.status_var.set(message))
 
     def _on_speaker_error(self, exc: Exception) -> None:
         message = (
@@ -504,7 +804,12 @@ class LiveTab:
             if reviewer is not None and reviewer is self._reviewer:
                 self._reviewer = None
                 if self._live is None:
-                    self.status_var.set("Stopped. Speakers checked to the end.")
+                    said = [
+                        "Stopped.",
+                        self._stopped_note,
+                        "Speakers checked to the end.",
+                    ]
+                    self.status_var.set(" ".join(filter(None, said)))
 
         self.root.after(0, _done)
 
@@ -585,6 +890,12 @@ class LiveTab:
                 live.stop()
             except Exception:  # noqa: BLE001 - never block closing
                 pass
+        if self._capture is not None:
+            try:
+                finish_capture(self._capture)  # the record, even on the way out
+            except Exception:  # noqa: BLE001 - never block closing
+                pass
+            self._capture = None
         if self._reviewer is not None:
             self._reviewer.cancel()
         self._close_save_fh()

@@ -1,4 +1,4 @@
-"""Near-live transcription of a stream (RTMP/UDP/HTTP/device/file) via ffmpeg.
+"""Near-live transcription of a stream or a microphone, via ffmpeg.
 
 faster-whisper is not a streaming recogniser, so this does *chunked* near-live
 transcription: ffmpeg reads the incoming stream and splits its audio into short
@@ -6,6 +6,10 @@ fixed-length WAV segments; each finished segment is transcribed with
 :func:`whispers.transcription.transcribe_audio` and appended. End-to-end latency is
 roughly one segment length plus the model's inference time, so a small model
 (``base.en`` / ``small.en``) on CPU stays a few seconds behind live.
+
+A microphone (see :mod:`whispers.microphone`) is opened by the same ffmpeg,
+which also writes everything it hears to a recording file as a second output:
+the live chunks are transcribed and deleted, the recording is kept.
 
 The engine runs on background threads and reports results through callbacks, so a
 GUI can start/stop it and update a transcript as text arrives. It has no GUI or
@@ -17,9 +21,16 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import threading
+import wave
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Union
 
+from .microphone import (
+    SILENT_MESSAGE,
+    SILENT_WARNING_SECONDS,
+    is_digital_silence,
+    recording_args,
+)
 from .resources import find_ffmpeg
 from .transcription import Segment, carries_context, transcribe_audio
 
@@ -102,6 +113,17 @@ class LiveTranscriber:
         A :class:`whispers.live_speakers.SpeakerReviewer` to hand each chunk's
         audio and timed words to, so it can work out who is speaking behind the
         words. Told when the stream ends; ``None`` for words only.
+    input_args
+        ffmpeg's input options in place of ``-i source``: how a microphone is
+        opened (:class:`whispers.microphone.Microphone`). ``source`` and
+        ``listen`` are then unused.
+    record_to
+        A new file to keep everything heard in, as it arrives. ffmpeg will not
+        write over a file that already exists.
+    watch_silence
+        Say so (through ``on_status``) when the first
+        :data:`~whispers.microphone.SILENT_WARNING_SECONDS` are exact zeros, as
+        a blocked or muted microphone gives.
     """
 
     def __init__(
@@ -114,8 +136,14 @@ class LiveTranscriber:
         vad_filter: bool = True,
         listen: bool = False,
         speakers: "Optional[SpeakerReviewer]" = None,
+        input_args: Optional[Sequence[str]] = None,
+        record_to: Optional[PathLike] = None,
+        watch_silence: bool = False,
     ) -> None:
         self._source = source
+        self._input_args = list(input_args) if input_args is not None else None
+        self._record_to = Path(record_to) if record_to is not None else None
+        self._watch_silence = watch_silence
         self._model_size = model_size
         self._language = language
         self._segment_seconds = max(2, int(segment_seconds))
@@ -153,11 +181,15 @@ class LiveTranscriber:
         pattern = str(self._tmpdir / "seg_%05d.wav")
 
         args: List[str] = [str(ffmpeg), "-hide_banner", "-loglevel", "error"]
-        if self._listen:
-            args += ["-listen", "1"]
+        if self._record_to is not None:
+            args.append("-n")  # never write over an existing recording
+        if self._input_args is not None:
+            args += self._input_args
+        else:
+            if self._listen:
+                args += ["-listen", "1"]
+            args += ["-i", self._source]
         args += [
-            "-i",
-            self._source,
             "-vn",  # ignore video (GoPro sends both); we only need audio
             "-ac",
             "1",
@@ -171,8 +203,14 @@ class LiveTranscriber:
             "1",
             pattern,
         ]
+        if self._record_to is not None:
+            args += recording_args(self._record_to)
         if on_status is not None:
-            on_status("Connecting to the stream…")
+            on_status(
+                "Opening the microphone…"
+                if self._input_args is not None
+                else "Connecting to the stream…"
+            )
         try:
             self._proc = subprocess.Popen(
                 args,
@@ -249,6 +287,8 @@ class LiveTranscriber:
         context = ""
         announced = False
         error_reported = False
+        # Seconds of exact zeros so far; None once anything else is heard.
+        silent: Optional[float] = 0.0 if self._watch_silence else None
         try:
             while True:
                 running = self._proc.poll() is None
@@ -282,6 +322,12 @@ class LiveTranscriber:
                     if text:
                         context = (context + " " + text)[-_CONTEXT_CHARS:]
                         on_text(text)
+                    if silent is not None:
+                        silent = _still_silent(segment, silent)
+                        if silent is not None and silent >= SILENT_WARNING_SECONDS:
+                            silent = None
+                            if on_status is not None:
+                                on_status(SILENT_MESSAGE)
                     try:
                         segment.unlink()
                     except OSError:
@@ -331,6 +377,11 @@ class LiveTranscriber:
         )
         return result.text.strip(), list(result.segments)
 
+    @property
+    def record_to(self) -> Optional[Path]:
+        """The recording being kept, if any."""
+        return self._record_to
+
     def _cleanup_tmpdir(self) -> None:
         if self._tmpdir is None:
             return
@@ -344,3 +395,14 @@ class LiveTranscriber:
         except OSError:
             pass
         self._tmpdir = None
+
+
+def _still_silent(segment: Path, so_far: float) -> Optional[float]:
+    """Seconds of exact zeros including ``segment``; None once it holds sound."""
+    try:
+        if not is_digital_silence(segment):
+            return None
+        with wave.open(str(segment), "rb") as chunk:
+            return so_far + chunk.getnframes() / chunk.getframerate()
+    except (OSError, EOFError, wave.Error, ZeroDivisionError):
+        return so_far  # an unreadable chunk says nothing either way

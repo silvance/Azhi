@@ -401,11 +401,11 @@ separation are cached in the output folder (text and timings, never audio), so
 [`docs/test-set.md`](docs/test-set.md) is the guide for building and labelling a
 test set.
 
-### Live (stream) transcription
+### Live transcription (a stream or a microphone)
 
 The **Live** tab transcribes an incoming stream in near-real-time — e.g. a GoPro
-pushing **RTMP** to this PC during a training session. It appears whenever ffmpeg
-is available (always, in a bundle).
+pushing **RTMP** to this PC during a training session — or a microphone plugged
+into this PC. It appears whenever ffmpeg is available (always, in a bundle).
 
 It is *chunked* near-live, not true streaming: ffmpeg reads the stream and splits
 its audio into short fixed-length segments, and each finished segment is
@@ -426,6 +426,21 @@ keep up on CPU — a big model will fall behind.
   setting up.
 - **Start** / **Stop** control capture. Cancel on another page does not stop
   it: each page's Cancel stops only that page's work.
+
+**A microphone on this PC** (Windows through DirectShow, Linux through ALSA,
+both in the ffmpeg a bundle already ships; no other library) is the other
+source. **Refresh** lists what is plugged in. Its audio exists nowhere else, so
+the whole of it is always kept: ffmpeg writes it, at the device's own rate and
+channels, to a WAV in **Keep recordings in** (`Documents\Whispers recordings`
+by default), beside the live chunks it transcribes. On **Stop**, a record is
+written next to it (`<recording>.wav.capture.json`): the device, start and stop
+times, the transcription model, the file's size and SHA-256, and the rate,
+channels and length read back from the file. A red line on the page names the
+device and the time for as long as it records. A microphone that sends nothing
+but exact zeros for ten seconds (muted, or blocked by Windows' privacy
+settings) is reported in the status line; the recording carries on. Nothing is
+sent anywhere, and no network is used. For a careful transcript, open the kept
+recording on the Transcribe page afterwards.
 
 Accuracy on a live feed is bounded by the audio: room noise, distance from the
 mic and overlapping speech all hurt more than on a clean recording. For a room,
