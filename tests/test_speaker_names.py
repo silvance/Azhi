@@ -119,3 +119,16 @@ def test_segments_with_no_speaker_are_not_speakers():
 def test_names_are_trimmed():
     names = preset_names(["SPEAKER_00"], {}, ["  Smith  "])
     assert names == {"SPEAKER_00": "Smith"}
+
+
+def test_a_speaker_is_shown_by_name_or_by_number():
+    from whispers.speaker_names import shown_name
+
+    assert shown_name("SPEAKER_00") == "Speaker 1"
+    assert shown_name("SPEAKER_11", {}) == "Speaker 12"
+    assert shown_name("SPEAKER_01", {"SPEAKER_01": "Anna"}) == "Anna"
+    assert shown_name("SPEAKER_01", {"SPEAKER_01": ""}) == "Speaker 2"
+    assert shown_name(None) == "Unknown speaker"
+    assert shown_name("UNKNOWN") == "Unknown speaker"
+    # Not a numbered cluster: shown as it is.
+    assert shown_name("voice::Anna") == "voice::Anna"

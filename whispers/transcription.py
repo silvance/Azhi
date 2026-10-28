@@ -344,10 +344,9 @@ class TranscriptionResult:
     def _speaker_label(
         self, speaker: Optional[str], speaker_names: Optional[Dict[str, str]]
     ) -> str:
-        label = speaker or "UNKNOWN"
-        if speaker_names:
-            return speaker_names.get(label, label)
-        return label
+        from .speaker_names import shown_name
+
+        return shown_name(speaker, speaker_names)
 
     def to_txt(
         self,

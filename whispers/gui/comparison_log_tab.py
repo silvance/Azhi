@@ -65,7 +65,7 @@ class ComparisonLogTab:
         # Subject ids that still have a profile, so a record about a subject
         # since deleted can say so rather than look like a live one.
         self._live_subjects: set = set()
-        self.status_var = tk.StringVar(value="Idle")
+        self.status_var = tk.StringVar(value="")
         self.subject_var = tk.StringVar(value=ALL_SUBJECTS)
         self.recording_var = tk.StringVar(value=ALL_RECORDINGS)
         self._build()
@@ -363,7 +363,8 @@ class ComparisonLogTab:
         self._select_none()
         total = len(self._records)
         if not total:
-            self.status_var.set("No comparisons recorded yet.")
+            # The empty card above already says so.
+            self.status_var.set("")
         elif len(self._shown) == total:
             self.status_var.set(f"{total} comparison(s) recorded.")
         else:
@@ -414,7 +415,7 @@ class ComparisonLogTab:
         self._rows["questioned"].set(f"{record.questioned_seconds:.1f} sec{windows}")
         selection = record.questioned_selection or "not recorded"
         if record.questioned_spans:
-            selection += f" — {_ranges(record.questioned_spans)}"
+            selection += f": {_ranges(record.questioned_spans)}"
         self._rows["selection"].set(selection)
         self._rows["recording"].set(record.recording_label)
         self._rows["sha"].set(record.questioned_sha256 or "not recorded")
@@ -613,8 +614,8 @@ def _where(record: ComparisonRecord) -> "Tuple[str, str]":
     if present:
         return record.questioned_path, Style.BODY
     return (
-        f"{record.questioned_path} — not at this location now; the record of "
-        "the comparison is unaffected",
+        f"{record.questioned_path} (not at this location now; the record of "
+        "the comparison is unaffected)",
         Style.WARNING,
     )
 

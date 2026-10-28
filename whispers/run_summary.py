@@ -44,7 +44,7 @@ def much_was_skipped(kept_fraction: "Optional[float]") -> bool:
 def per_file_note(run: SkippedRun) -> str:
     """The Status line for one recording, named - a batch needs the name."""
     return (
-        f"{run.name}: skip silence passed over {run.minutes:.1f} min — "
+        f"{run.name}: skip silence passed over {run.minutes:.1f} min; "
         f"only {run.kept * 100:.0f}% of it was transcribed."
     )
 
@@ -73,7 +73,7 @@ def completion(
         return _shortfall(done, total, missing, failed, unsaved, saved)
     if not skipped:
         message = (
-            f"Transcription complete — {done} recording(s)."
+            f"Transcription complete: {done} recording(s)."
             if total > 1
             else "Transcription complete."
         )

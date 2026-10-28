@@ -107,7 +107,7 @@ def test_report_includes_transcript_with_timestamps_and_speakers():
         provenance=_provenance(),
     )
     assert "[00:00-00:06]" in text
-    assert "[SPEAKER_00] hello" in text
+    assert "[Speaker 1] hello" in text
     assert "[Alpha] there" in text
     assert "Detected language: en" in text
 

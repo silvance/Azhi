@@ -53,18 +53,16 @@ SUFFIX = ".cleaned.wav"
 
 # Said wherever the option is offered. The second sentence is the important one.
 HELPS_WITH = (
-    "Steady background noise: a bad line, hum, hiss, traffic, engines, air "
+    "Helps with steady noise: a bad line, hum, hiss, traffic, engines, air "
     "conditioning, machinery."
 )
 DOES_NOT = (
-    "It does not separate one conversation from another. In a bar or a crowd "
-    "the background is other people talking, and on that it does nothing and "
-    "can make the recording worse. It will not rescue speech you cannot "
-    "already hear."
+    "It does not separate one conversation from another: in a bar or a crowd "
+    "it does nothing, and can make things worse. It will not rescue speech you "
+    "cannot already hear."
 )
 NOT_FOR_COMPARISON = (
-    "A cleaned copy is for listening and reading, never for voice comparison "
-    "or building a profile: cleaning alters the detail a voiceprint measures."
+    "Not for voice comparison or profiles: cleaning alters what a voiceprint measures."
 )
 
 
@@ -118,7 +116,7 @@ class EnhancementReport:
     def summary(self) -> str:
         """One line for the status log, claiming nothing it cannot support."""
         return (
-            f"Cleaned copy written — it removed {self.removed_percent:.0f}% of "
+            f"Cleaned copy written: it removed {self.removed_percent:.0f}% of "
             "the recording's energy. Listen to both before relying on either: "
             "on a crowded recording what it removes is other people talking, "
             "and taking that out can take the conversation with it."

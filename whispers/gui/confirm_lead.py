@@ -56,7 +56,7 @@ def ask_confirm_lead(
         frame,
         text=(
             f"This speaker sounds like {name}, a voice this profile has learned. "
-            "That is a lead from voice similarity — not an identification."
+            "That is a lead from voice similarity, not an identification."
         ),
         style=Style.MUTED,
         wraplength=_WRAP,

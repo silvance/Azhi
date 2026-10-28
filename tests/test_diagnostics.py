@@ -203,7 +203,7 @@ def test_report_names_the_missing_pieces_when_not_ready(monkeypatch, tmp_path):
     monkeypatch.setattr(diagnostics.resources, "find_ffmpeg", lambda: None)
     report = diagnostics.format_report()
     assert "NOT READY" in report
-    assert "Missing: " in report
+    assert "Not working in this copy:" in report
     assert "Can read audio/video (ffmpeg)" in report
 
 

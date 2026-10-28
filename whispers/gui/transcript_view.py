@@ -19,7 +19,7 @@ from ..editing import (
     split_segment_on_span,
     split_segment_on_word,
 )
-from ..speaker_names import bare_name, is_lead
+from ..speaker_names import bare_name, is_lead, shown_name
 from ..transcription import (
     TranscriptionResult,
     is_low_confidence_segment,
@@ -236,7 +236,7 @@ class TranscriptView:
                 bound: set[str] = set()
                 for index, segment in enumerate(result.segments):
                     sid = segment.speaker or "UNKNOWN"
-                    name = self._speaker_names.get(sid, sid)
+                    name = shown_name(sid, self._speaker_names)
                     spk_tag = f"spk::{sid}"
                     line_tag = f"line::{index}"
                     if sid not in bound:
@@ -339,7 +339,7 @@ class TranscriptView:
             on_compare = self._on_compare
             if on_compare is not None and result.segments[index].speaker:
                 # Reads the transcript, changes nothing: offered mid-run too.
-                shown = self._speaker_names.get(current, current)
+                shown = shown_name(current, self._speaker_names)
                 menu.add_command(
                     label=f"Compare \u2018{shown}\u2019 to speaker profiles…",
                     command=lambda: on_compare(current),
@@ -352,14 +352,14 @@ class TranscriptView:
             # Reassign just this line to the correct speaker - the fix for the
             # boundary/overlap errors diarization can't get right on its own.
             for sid in self._ordered_speaker_ids():
-                name = self._speaker_names.get(sid, sid)
+                name = shown_name(sid, self._speaker_names)
                 mark = "  ✓" if sid == current else ""
                 menu.add_command(
                     label=f"This line is {name}{mark}",
                     command=self._reassign_command(index, sid),
                 )
             menu.add_separator()
-            cur_name = self._speaker_names.get(current, current)
+            cur_name = shown_name(current, self._speaker_names)
             menu.add_command(
                 label=(
                     f"Confirm or correct \u2018{bare_name(cur_name)}\u2019…"
@@ -500,7 +500,7 @@ class TranscriptView:
             for sid in self._ordered_speaker_ids():
                 if sid == current:
                     continue
-                name = self._speaker_names.get(sid, sid)
+                name = shown_name(sid, self._speaker_names)
                 menu.add_command(
                     label=f"Move “{word_text}” → {name}",
                     command=self._word_command(seg_index, word_index, sid, False),
@@ -511,7 +511,7 @@ class TranscriptView:
             for sid in self._ordered_speaker_ids():
                 if sid == current:
                     continue
-                name = self._speaker_names.get(sid, sid)
+                name = shown_name(sid, self._speaker_names)
                 menu.add_command(
                     label=f"From “{word_text}” onward → {name}",
                     command=self._word_command(seg_index, word_index, sid, True),
@@ -610,7 +610,7 @@ class TranscriptView:
             return
         menu = tk.Menu(self.root, tearoff=0)
         for sid in targets:
-            name = self._speaker_names.get(sid, sid)
+            name = shown_name(sid, self._speaker_names)
             menu.add_command(
                 label=f"Move selection → {name}",
                 command=self._span_command(seg_index, first_word, last_word, sid),
@@ -719,7 +719,7 @@ class TranscriptView:
     def _rename_speaker(self, speaker_id: str) -> None:
         if not self._editable:
             return
-        current = self._speaker_names.get(speaker_id, speaker_id)
+        current = shown_name(speaker_id, self._speaker_names)
         if is_lead(current):
             # A voice-similarity suggestion is confirmed in its own dialog, not
             # this rename box: confirming trains the profile, so it has to be

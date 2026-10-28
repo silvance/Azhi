@@ -22,7 +22,9 @@ from typing import List, Optional
 UNSET = "Choose…"
 
 # The explicit "work it out" answer. A real choice, not the absence of one.
-UNKNOWN = "Not sure — work it out"
+UNKNOWN = "Not sure (work it out)"
+# How earlier builds wrote it, in settings and operation profiles.
+OLD_UNKNOWN = "Not sure — work it out"
 
 # Above this, naming each speaker up front stops being how anyone works, and
 # the count is better left to the engine.
@@ -52,6 +54,11 @@ def from_label(label: str) -> "Optional[int]":
 
 def _count_label(count: int) -> str:
     return "1 person" if count == 1 else f"{count} people"
+
+
+def canonical(label: str) -> str:
+    """A stored answer in today's wording (earlier builds wrote "not sure" so)."""
+    return UNKNOWN if label == OLD_UNKNOWN else label
 
 
 def is_answered(label: str) -> bool:

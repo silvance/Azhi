@@ -164,7 +164,7 @@ class SpeakerCompareTab:
         self.mode_var = tk.StringVar(value=MODE_WHOLE)
         self.speakers_var = tk.StringVar(value=speaker_count.UNKNOWN)
         self.ranges_var = tk.StringVar(value="")
-        self.status_var = tk.StringVar(value="Idle")
+        self.status_var = tk.StringVar(value="Ready")
         self.allow_unverified_var = tk.BooleanVar(value=False)
 
         self._build()
@@ -287,8 +287,8 @@ class SpeakerCompareTab:
         # same check runs.
         self.questioned_var.trace_add("write", lambda *_: self._on_questioned_changed())
         for text, value in (
-            ("Only one person is speaking — use the whole recording", MODE_WHOLE),
-            ("Several people — separate them and let me pick", MODE_DIARIZE),
+            ("Only one person is speaking: use the whole recording", MODE_WHOLE),
+            ("Several people: separate them and let me pick", MODE_DIARIZE),
             ("Only these parts of the recording", MODE_RANGES),
         ):
             ttk.Radiobutton(
@@ -543,7 +543,7 @@ class SpeakerCompareTab:
         thin = profile.total_reference_seconds < minimum
         self._reference_rows["speech"].set(
             f"{profile.total_reference_seconds:.1f} sec"
-            + (f"  —  less than the recommended {minimum:.0f} sec" if thin else ""),
+            + (f" (less than the recommended {minimum:.0f} sec)" if thin else ""),
             style_name=Style.WARNING if thin else Style.BODY,
         )
         self._reference_rows["samples"].set(str(summary["trusted_sample_count"]))
@@ -553,13 +553,12 @@ class SpeakerCompareTab:
             )
         else:
             self._reference_rows["model"].set(
-                "unknown (older profile) — a comparison needs explicit "
-                "confirmation under Advanced",
+                "unknown (older profile); comparing needs confirmation under Advanced",
                 style_name=Style.WARNING,
             )
         # Still maintained for anything that reads the plain string.
         self.reference_detail_var.set(
-            f"{profile.display_name} — {summary['trusted_sample_count']} trusted "
+            f"{profile.display_name}: {summary['trusted_sample_count']} trusted "
             f"samples, {profile.total_reference_seconds:.1f}s reference speech"
         )
 
@@ -1025,7 +1024,7 @@ class SpeakerCompareTab:
             return
         self._cancel_event.set()
         self._cancel_button.configure(state="disabled")
-        self.busy_var.set("Cancelling… (stops at the next step)")
+        self.busy_var.set("Cancelling…")
 
     def _check_cancel(self, message: str = "") -> None:
         """Progress that also stops the run when Cancel has been pressed."""

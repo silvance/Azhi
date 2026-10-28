@@ -140,7 +140,7 @@ def test_a_missing_file_outranks_a_silence_caveat():
 def test_a_run_with_nothing_missing_is_unaffected():
     assert completion(2, 2, [], []) == (
         "success",
-        "Transcription complete — 2 recording(s).",
+        "Transcription complete: 2 recording(s).",
     )
 
 
@@ -210,7 +210,7 @@ def test_a_failure_outranks_a_silence_caveat():
 def test_a_clean_batch_is_unaffected_by_the_new_argument():
     assert completion(3, 3, [], [], []) == (
         "success",
-        "Transcription complete — 3 recording(s).",
+        "Transcription complete: 3 recording(s).",
     )
 
 
@@ -278,5 +278,5 @@ def test_a_save_failure_and_a_transcription_failure_are_told_apart():
 def test_a_run_that_saved_everything_is_unaffected():
     assert completion(3, 3, [], [], [], [], 3) == (
         "success",
-        "Transcription complete — 3 recording(s).",
+        "Transcription complete: 3 recording(s).",
     )

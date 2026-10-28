@@ -85,9 +85,7 @@ def ask_save_speaker(
     ).pack(anchor="w", pady=(SPACE_XS, SPACE_LG))
 
     # -- Which speaker ----------------------------------------------------
-    speaker_labels = [
-        f"{name} — {_duration(secs)} of speech" for name, secs in speakers
-    ]
+    speaker_labels = [f"{name}: {_duration(secs)} of speech" for name, secs in speakers]
     speaker_var = tk.StringVar(value=speaker_labels[0])
     ttk.Label(frame, text="Speaker", style=Style.FIELD_LABEL).pack(anchor="w")
     ttk.Combobox(
@@ -141,10 +139,9 @@ def ask_save_speaker(
     ttk.Label(
         frame,
         text=(
-            "Samples added this way are marked pending review. Approve them on "
-            "the Speaker Profiles page before they are used as reference "
-            "material — a corrected label can still be wrong, and a wrong "
-            "sample would quietly distort every later comparison."
+            "Samples added this way wait for review: approve them on the "
+            "Speaker Profiles page before they are used. A corrected label can "
+            "still be wrong."
         ),
         style=Style.MUTED,
         wraplength=460,

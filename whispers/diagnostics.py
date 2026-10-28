@@ -384,7 +384,8 @@ def format_report(checks: "List[Check] | None" = None) -> str:
     lines = ["Whispers system status", "=" * 23, ""]
     lines.append("READY" if ready else "NOT READY")
     if blockers:
-        lines.append("Missing: " + ", ".join(blockers))
+        lines.append("Not working in this copy:")
+        lines += [f"  \u2717 {blocker}" for blocker in blockers]
     lines.append("")
 
     lines += ["Build", "-----"]

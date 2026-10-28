@@ -109,7 +109,7 @@ def test_detection_is_local_and_treats_any_failure_as_no_gpu(monkeypatch):
 
 
 def test_hardware_description_is_honest_either_way(no_gpu):
-    assert "CPU only" in describe_hardware()
+    assert "Processor only" in describe_hardware()
 
 
 def test_hardware_description_counts_devices(one_gpu, monkeypatch):
@@ -200,8 +200,8 @@ def test_a_cpu_only_build_does_not_even_look_for_a_card(cpu_only_build, monkeypa
 
 def test_the_hardware_line_blames_the_build_not_the_machine(cpu_only_build):
     text = describe_hardware()
-    assert "does not include GPU support" in text
-    assert "detected" not in text
+    assert "this copy has no graphics-card support" in text
+    assert "found" not in text
 
 
 def test_every_mode_a_cpu_only_build_offers_resolves(cpu_only_build):

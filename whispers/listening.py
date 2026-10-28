@@ -76,20 +76,16 @@ SUFFIX = ".listening.wav"
 
 # Said wherever the option is offered.
 HELPS_WITH = (
-    "Hum from mains power, low rumble, handling thumps, and recordings where "
-    "the person you want is much quieter than everything else. It also stops "
-    "sudden bangs being painful to listen to for an hour."
+    "Helps with mains hum, low rumble, handling thumps and a voice much "
+    "quieter than everything else, and tames sudden bangs."
 )
 DOES_NOT = (
-    "It does not separate one conversation from another. In a bar or a crowd "
-    "the problem is other people talking, and this cannot touch that - it "
-    "turns the other voices up exactly as much as the one you want. It will "
-    "not rescue speech you cannot already hear."
+    "It does not separate one conversation from another, so it cannot help in "
+    "a bar or a crowd. It will not rescue speech you cannot already hear."
 )
 NOT_FOR_COMPARISON = (
-    "A listening copy is for listening and reading, never for voice comparison "
-    "or building a profile: it deliberately changes the balance of the voice, "
-    "which is part of what a voiceprint measures."
+    "Use it for listening, never for voice comparison or profiles: it changes "
+    "the balance of the voice."
 )
 
 # Processing strength. The names are what the operator sees.

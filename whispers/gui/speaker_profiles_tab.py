@@ -94,7 +94,7 @@ class SpeakerProfilesTab:
         # Set by the application: called when this page changes a subject, so
         # Compare and History reload rather than working from an old copy.
         self.on_profiles_changed: Optional[Callable[[], None]] = None
-        self.status_var = tk.StringVar(value="Idle")
+        self.status_var = tk.StringVar(value="")
         # One enrolment at a time, claimed on the UI thread before its worker
         # starts; Cancel sets the event, checked during speaker separation and
         # between measured stretches of audio.
@@ -376,7 +376,7 @@ class SpeakerProfilesTab:
         self._fact_rows["reference"].set(f"{profile.total_reference_seconds:.1f} sec")
         self._fact_rows["trusted"].set(str(summary["trusted_sample_count"]))
         self._fact_rows["pending"].set(
-            f"{pending} — review before they are used" if pending else "None",
+            f"{pending}, to review before they are used" if pending else "None",
             style_name=Style.WARNING if pending else Style.BODY,
         )
         self._fact_rows["sources"].set(
@@ -392,7 +392,7 @@ class SpeakerProfilesTab:
             # A profile that cannot prove which model made it is a real
             # limitation on any later comparison, so it is said plainly.
             self._fact_rows["model"].set(
-                "unknown — imported from an older format, so it cannot be "
+                "unknown: imported from an older format, so it cannot be "
                 "proven to match this build",
                 style_name=Style.WARNING,
             )
@@ -411,7 +411,7 @@ class SpeakerProfilesTab:
             elif outlier:
                 # Short enough for the column at 1366 wide; it was cut to
                 # "Needs review — unli…", the one state that most needs reading.
-                state, tags = "Unlike reference — review", ("outlier",)
+                state, tags = "Unlike reference: review", ("outlier",)
             else:
                 state, tags = "Needs review", ("pending",)
             self.sample_tree.insert(
@@ -707,7 +707,7 @@ class SpeakerProfilesTab:
             # it, whichever kind of processing produced the file.
             self._status(
                 f"That is a {kind}, not the recording. A reference voice must "
-                "be built from original audio — processing changes the detail "
+                "be built from original audio: processing changes the detail "
                 "a voiceprint measures."
             )
             return
@@ -752,7 +752,7 @@ class SpeakerProfilesTab:
             return
         self._cancel_event.set()
         self._cancel_button.configure(state="disabled")
-        self.status_var.set("Cancelling… (stops at the next step)")
+        self.status_var.set("Cancelling…")
 
     def _check_cancel(self, message: str = "") -> None:
         """Progress that also stops the enrolment when Cancel has been pressed."""
@@ -782,7 +782,7 @@ class SpeakerProfilesTab:
         ).pack(anchor="w", pady=(0, SPACE_SM))
         for text, value in (
             ("The whole recording is this subject", MODE_WHOLE),
-            ("Several people — separate speakers and let me pick", MODE_DIARIZE),
+            ("Several people: separate speakers and let me pick", MODE_DIARIZE),
             ("I'll give the time ranges", MODE_RANGES),
         ):
             ttk.Radiobutton(

@@ -123,9 +123,9 @@ def test_to_txt_with_speakers():
         ],
     )
     assert result.has_speakers
-    assert result.to_txt() == "[SPEAKER_00] hello\n[SPEAKER_01] world"
+    assert result.to_txt() == "[Speaker 1] hello\n[Speaker 2] world"
     # blank_lines puts an empty line between turns.
-    assert result.to_txt(blank_lines=True) == "[SPEAKER_00] hello\n\n[SPEAKER_01] world"
+    assert result.to_txt(blank_lines=True) == "[Speaker 1] hello\n\n[Speaker 2] world"
 
 
 def test_to_txt_blank_lines_without_speakers():
@@ -151,7 +151,7 @@ def test_to_srt_with_speakers():
         duration=1.0,
         segments=[Segment(start=0.0, end=1.0, text="hi", speaker="SPEAKER_02")],
     )
-    assert "[SPEAKER_02] hi" in result.to_srt()
+    assert "[Speaker 3] hi" in result.to_srt()
 
 
 def test_speaker_names_remap_txt_and_srt():
@@ -168,7 +168,7 @@ def test_speaker_names_remap_txt_and_srt():
     names = {"SPEAKER_00": "Xin"}
     txt = result.to_txt(names)
     assert "[Xin] hello" in txt
-    assert "[SPEAKER_01] world" in txt  # unmapped id falls through unchanged
+    assert "[Speaker 2] world" in txt  # unnamed: shown by its number
     assert "[Xin] hello" in result.to_srt(names)
 
 

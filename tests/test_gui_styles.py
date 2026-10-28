@@ -275,3 +275,23 @@ def test_a_method_saved_under_an_old_label_keeps_its_choice(app):
     assert page.engine_var.get() == "pyannote (strong on noisy audio)"
     page.apply_settings({"engine": "Auto (pyannote if available)"})
     assert page.engine_var.get() == "Auto (recommended)"
+
+
+def test_the_task_box_shows_words_and_runs_on_the_value(app):
+    page = app.transcribe
+    page.task_var.set("translate")
+    assert page.task_choice_var.get() == "Translate into English"
+    page.task_var.set("transcribe")
+    assert page.task_choice_var.get() == "Transcribe (keep the language)"
+
+
+def test_grouping_sensitivity_shows_only_where_it_does_something(app):
+    page = app.transcribe
+    page.num_speakers_var.set("")
+    page.engine_var.set("sherpa (lightest, for clean audio)")
+    assert page._sensitivity_row.winfo_manager() == "grid"
+    page.num_speakers_var.set("2")  # a count given: sherpa does not group
+    assert page._sensitivity_row.winfo_manager() == ""
+    page.num_speakers_var.set("")
+    page.engine_var.set("pyannote (strong on noisy audio)")
+    assert page._sensitivity_row.winfo_manager() == ""

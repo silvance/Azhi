@@ -74,7 +74,7 @@ def test_connection(
     except OSError as exc:
         return False, f"Couldn't run ffmpeg: {exc}"
     if result.returncode == 0:
-        return True, "Stream reached — audio is coming through."
+        return True, "Stream reached: audio is coming through."
     lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
     detail = lines[-1] if lines else f"ffmpeg exited with code {result.returncode}."
     return False, f"Couldn't read the stream: {detail}"
