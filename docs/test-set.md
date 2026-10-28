@@ -104,7 +104,7 @@ Options:
 | Option | What it does |
 |---|---|
 | `--speakers unknown` | Let the tool work out how many people there are, as *Not sure — work it out* does. |
-| `--engine pyannote`, `--engine sherpa` or `--engine nemotron` | Score one speaker-separation method rather than the one *Auto* would pick. Nemotron is only in copies built with it. |
+| `--engine nemotron`, `--engine pyannote` or `--engine sherpa` | Score one speaker-separation method rather than the one *Auto* would pick (Nemotron, in copies that include it). |
 | `--model small` | Score a different transcription model (default: `medium`). |
 | `--language ru` | The recordings' language, if you would set it in the application. |
 | `--rescore` | Score the saved results again without transcribing. For developers changing how words are given to speakers. |

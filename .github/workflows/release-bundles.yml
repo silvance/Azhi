@@ -33,10 +33,10 @@ on:
         options: [both, pyannote, sherpa]
         default: both
       nemotron:
-        description: "Also bundle NVIDIA Nemotron 3 Diarization (+ NeMo-Speech.cpp runtime, ~125 MB) as a trial speaker-separation Method. The model is licensed OpenMDW-1.1: have it reviewed before distributing a bundle that carries it."
+        description: "Bundle NVIDIA Nemotron 3 Diarization (+ NeMo-Speech.cpp runtime, ~125 MB), the default speaker-separation Method where included. The model is licensed OpenMDW-1.1: have it reviewed before distributing a bundle that carries it."
         type: choice
-        options: ["no", "yes"]
-        default: "no"
+        options: ["yes", "no"]
+        default: "yes"
       alignment:
         description: "Also bundle the English word-timing model (wav2vec2-base-960h, Apache-2.0, ~380 MB) as a trial: it re-times English words before they are given to speakers, so one-word replies land on the right person more often."
         type: choice
@@ -90,9 +90,9 @@ jobs:
       # have no inputs, so they get both. "!= 'sherpa'" means pyannote-or-both;
       # "!= 'pyannote'" means sherpa-or-both.
       DIARIZER: ${{ github.event.inputs.diarizer || 'both' }}
-      # Trial end-to-end diarizer, never bundled unless asked for (licence
-      # review pending); tag builds have no inputs, so they leave it out.
-      NEMOTRON: ${{ github.event.inputs.nemotron || 'no' }}
+      # End-to-end diarizer, Auto's first choice where bundled; tag builds have
+      # no inputs, so they carry it too. Licence: OpenMDW-1.1 (see notices).
+      NEMOTRON: ${{ github.event.inputs.nemotron || 'yes' }}
       # Trial English word re-timing (~380 MB); tag builds leave it out.
       ALIGNMENT: ${{ github.event.inputs.alignment || 'no' }}
       # Speaker-embedding model for speaker profiles + comparison (and sherpa

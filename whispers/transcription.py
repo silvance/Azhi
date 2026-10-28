@@ -173,6 +173,52 @@ def carries_context(model: str) -> bool:
     return "large-v3" not in name and "turbo" not in name
 
 
+# Whisper writes the sentence a speaker meant: the false starts, repeats and
+# "um"s on the way to it are mostly left out, as they were in the subtitles it
+# learned from. It copies the style of the text it is given before it starts,
+# so a few words written verbatim ahead of each stretch keep them in. This is
+# the example OpenAI gives for that purpose.
+VERBATIM_EXAMPLE = (
+    "Umm, let me think like, hmm... Okay, here's what I'm, like, thinking."
+)
+# A line this many words long or more that is nothing but a piece of the
+# example is the example coming back out (Whisper does this over silence and
+# noise), not speech: it is removed and counted. Shorter pieces ("Okay.",
+# "let me think") are things people say.
+LEAKED_EXAMPLE_WORDS = 5
+
+
+def _plain_words(text: str) -> List[str]:
+    return "".join(
+        c.lower() if c.isalnum() or c.isspace() else " " for c in text.replace("'", "")
+    ).split()
+
+
+def is_leaked_example(text: str) -> bool:
+    """Whether a transcribed line is only the verbatim example, repeated."""
+    words = _plain_words(text)
+    if len(words) < LEAKED_EXAMPLE_WORDS:
+        return False
+    example = _plain_words(VERBATIM_EXAMPLE)
+    return any(
+        example[i : i + len(words)] == words
+        for i in range(len(example) - len(words) + 1)
+    )
+
+
+def known_english(language: Optional[str], model: str) -> Optional[bool]:
+    """Whether the speech is English, as far as is known before listening.
+
+    True for a language set to English or an English-only (.en) model; False
+    for another language set; None when it is left to detection.
+    """
+    if language:
+        return language.lower().split("-")[0] == "en"
+    if Path((model or "").strip()).name.lower().endswith(".en"):
+        return True
+    return None
+
+
 def untranslated_share(segments: "Sequence[Segment]") -> float:
     """Of the letters in a translation, the share not in the Latin alphabet.
 
@@ -271,6 +317,11 @@ class TranscriptionResult:
     # skipping is off; less when it is on, and the difference is what was
     # thrown away before the model ever saw it.
     duration_after_vad: Optional[float] = None
+    # Whether the verbatim example was given to the model (English
+    # transcription with verbatim asked for), and how many lines that only
+    # repeated it were taken out.
+    verbatim: bool = False
+    example_lines_removed: int = 0
 
     @property
     def skipped_seconds(self) -> float:
@@ -293,10 +344,9 @@ class TranscriptionResult:
     def _speaker_label(
         self, speaker: Optional[str], speaker_names: Optional[Dict[str, str]]
     ) -> str:
-        label = speaker or "UNKNOWN"
-        if speaker_names:
-            return speaker_names.get(label, label)
-        return label
+        from .speaker_names import shown_name
+
+        return shown_name(speaker, speaker_names)
 
     def to_txt(
         self,
@@ -538,6 +588,7 @@ def transcribe_audio(
     vad_filter: bool = True,
     word_timestamps: bool = False,
     initial_prompt: Optional[str] = None,
+    verbatim: bool = False,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
     cancelled: Optional[CancelCallback] = None,
@@ -573,6 +624,12 @@ def transcribe_audio(
         carry the text before as context (:func:`carries_context`), it is
         given to every stretch instead, as faster-whisper's ``hotwords``: as an
         initial prompt it would reach only the first.
+    verbatim
+        Keep hesitations, repeats and false starts, by giving the model
+        :data:`VERBATIM_EXAMPLE` ahead of the expected words. English
+        transcription only: with the language left to detection, it is
+        detected first, and for anything but English nothing is added. A line
+        that only repeats the example is removed (:func:`is_leaked_example`).
     progress
         Optional callback invoked with human-readable status/segment strings;
         the GUI uses this to stream output as it is produced.
@@ -591,8 +648,42 @@ def transcribe_audio(
     _report(f"{verb} {path.name}...")
     context = carries_context(str(model_size))
     hint = initial_prompt or None
+    audio: Any = str(path)
+    detected: Optional[float] = None
+    english = (
+        known_english(language, str(model_size)) if task == "transcribe" else False
+    )
+    if verbatim and english is None:
+        # An English example in front of other speech pulls it towards
+        # English, so the language is settled first, as faster-whisper would
+        # settle it: on the same audio, after the same silence skipping.
+        from faster_whisper.audio import decode_audio
+        from faster_whisper.vad import VadOptions
+
+        audio = decode_audio(str(path), sampling_rate=16000)
+        try:
+            found, detected, _ = model.detect_language(
+                audio=audio,
+                vad_filter=vad_filter,
+                vad_parameters=VadOptions(**vad_options()) if vad_filter else None,
+            )
+        except ValueError:
+            # Nothing heard to detect a language from (detection fails on a
+            # recording the silence filter empties): no example, and the
+            # transcription below deals with the silence as it always has.
+            english = False
+        else:
+            language, english = found, found == "en"
+    use_verbatim = verbatim and bool(english)
+    # The example goes ahead of every stretch, as hotwords, whatever the
+    # model: as an initial prompt it would be dropped at the first reset.
+    example = VERBATIM_EXAMPLE if use_verbatim else None
+    if context:
+        first, every = hint, example
+    else:
+        first, every = None, " ".join(p for p in (hint, example) if p) or None
     segments_iter, info = model.transcribe(
-        str(path),
+        audio,
         task=task,
         language=language,
         beam_size=beam_size,
@@ -603,16 +694,24 @@ def transcribe_audio(
         word_timestamps=word_timestamps,
         condition_on_previous_text=context,
         # None is the faster-whisper default (no priming).
-        initial_prompt=hint if context else None,
-        hotwords=None if context else hint,
+        initial_prompt=first,
+        hotwords=every,
     )
 
     segments: List[Segment] = []
     texts: List[str] = []
+    removed = 0
     for raw in segments_iter:
         if cancelled is not None and cancelled():
             raise CancelledError("Transcription cancelled.")
         text = raw.text.strip()
+        if use_verbatim and is_leaked_example(text):
+            removed += 1
+            _report(
+                f"[{_format_timestamp(raw.end)}] (left out: a line that only "
+                "repeated the verbatim example, not speech)"
+            )
+            continue
         words = [
             Word(
                 start=w.start,
@@ -642,10 +741,15 @@ def transcribe_audio(
     return TranscriptionResult(
         text="\n".join(texts).strip(),
         language=info.language,
-        language_probability=info.language_probability,
+        # Detected here, the model was told the language and says 1.0.
+        language_probability=(
+            detected if detected is not None else info.language_probability
+        ),
         duration=info.duration,
         duration_after_vad=(
             getattr(info, "duration_after_vad", None) if vad_filter else None
         ),
         segments=segments,
+        verbatim=use_verbatim,
+        example_lines_removed=removed,
     )

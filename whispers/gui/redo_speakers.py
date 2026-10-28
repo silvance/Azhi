@@ -65,7 +65,7 @@ def ask_redo_speakers(
     people = "speaker" if found == 1 else "speakers"
     ttk.Label(
         frame,
-        text=f"Last run: {current} — came back with {found} {people}.",
+        text=f"Last run: {current}, which found {found} {people}.",
         style=Style.META,
         wraplength=460,
         justify="left",

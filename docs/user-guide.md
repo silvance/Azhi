@@ -126,7 +126,7 @@ you need it. What is in there:
 | Card | Holds |
 | --- | --- |
 | **Audio and output** | Skip silence, noise reduction, the easier-to-listen-to copy, low-confidence highlighting, `.srt` subtitles, video conversion |
-| **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English — with **medium** or **large-v3** only: *turbo* and the *.en* models cannot translate, and the run is refused with them) and **Expected words** |
+| **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English — with **medium** or **large-v3** only: *turbo* and the *.en* models cannot translate, and the run is refused with them), **Expected words**, and **Keep hesitations, repeats and false starts** (English) |
 | **Speaker separation** | Method and grouping sensitivity — used only when *Identify who is speaking* is on |
 | **Processing hardware** | Usually just says **CPU** — see below |
 | **Operation profile** | Settings and learned voices kept per operation — see below |
@@ -157,6 +157,18 @@ run takes.
   jargon likely to come up. It steers the model towards them, and proper nouns
   are what it otherwise mangles most. Type them as they are normally written,
   not in capitals: the model copies the style as well as the words.
+- **Keep hesitations, repeats and false starts** (*Advanced options* →
+  *Language and vocabulary*, on by default) keeps the "um"s, repeated words and
+  restarts as someone searches for what to say. Left to themselves, the models
+  mostly write the sentence the speaker meant instead. It works by showing the
+  model a short example written that way, so:
+  - it is for **English** transcription only. With the language on *Auto*, the
+    language is detected first; other languages and translations are
+    transcribed as usual, and the status line says so.
+  - over silence or noise, a model can write the example out as if someone had
+    said it. A line that is nothing but the example is left out, and the status
+    line and the report say how many were.
+  - it applies on the Transcribe page, not on Live.
 - **turbo and large-v3** sometimes write a stretch of a hard recording in
   capitals. Each 30-second stretch they transcribe starts afresh rather than
   following on from the text before it, so a lapse into capitals stays where it
@@ -166,9 +178,10 @@ run takes.
   colours the parts the model was unsure
   about, so you can go straight to what needs checking rather than re-reading
   the lot.
-- **Ctrl-click any line or word** to hear just that span of the recording. Use
-  it constantly. A transcript you have spot-checked against the audio is worth
-  a great deal more than one you have not.
+- **Click any word or speaker tag** to hear it: a word plays from there to the
+  end of its line, a tag plays the whole line. Use it constantly. A transcript
+  you have spot-checked against the audio is worth a great deal more than one
+  you have not.
 - **Open in its own window**, on the transcript card, puts the transcript on a
   second screen at full size while the settings stay where they are. **Put it
   back on this page** returns it.
@@ -319,17 +332,20 @@ to label a few of your own recordings and score the tool on them, offline.
 ### Method and sensitivity
 
 In *Advanced options* → *Speaker separation*, **Method** picks the engine.
-Leave it on **Auto** unless you have a reason. In a bundle with both:
+Leave it on **Auto** unless you have a reason; the line under it says which
+method Auto uses in your copy.
 
-- **pyannote** is much better on hard, noisy or overlapping audio.
-- **sherpa** is lighter and faster, and fine on clean audio.
-- **Nemotron** appears only in a copy built with it. It is a trial: a newer
-  kind of model, meant to be better at quick back-and-forth and at people
-  talking over each other, but not yet measured on recordings like yours.
-  It uses the number of people you give: if it heard more voices than that,
-  each moment of the extra ones goes to whichever of your speakers is most
-  likely. If it heard fewer, it cannot split them, and the status says so —
-  **Redo speaker separation…** with pyannote or sherpa may do better there.
+- **Nemotron** is what Auto uses wherever the copy includes it. It has been the
+  best at quick back-and-forth and at people talking over each other, and
+  faster than sherpa. It can tell up to eight people apart; for more, Auto uses
+  one of the others. It uses the number of people you give: if it heard more
+  voices than that, each moment of the extra ones goes to whichever of your
+  speakers is most likely. If it heard fewer, it cannot split them, and the
+  status says so. **Redo speaker separation…** with pyannote may do better
+  there.
+- **pyannote** is strong on noisy audio, and is what Auto uses in a copy
+  without Nemotron.
+- **sherpa** is the lightest, and fine on clean audio.
 
 **Grouping sensitivity** only applies to sherpa, and only when you have not
 given a count. Higher merges more (fewer speakers), lower splits more.
@@ -390,18 +406,24 @@ wrong.
 
 | To do this | Do that |
 | --- | --- |
-| Rename a speaker everywhere | Click their `[speaker]` tag |
-| Move one line to another speaker | Click the tag, choose the individual option |
-| Move a single word | Click that word |
-| Move part of a line | Highlight the words and drag them onto the other speaker's line |
+| Rename a speaker everywhere | Right-click their `[speaker]` tag |
+| Move one line to another speaker | Drag its `[speaker]` tag onto the other speaker's line, or right-click the tag and choose |
+| Move a single word | Right-click that word |
+| Move part of a line | Highlight the words (double-click selects one) and drag them onto the other speaker's line |
 
-The last one is for when one person's sentence has been lumped into the middle
-of another's. Right-click offers the same moves as a menu.
+Moving part of a line is for when one person's sentence has been lumped into
+the middle of another's; right-clicking the highlighted words offers the same
+as a menu. A plain click plays, so it never changes anything. On a machine that
+cannot play audio, a click opens the same menus as a right-click.
 
-Which voice a diarizer calls `SPEAKER_00` is arbitrary, so if two names have
-landed on the wrong people it is one click to swap them.
+While you drag, the line it will land on is shaded, and holding the pointer at
+the top or bottom edge scrolls the transcript. After a move the transcript
+stays where it was, and the words that moved are marked for a moment.
 
-**Find**, under the transcript, jumps through matches — Enter for the next,
+Which voice is "Speaker 1" is arbitrary, so if two names have landed on the
+wrong people it is one click to swap them.
+
+**Find**, under the transcript, jumps through matches: Enter for the next,
 Shift+Enter for the previous.
 
 ---

@@ -28,6 +28,24 @@ from typing import Dict, Iterable, Mapping, Optional, Sequence
 _CLUSTER = re.compile(r"^SPEAKER_(\d+)$")
 
 
+def shown_name(
+    speaker_id: "Optional[str]", names: "Optional[Mapping[str, str]]" = None
+) -> str:
+    """How a speaker is shown: the name given, else "Speaker N".
+
+    A diarizer cluster ``SPEAKER_00`` is "Speaker 1", numbered as the Speaker
+    1..N name fields are; a speaker with no label is "Unknown speaker".
+    Only what is shown: the id underneath, and what a voice is learned under,
+    are unchanged.
+    """
+    if speaker_id and names and names.get(speaker_id):
+        return names[speaker_id]
+    if not speaker_id or speaker_id == "UNKNOWN":
+        return "Unknown speaker"
+    index = cluster_index(speaker_id)
+    return f"Speaker {index + 1}" if index is not None else speaker_id
+
+
 def cluster_index(speaker_id: str) -> "Optional[int]":
     """The diarizer's own number for a cluster, or None if it has no number.
 

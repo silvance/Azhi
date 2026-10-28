@@ -75,7 +75,13 @@ from ..run_summary import (
 )
 from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
 from ..speaker_count import UNSET as SPEAKERS_UNSET
-from ..speaker_names import LEAD_LEGEND, any_leads, is_lead, preset_names
+from ..speaker_names import (
+    LEAD_LEGEND,
+    any_leads,
+    is_lead,
+    preset_names,
+    shown_name,
+)
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
     ProfileError,
@@ -154,18 +160,47 @@ COMMON_LANGUAGES = [
     "hi",
 ]
 
-# Diarization engine choices: dropdown label -> diarize() backend. "Auto" uses
-# pyannote when it's available, else sherpa. pyannote is best on hard/overlapping
-# audio; sherpa is lighter and faster and fine for clean audio.
-# Nemotron is offered only by a build that includes it, and Auto never picks
-# it: it has not been measured on this deployment's recordings yet.
+# Diarization engine choices: dropdown label -> diarize() backend. Auto takes
+# Nemotron where the build includes it, then pyannote, then sherpa (see
+# diarization.chosen_backend). Nemotron is offered only by a build with it.
 ENGINE_CHOICES = {
+    "Auto (recommended)": "auto",
+    "Nemotron (best with quick back-and-forth)": "nemotron",
+    "pyannote (strong on noisy audio)": "pyannote",
+    "sherpa (lightest, for clean audio)": "sherpa",
+}
+ENGINE_LABELS = list(ENGINE_CHOICES)
+# What the Task box offers, for the value a run uses.
+TASK_LABELS = {
+    "transcribe": "Transcribe (keep the language)",
+    "translate": "Translate into English",
+}
+
+# Labels earlier builds saved in settings and operation profiles, so a choice
+# made there survives the relabelling instead of quietly becoming Auto.
+_OLD_ENGINE_LABELS = {
     "Auto (pyannote if available)": "auto",
     "pyannote - most accurate": "pyannote",
     "sherpa - faster, for clean audio": "sherpa",
     "Nemotron - trial, counts speakers": "nemotron",
 }
-ENGINE_LABELS = list(ENGINE_CHOICES)
+
+
+def engine_label(engine: str) -> str:
+    """The dropdown label for a backend name."""
+    for label, value in ENGINE_CHOICES.items():
+        if value == engine:
+            return label
+    return ENGINE_LABELS[0]
+
+
+def auto_engine_note() -> str:
+    """Which method Auto runs in this copy, for under the dropdown."""
+    from ..diarization import chosen_backend
+
+    names = {"nemotron": "Nemotron", "pyannote": "pyannote", "sherpa": "sherpa"}
+    engine = chosen_backend("auto")
+    return f"Auto uses {names.get(engine, engine)} in this copy."
 
 
 def engine_labels() -> List[str]:
@@ -200,9 +235,9 @@ MODEL_DESCRIPTIONS = {
 
 
 def _model_label(model: str) -> str:
-    """``small.en`` -> ``Balanced — small.en``; a folder path shows as itself."""
+    """``small.en`` -> ``Balanced (small.en)``; a folder path shows as itself."""
     description = MODEL_DESCRIPTIONS.get(model)
-    return f"{description} — {model}" if description else model
+    return f"{description} ({model})" if description else model
 
 
 # The hardware dropdown shows friendly labels; the run needs the mode behind one.
@@ -290,6 +325,8 @@ class TranscribeTab:
         # Live note under the Model box: whether the current pick is in this build.
         self.model_status_var = tk.StringVar(value="")
         self.task_var = tk.StringVar(value="transcribe")
+        # What the Task box shows; task_var keeps the value runs and settings use.
+        self.task_choice_var = tk.StringVar(value=TASK_LABELS["transcribe"])
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
         # Off by default, and only offered where the model is bundled. What it
@@ -334,9 +371,13 @@ class TranscribeTab:
         self.blank_lines_var = tk.BooleanVar(value=True)
         # Optional vocabulary hint (names/jargon) to prime the decoder.
         self.vocab_var = tk.StringVar(value="")
+        # Keep hesitations, repeats and false starts in English transcripts.
+        # On by default: how someone searches for words can matter as much as
+        # the words they settle on, and the models leave it out unless asked.
+        self.verbatim_var = tk.BooleanVar(value=True)
         # Colour low-confidence words/segments so they can be verified.
         self.highlight_conf_var = tk.BooleanVar(value=False)
-        self.progress_label_var = tk.StringVar(value="Idle")
+        self.progress_label_var = tk.StringVar(value="Ready")
 
         # State for the last result, so speakers can be renamed after a run. The
         # transcript view shares these (same objects) and mutates them in place.
@@ -464,7 +505,7 @@ class TranscribeTab:
             self.choose_file,
             # A folder is now as good as a file here, and an operator who is
             # not told will keep opening them to drag the contents out.
-            prompt="Drop an audio or video file here — or a whole folder of them",
+            prompt="Drop an audio or video file here, or a folder of them",
         )
         self._drop_zone.pack(fill="x")
 
@@ -601,9 +642,8 @@ class TranscribeTab:
         self.speaker_count_hint = ttk.Label(
             holder,
             text=(
-                "Say how many voices to expect and they stay apart. “Not sure” "
-                "lets the tool decide, which on a long or muffled recording can "
-                "split one person into several."
+                "Giving the number keeps the voices apart. With “Not sure”, a "
+                "long or muffled recording can be split into too many speakers."
             ),
             style=Style.MUTED,
             wraplength=560,
@@ -635,9 +675,8 @@ class TranscribeTab:
         ttk.Label(
             audio.body,
             text=(
-                "Passes over long gaps so a recording finishes sooner. On very "
-                "quiet or distant speech it can still cut a little; turn it off "
-                "if a recording matters more than the time it takes."
+                "Skips long gaps so a recording finishes sooner. Turn it off "
+                "for very quiet or distant speech, which it can clip."
             ),
             style=Style.MUTED,
             wraplength=560,
@@ -660,8 +699,8 @@ class TranscribeTab:
             ttk.Label(
                 audio.body,
                 text=(
-                    "The recording itself is never changed — a cleaned copy is "
-                    f"written beside the output. {enhance.NOT_FOR_COMPARISON}"
+                    "Writes a cleaned copy beside the output; the recording "
+                    f"is never changed. {enhance.NOT_FOR_COMPARISON}"
                 ),
                 style=Style.MUTED,
                 wraplength=560,
@@ -693,8 +732,8 @@ class TranscribeTab:
         ttk.Label(
             audio.body,
             text=(
-                "The recording itself is never changed — a separate listening "
-                f"copy is written beside the output. {listening.NOT_FOR_COMPARISON}"
+                "Writes a listening copy beside the output; the recording "
+                f"is never changed. {listening.NOT_FOR_COMPARISON}"
             ),
             style=Style.MUTED,
             wraplength=560,
@@ -710,10 +749,8 @@ class TranscribeTab:
             ttk.Label(
                 audio.body,
                 text=(
-                    "Affects only what comes out of the speakers, and needs no "
-                    "saved copy. Turn it off to hear the same line raw — which "
-                    "is the only way to tell whether the filters are helping "
-                    "you or just making a different sound."
+                    "Changes only what you hear; nothing is saved. Turn it "
+                    "off to compare with the raw audio."
                 ),
                 style=Style.META,
                 wraplength=560,
@@ -752,13 +789,34 @@ class TranscribeTab:
         ttk.Label(language.body, text="Task", style=Style.FIELD_LABEL).grid(
             row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
         )
-        ttk.Combobox(
+        task_box = ttk.Combobox(
             language.body,
-            textvariable=self.task_var,
-            values=["transcribe", "translate"],
+            textvariable=self.task_choice_var,
+            values=list(TASK_LABELS.values()),
             state="readonly",
-            width=18,
-        ).grid(row=0, column=1, sticky="w", pady=SPACE_XS)
+            width=30,
+        )
+        task_box.grid(row=0, column=1, sticky="w", pady=SPACE_XS)
+        task_box.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self.task_var.set(
+                next(
+                    (
+                        k
+                        for k, v in TASK_LABELS.items()
+                        if v == self.task_choice_var.get()
+                    ),
+                    "transcribe",
+                )
+            ),
+        )
+        # Settings, a profile or a test may set the task directly.
+        self.task_var.trace_add(
+            "write",
+            lambda *_: self.task_choice_var.set(
+                TASK_LABELS.get(self.task_var.get(), TASK_LABELS["transcribe"])
+            ),
+        )
         ttk.Label(language.body, text="Expected words", style=Style.FIELD_LABEL).grid(
             row=1, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
         )
@@ -770,6 +828,22 @@ class TranscribeTab:
             text="Names, places, jargon or callsigns to expect, so they are spelled right.",
             style=Style.META,
         ).grid(row=2, column=1, sticky="w")
+        ttk.Checkbutton(
+            language.body,
+            text="Keep hesitations, repeats and false starts (English)",
+            variable=self.verbatim_var,
+            style=Style.CHECK,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
+        ttk.Label(
+            language.body,
+            text=(
+                "Otherwise the models mostly tidy speech into the sentence the "
+                "speaker meant. English transcription only."
+            ),
+            style=Style.MUTED,
+            wraplength=560,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
 
         hardware = Card(body, "Processing hardware")
         hardware.pack(fill="x", pady=(SPACE_MD, 0))
@@ -798,9 +872,8 @@ class TranscribeTab:
             ttk.Label(
                 hardware.body,
                 text=(
-                    "This build runs on the processor. Graphics-card support is "
-                    "not included in it, so fitting one would not make it "
-                    "faster — that would need a differently built copy."
+                    "This copy runs on the processor only; a graphics card "
+                    "would not speed it up."
                 ),
                 style=Style.META,
                 wraplength=560,
@@ -840,21 +913,36 @@ class TranscribeTab:
 
         ttk.Label(
             frame,
-            text="How many people are speaking is asked in Options, above.",
+            text=(
+                f"{auto_engine_note()} How many people are speaking is asked "
+                "in Options, above."
+            ),
             style=Style.META,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=SPACE_XS)
         # Choosing a count reveals a name field per speaker (filled in below).
         self.num_speakers_var.trace_add("write", self._on_num_speakers_changed)
 
-        ttk.Label(
-            frame,
-            text="Grouping sensitivity (higher = fewer speakers)",
-            style=Style.FIELD_LABEL,
-        ).grid(row=2, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS)
-        self.sensitivity_entry = ttk.Entry(
-            frame, textvariable=self.sensitivity_var, width=8
+        self._sensitivity_label = ttk.Label(
+            frame, text="Grouping sensitivity", style=Style.FIELD_LABEL
         )
-        self.sensitivity_entry.grid(row=2, column=1, sticky="w", pady=SPACE_XS)
+        self._sensitivity_label.grid(
+            row=2, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        self._sensitivity_row = ttk.Frame(frame, style=Style.CARD_INNER)
+        self._sensitivity_row.grid(row=2, column=1, sticky="w", pady=SPACE_XS)
+        self.sensitivity_entry = ttk.Entry(
+            self._sensitivity_row, textvariable=self.sensitivity_var, width=8
+        )
+        self.sensitivity_entry.pack(side="left")
+        ttk.Label(
+            self._sensitivity_row, text="higher means fewer speakers", style=Style.META
+        ).pack(side="left", padx=(SPACE_SM, 0))
+        # Shown only where it does something: sherpa, with no count given.
+        self.engine_var.trace_add("write", lambda *_: self._update_sensitivity_row())
+        self.num_speakers_var.trace_add(
+            "write", lambda *_: self._update_sensitivity_row()
+        )
+        self._update_sensitivity_row()
 
         # Dynamic per-speaker name fields, rebuilt when the count changes.
         self.speaker_names_frame = ttk.Frame(frame, style=Style.CARD_INNER)
@@ -864,9 +952,9 @@ class TranscribeTab:
         ttk.Label(
             frame,
             text=(
-                "In the transcript you can click a speaker tag to rename or move a "
-                "whole line, click a word to move it, or drag a highlighted run of "
-                "words onto another speaker."
+                "In the transcript, click a speaker tag to rename or move a "
+                "line, click a word to move it, or drag selected words onto "
+                "another speaker."
             ),
             style=Style.META,
             wraplength=560,
@@ -882,11 +970,10 @@ class TranscribeTab:
             ttk.Label(
                 frame,
                 text=(
-                    "Before words are given to speakers, a second model finds "
-                    "where each English word starts and ends, so a one-word "
-                    "reply is less often put inside the turn before it. The "
-                    "words themselves are not changed. English transcriptions "
-                    "only; not used when translating."
+                    "Re-times each English word before it is given to a "
+                    "speaker, so one-word replies land on the right person more "
+                    "often. The words are not changed. Not used when "
+                    "translating."
                 ),
                 style=Style.MUTED,
                 wraplength=560,
@@ -940,11 +1027,10 @@ class TranscribeTab:
         ttk.Label(
             frame,
             text=(
-                "With speaker identification on, each speaker is compared with "
-                "the voices this profile has learned, and a similar one is shown "
-                "as a suggestion marked \u201c(unconfirmed\u00a0voice\u00a0lead)\u201d for you to "
-                "confirm. Confirming or correcting a name teaches it that voice "
-                "for next time; it does not change the words themselves."
+                "Each speaker is compared with the voices this profile has "
+                "learned. A similar voice is suggested, marked "
+                "\u201c(unconfirmed\u00a0voice\u00a0lead)\u201d, for you to confirm. "
+                "Confirming or correcting a name teaches the profile that voice."
             ),
             style=Style.MUTED,
             wraplength=560,
@@ -991,10 +1077,7 @@ class TranscribeTab:
             parent,
             title="Transcript",
             window_title="Whispers — Transcript",
-            note=(
-                "The transcript is open in its own window — resize or maximise "
-                "it on whichever screen suits."
-            ),
+            note=("The transcript is open in its own window."),
             pack_options={"fill": "both", "expand": True, "pady": (SPACE_XL, 0)},
             on_error=self._popout_failed,
         )
@@ -1106,11 +1189,18 @@ class TranscribeTab:
             )
         if self._playback_ok:
             subtle_button(exports, "Stop audio", self._stop_audio).pack(side="left")
-            ttk.Label(
-                results.body,
-                text="Ctrl-click a line or a word to play its audio.",
-                style=Style.META,
-            ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Label(
+            results.body,
+            text=(
+                "Click a word or speaker tag to play it; right-click for "
+                "corrections. Drag a speaker tag, or selected words, onto "
+                "another speaker's line."
+                if self._playback_ok
+                else "Click a speaker tag or word for corrections, or drag it "
+                "onto another speaker's line."
+            ),
+            style=Style.META,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
 
         # Its own row, and disabled until there is a diarized result to redo:
         # this is the cheap half of a run offered on its own, and it wants to
@@ -1178,7 +1268,7 @@ class TranscribeTab:
 
     def notify_cancelling(self) -> None:
         self.cancel_button.configure(state="disabled")
-        append_line(self.status, "Cancelling… (will stop at the next checkpoint)")
+        append_line(self.status, "Cancelling…")
         self.progress_label_var.set("Cancelling…")
 
     # -- Settings state ----------------------------------------------------
@@ -1208,6 +1298,19 @@ class TranscribeTab:
         self.output_dir_entry.configure(state=state)
         self.output_dir_button.configure(state=state)
 
+    def _update_sensitivity_row(self) -> None:
+        """Grouping sensitivity is sherpa's alone, and only with no count given."""
+        count = self._parse_num_speakers()
+        engine = chosen_backend(
+            ENGINE_CHOICES.get(self.engine_var.get(), "auto"), count
+        )
+        shown = engine == "sherpa" and count is None
+        for widget in (self._sensitivity_label, self._sensitivity_row):
+            if shown:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
     def _update_speaker_state(self) -> None:
         enabled = self.diarize_var.get()
         state = "normal" if enabled else "disabled"
@@ -1233,7 +1336,7 @@ class TranscribeTab:
         if self._awaiting_speaker_count and self._speaker_count_answered():
             self._awaiting_speaker_count = False
             self.banner.hide()
-            self.progress_label_var.set("Idle")
+            self.progress_label_var.set("Ready")
 
     def _set_speaker_count(self, label: str) -> None:
         """Show ``label`` and keep the stored count in step with it."""
@@ -1509,7 +1612,7 @@ class TranscribeTab:
 
     def choose_model_dir(self) -> None:
         path = filedialog.askdirectory(
-            title="Select a CTranslate2 model directory",
+            title="Choose a model folder",
             parent=active_window(self.root),
         )
         if path:
@@ -1565,7 +1668,7 @@ class TranscribeTab:
         elif self.task_var.get() == "translate" and translation_refusal(model):
             # Said beside the model, not only after Run: turbo and the .en
             # models write the original language when asked to translate.
-            self.model_status_var.set("⚠ cannot translate — use medium or large-v3")
+            self.model_status_var.set("⚠ cannot translate: use medium or large-v3")
         elif model in self._bundled_models:
             self.model_status_var.set("✓ in this build (works offline)")
         elif usable_model_folder(model):
@@ -1576,9 +1679,7 @@ class TranscribeTab:
             # It can't be fetched on an air-gapped machine, so say so before
             # Run rather than after. A shipped copy with *no* models used to
             # land in the branch below and promise a download it must not make.
-            self.model_status_var.set(
-                "⚠ not in this copy — pick a ✓ model (System status lists them)"
-            )
+            self.model_status_var.set("⚠ not in this copy: pick a ✓ model")
         else:
             # Running from source with nothing bundled: faster-whisper will fetch
             # it. Never reached in a shipped copy - see is_bundle().
@@ -1701,7 +1802,7 @@ class TranscribeTab:
             jobs = self._collect_jobs()
             if not jobs:
                 message = (
-                    "Choose a recording first — drop one onto the window, or "
+                    "Choose a recording first: drop one onto the window, or "
                     "select Choose file."
                 )
                 append_line(self.status, message)
@@ -1756,7 +1857,7 @@ class TranscribeTab:
                 else:
                     save_dir = None
                 if total > 1:
-                    self.progress_label_var.set(f"{index} of {total} — {src.name}")
+                    self.progress_label_var.set(f"{index} of {total}: {src.name}")
                 try:
                     # Every finished recording goes on screen, so a long folder
                     # shows its progress as real transcripts rather than a
@@ -1790,7 +1891,7 @@ class TranscribeTab:
                 if written and save_dir is not None:
                     saved_in.add(save_dir)
             if self._missing_files or self._failed_files or self._failed_saves:
-                final_status = f"Finished {done} of {total} — see Status"
+                final_status = f"Finished {done} of {total}; see the Status tab"
             else:
                 final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
             kind, message = self._completion_message(done, total, saved)
@@ -2030,6 +2131,7 @@ class TranscribeTab:
                     vad_filter=self.vad_var.get(),
                     word_timestamps=need_words,
                     initial_prompt=self.vocab_var.get().strip() or None,
+                    verbatim=self.verbatim_var.get(),
                     progress=self._step,
                     on_progress=lambda f: self._set_progress(f, transcribe_label),
                     cancelled=self._cancel_event.is_set,
@@ -2062,6 +2164,10 @@ class TranscribeTab:
                     vad=self.vad_var.get(),
                     initial_prompt=self.vocab_var.get().strip(),
                     previous_text_context=carries_context(str(model)),
+                    verbatim=result.verbatim,
+                    example_lines_removed=(
+                        result.example_lines_removed if result.verbatim else None
+                    ),
                     denoised=enhancement is not None,
                     denoiser_sha256=(
                         enhancement.model_sha256 if enhancement is not None else ""
@@ -2081,6 +2187,21 @@ class TranscribeTab:
                 f"({result.language_probability:.0%}), "
                 f"duration: {result.duration:.1f}s",
             )
+            if result.example_lines_removed:
+                append_line(
+                    self.status,
+                    f"{src.name}: left out {result.example_lines_removed} "
+                    "line(s) that only repeated the verbatim example: text "
+                    "the model can produce over silence or noise, not speech.",
+                )
+            elif (
+                self.verbatim_var.get() and task == "transcribe" and not result.verbatim
+            ):
+                append_line(
+                    self.status,
+                    "Hesitations and repeats are kept for English only; this "
+                    f"recording ({result.language}) was transcribed as usual.",
+                )
             if (
                 task == "translate"
                 and untranslated_share(result.segments) > UNTRANSLATED_SHARE
@@ -2091,7 +2212,7 @@ class TranscribeTab:
                 append_line(
                     self.status,
                     f"{src.name}: most of this came back in the original "
-                    f"language ({result.language}), not English - the model "
+                    f"language ({result.language}), not English: the model "
                     "did not translate it.",
                 )
 
@@ -2186,7 +2307,7 @@ class TranscribeTab:
         diar_wav = media_path
         diar_temp: Optional[Path] = None
         if not media_is_normalized:
-            append_line(self.status, "Preparing audio for diarization...")
+            append_line(self.status, "Preparing audio for speaker separation…")
             diar_wav = convert_to_wav(
                 source, progress=lambda msg: append_line(self.status, msg)
             )
@@ -2201,7 +2322,8 @@ class TranscribeTab:
             # afterwards named whatever Method said when the run finished - and
             # Method can be changed while a run is going.
             self._diar_engine_used = chosen_backend(
-                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                self._parse_num_speakers(),
             )
             speaker_segments = diarize(
                 diar_wav,
@@ -2382,8 +2504,7 @@ class TranscribeTab:
                 people = "speaker" if self._diarized_count == 1 else "speakers"
                 self.redo_hint_var.set(
                     f"Found {self._diarized_count} {people}. Wrong? Split it "
-                    "again with a different number — the recording is not "
-                    "transcribed again."
+                    "again with a different number, without transcribing again."
                 )
             else:
                 self.redo_button.configure(state="disabled")
@@ -2450,11 +2571,11 @@ class TranscribeTab:
                 self.status,
                 "Redoing speaker separation"
                 + (f" with {requested} speaker(s)" if requested else "")
-                + " — the recording is not being transcribed again.",
+                + "; the recording is not transcribed again.",
             )
             self._begin_phase("Identifying speakers…")
             self._diar_engine_used = chosen_backend(
-                ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+                ENGINE_CHOICES.get(self.engine_var.get(), "auto"), requested
             )
             speaker_segments = diarize(
                 wav,
@@ -2519,7 +2640,7 @@ class TranscribeTab:
         )
 
     def _rerender_transcript(self) -> None:
-        self.transcript_view.render()
+        self.transcript_view.render(keep_view=True)
 
     def _find_next(self) -> None:
         self._find(backwards=False)
@@ -2892,8 +3013,7 @@ class TranscribeTab:
                 self._embedder = False
                 append_line(
                     self.status,
-                    "Voiceprints unavailable (speaker-embedding model not "
-                    f"loaded): {exc}",
+                    f"Voice recognition is unavailable: {exc}",
                 )
         return self._embedder if isinstance(self._embedder, SpeakerEmbedder) else None
 
@@ -3074,8 +3194,8 @@ class TranscribeTab:
             if notify is not None:
                 self.root.after(0, notify)
             self.progress_label_var.set(
-                f"{len(added)} sample(s) proposed for {subject.display_name} - "
-                "approve them in Speaker profiles before they are used."
+                f"{len(added)} sample(s) proposed for {subject.display_name}; "
+                "approve them on Speaker Profiles before they are used."
             )
         except Exception as exc:  # noqa: BLE001 - never fail a correction on this
             append_line(self.status, f"Could not propose a speaker sample: {exc}")
@@ -3114,7 +3234,7 @@ class TranscribeTab:
                 "and transcribe it again.",
             )
             return
-        name = self._speaker_names.get(speaker_id, speaker_id)
+        name = shown_name(speaker_id, self._speaker_names)
         spans = spans_by_speaker_name(result.segments, self._speaker_names).get(name)
         if not spans:
             return
@@ -3267,7 +3387,7 @@ class TranscribeTab:
                     progress=self.progress_label_var.set,
                 )
             for reason in result.skipped:
-                append_line(self.status, f"Not enrolled - {reason}")
+                append_line(self.status, f"Not enrolled: {reason}")
             if not result.added_count:
                 self._announce(
                     "warning",
@@ -3297,11 +3417,10 @@ class TranscribeTab:
         created = " (new subject)" if choice.is_new else ""
         self._announce(
             "success",
-            f"Added {len(added)} sample(s) - "
+            f"Added {len(added)} sample(s), "
             f"{sum(sample.speech_duration for sample in added):.0f} "
-            f"sec of speech - to {subject.display_name}{created}. They are "
-            "pending review: approve them on the Speaker Profiles page before "
-            "they are used as reference material.",
+            f"sec of speech, to {subject.display_name}{created}. Approve them "
+            "on the Speaker Profiles page before they are used.",
         )
         self.progress_label_var.set(
             f"Saved {choice.speaker} to {subject.display_name}."
@@ -3536,7 +3655,7 @@ class TranscribeTab:
         those builds is the case this exists for: it meant "nobody chose", and
         it is asked again rather than quietly run as "not sure".
         """
-        stored = str(data.get("speaker_count") or "")
+        stored = speaker_count.canonical(str(data.get("speaker_count") or ""))
         if speaker_count.is_answered(stored):
             self._set_speaker_count(stored)
             return
@@ -3555,6 +3674,7 @@ class TranscribeTab:
             "srt": self.srt_var,
             "blank_lines": self.blank_lines_var,
             "highlight_conf": self.highlight_conf_var,
+            "verbatim": self.verbatim_var,
             "diarize": self.diarize_var,
             "engine": self.engine_var,
             "retime_words": self.retime_var,
@@ -3590,6 +3710,10 @@ class TranscribeTab:
         # otherwise sit in the dropdown and resolve to Auto silently.
         if self.device_var.get() not in _DEVICE_MODES:
             self.device_var.set(_device_label(default_mode()))
+        # A Method saved under an earlier build's label keeps its choice.
+        old = _OLD_ENGINE_LABELS.get(self.engine_var.get())
+        if old is not None:
+            self.engine_var.set(engine_label(old))
         # Likewise a Method this build does not offer (Nemotron, chosen on a
         # copy that had it): back to Auto rather than a run that cannot start.
         if self.engine_var.get() not in engine_labels():

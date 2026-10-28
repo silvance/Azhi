@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .hashing import sha256_file_or_none
 from .quality import QualityReport, analyse_span, combine
+from .speaker_names import shown_name
 from .speaker_profiles import (
     SAMPLE_REFERENCE,
     EmbeddingModelIdentity,
@@ -380,7 +381,7 @@ def spans_by_speaker_name(
         speaker_id = getattr(segment, "speaker", None)
         if not speaker_id:
             continue
-        name = names.get(speaker_id, speaker_id)
+        name = shown_name(speaker_id, names)
         grouped.setdefault(name, []).append((segment.start, segment.end))
     return grouped
 

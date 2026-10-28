@@ -1,15 +1,20 @@
 """The transcript pane: renders a result and supports speaker/word corrections.
 
 Diarization on hard or overlapping audio is never perfect, so the transcript is
-interactive: click a ``[speaker]`` tag to rename that speaker everywhere or move
-the whole line to another speaker, or click a single word to move just that word
-(or from it onward) to another speaker. The underlying split/merge logic lives in
-:mod:`whispers.editing`; this module is the Tk view around it.
+interactive. A click plays: a word from there to the end of its line, a
+``[speaker]`` tag the whole line. A right-click offers the corrections: on a
+tag, rename that speaker everywhere or move the line to another speaker; on a
+word, move just that word (or from it onward). A speaker tag, or a selected run
+of words, can also be dragged onto another speaker's line. Without a way to
+play audio, a click opens the corrections instead. An edit keeps the view
+where it was and briefly marks what moved. The underlying split/merge logic
+lives in :mod:`whispers.editing`; this module is the Tk view around it.
 """
 
 from __future__ import annotations
 
 import tkinter as tk
+from functools import partial
 from tkinter import simpledialog
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple, cast
@@ -19,7 +24,7 @@ from ..editing import (
     split_segment_on_span,
     split_segment_on_word,
 )
-from ..speaker_names import bare_name, is_lead
+from ..speaker_names import bare_name, is_lead, shown_name
 from ..transcription import (
     TranscriptionResult,
     is_low_confidence_segment,
@@ -34,6 +39,16 @@ _LOW_CONFIDENCE_COLOR = "#ff7a7a"
 # Background colours for in-transcript search (all matches / the current one).
 _SEARCH_COLOR = "#5b5300"
 _SEARCH_CURRENT_COLOR = "#b58900"
+
+# How long words just moved stay marked, so the eye can find what changed.
+_MOVED_MS = 1600
+# How close to the top or bottom edge a drag scrolls the transcript (pixels).
+_EDGE = 24
+# How far the pointer must travel before a press on a speaker tag is a drag.
+_DRAG_START = 5
+# A click plays after this long, unless it turns out to be the first half of a
+# double-click (which selects a word, and should not set the audio going).
+_CLICK_MS = 250
 
 # In place of the correction items while a run is going.
 PAUSED_NOTE = "Speaker corrections wait until the run finishes"
@@ -80,15 +95,23 @@ class TranscriptView:
         self.widget = ScrolledText(
             parent, wrap="word", state="disabled", height=14, font="TkFixedFont"
         )
-        # Right-click: move a highlighted span of words to another speaker (for the
-        # case where a sentence mid-line belongs to someone else). Button-3 on
-        # Windows/Linux, Button-2 on macOS.
-        self.widget.bind("<Button-3>", self._selection_menu)
-        self.widget.bind("<Button-2>", self._selection_menu)
+        # Right-click: the corrections for whatever is under the pointer - a
+        # highlighted span, a speaker tag or a word. Button-3 on Windows/Linux,
+        # Button-2 on macOS.
+        self.widget.bind("<Button-3>", self._context_menu)
+        self.widget.bind("<Button-2>", self._context_menu)
+        # A double-click selects a word; the click it began with must not play.
+        self.widget.bind("<Double-Button-1>", self._cancel_click, add="+")
+        self._click_job: Optional[str] = None
         # Drag-to-move: after selecting a run of words, press within the selection
         # and drag it onto another speaker's line to reassign it (no menu needed).
         # In-progress drag state, or None. See _on_drag_press/_motion/_release.
         self._drag: Optional[Dict[str, object]] = None
+        # The words an edit just moved, as (first start, last end, speaker), to
+        # be marked after the next render; and the pending job that unmarks them.
+        self._moved: Optional[Tuple[float, float, str]] = None
+        self._moved_job: Optional[str] = None
+        self._scroll_job: Optional[str] = None
         self.widget.bind("<Button-1>", self._on_drag_press)
         self.widget.bind("<B1-Motion>", self._on_drag_motion)
         self.widget.bind("<ButtonRelease-1>", self._on_drag_release)
@@ -171,8 +194,12 @@ class TranscriptView:
             self._find_pos = pos if backwards else end
         return total
 
-    def render(self) -> None:
-        """Render the current result, with clickable speaker tags / words."""
+    def render(self, *, keep_view: bool = False) -> None:
+        """Render the current result, with clickable speaker tags / words.
+
+        ``keep_view`` keeps the same part of the transcript on screen, as an
+        edit or a display option should; a new result starts at the top.
+        """
 
         highlight = self.highlight_var is not None and self.highlight_var.get()
 
@@ -183,6 +210,7 @@ class TranscriptView:
 
         def _do() -> None:
             result = self._result
+            anchor = self._view_anchor() if keep_view else None
             self.widget.configure(state="normal")
             self.widget.delete("1.0", "end")
             # Underlined as well as coloured: the red alone is the red used
@@ -207,20 +235,15 @@ class TranscriptView:
                             self.widget.insert("end", line_end)
                         line_tag = f"line::{index}"
                         tags = (line_tag, *_lowconf_seg(segment))
-                        # Ctrl-click (or the menu) plays this line - works the same
-                        # whether or not the transcript is diarized.
+                        # A click plays this line, as it does in a diarized
+                        # transcript; right-click offers the same as a menu.
                         if self._on_play is not None:
                             # ButtonRelease (not press) so a click-drag can select
-                            # words instead of immediately popping the menu.
+                            # words instead of setting the audio going.
                             self.widget.tag_bind(
                                 line_tag,
                                 "<ButtonRelease-1>",
-                                self._line_menu_handler(index),
-                            )
-                            self.widget.tag_bind(
-                                line_tag,
-                                "<Control-Button-1>",
-                                self._play_line_handler(index),
+                                self._click_handler(partial(self._play_line, index)),
                             )
                             self.widget.tag_bind(
                                 line_tag, "<Enter>", self._cursor_handler("hand2")
@@ -236,28 +259,28 @@ class TranscriptView:
                 bound: set[str] = set()
                 for index, segment in enumerate(result.segments):
                     sid = segment.speaker or "UNKNOWN"
-                    name = self._speaker_names.get(sid, sid)
+                    name = shown_name(sid, self._speaker_names)
                     spk_tag = f"spk::{sid}"
                     line_tag = f"line::{index}"
                     if sid not in bound:
                         bound.add(sid)
                         self.widget.tag_config(spk_tag, underline=True)
-                    # Bind on a per-line tag so a click knows which segment it hit:
-                    # the menu can both fix this one line and rename globally. On
+                    # Bind on a per-line tag so a click knows which segment it hit.
+                    # A click plays the line (or, with no way to play, opens the
+                    # menu that fixes this line or renames the speaker). On
                     # ButtonRelease so a click-drag selects words instead.
                     self.widget.tag_bind(
-                        line_tag, "<ButtonRelease-1>", self._speaker_menu_handler(index)
+                        line_tag,
+                        "<ButtonRelease-1>",
+                        self._click_handler(
+                            partial(self._play_line, index),
+                            self._speaker_menu_handler(index),
+                        ),
                     )
                     self.widget.tag_bind(
                         line_tag, "<Enter>", self._cursor_handler("hand2")
                     )
                     self.widget.tag_bind(line_tag, "<Leave>", self._cursor_handler(""))
-                    if self._on_play is not None:
-                        self.widget.tag_bind(
-                            line_tag,
-                            "<Control-Button-1>",
-                            self._play_line_handler(index),
-                        )
                     self.widget.insert("end", f"[{name}]", (spk_tag, line_tag))
                     if segment.words:
                         # Render words individually so a single misattributed word
@@ -270,7 +293,10 @@ class TranscriptView:
                             self.widget.tag_bind(
                                 wtag,
                                 "<ButtonRelease-1>",
-                                self._word_menu_handler(index, w_index),
+                                self._click_handler(
+                                    partial(self._play_from_word, index, w_index),
+                                    self._word_menu_handler(index, w_index),
+                                ),
                             )
                             self.widget.tag_bind(
                                 wtag, "<Enter>", self._cursor_handler("hand2")
@@ -278,12 +304,6 @@ class TranscriptView:
                             self.widget.tag_bind(
                                 wtag, "<Leave>", self._cursor_handler("")
                             )
-                            if self._on_play is not None:
-                                self.widget.tag_bind(
-                                    wtag,
-                                    "<Control-Button-1>",
-                                    self._play_word_handler(index, w_index),
-                                )
                             wtags: tuple[str, ...] = (wtag,)
                             if highlight and is_low_confidence_word(word):
                                 wtags = (wtag, "lowconf")
@@ -295,13 +315,93 @@ class TranscriptView:
                         )
                         self.widget.insert("end", line_end)
             self.widget.configure(state="disabled")
+            if anchor is not None:
+                self._restore_view(anchor)
+            self._mark_moved()
 
         self.root.after(0, _do)
 
     def _changed(self) -> None:
         """Re-render after an edit and notify the owner to persist the change."""
-        self.render()
+        self.render(keep_view=True)
         self._on_change()
+
+    # -- Keeping the place across a re-render ------------------------------
+
+    def _segment_at(self, index: str) -> Optional[int]:
+        for tag in self.widget.tag_names(index):
+            if tag.startswith(("line::", "word::")):
+                try:
+                    return int(tag.split("::")[1])
+                except (IndexError, ValueError):
+                    continue
+        return None
+
+    def _view_anchor(self) -> Tuple[Optional[float], float]:
+        """The start time of the first line in view, and the scroll fraction.
+
+        A time rather than a line number: an edit splits and merges segments,
+        which renumbers them, but no word changes its time.
+        """
+        fraction = self.widget.yview()[0]
+        result = self._result
+        if result is None:
+            return None, fraction
+        top = self.widget.index("@0,0")
+        for offset in range(4):  # past a blank line between turns
+            seg = self._segment_at(f"{top} +{offset} lines")
+            if seg is not None and seg < len(result.segments):
+                return result.segments[seg].start, fraction
+        return None, fraction
+
+    def _restore_view(self, anchor: Tuple[Optional[float], float]) -> None:
+        start, fraction = anchor
+        result = self._result
+        if start is not None and result is not None:
+            for index, segment in enumerate(result.segments):
+                # The first line still running at that time: the same line, or
+                # the part of it an edit split off, or the one it merged into.
+                if segment.end > start + 1e-6:
+                    ranges = self.widget.tag_ranges(f"line::{index}")
+                    if ranges:
+                        self.widget.yview(f"{ranges[0]} linestart")
+                        return
+                    break
+        self.widget.yview_moveto(fraction)
+
+    def _mark_moved(self) -> None:
+        """Briefly mark the words an edit just moved, and keep them in view."""
+        moved, self._moved = self._moved, None
+        result = self._result
+        if moved is None or result is None:
+            return
+        first, last, speaker = moved
+        self.widget.tag_config("moved", background=palette().success_bg)
+        self.widget.tag_remove("moved", "1.0", "end")
+        marked: List[str] = []
+        for s_idx, segment in enumerate(result.segments):
+            if (segment.speaker or "UNKNOWN") != speaker:
+                continue
+            if segment.words:
+                for w_idx, word in enumerate(segment.words):
+                    if word.start >= first - 1e-6 and word.end <= last + 1e-6:
+                        ranges = self.widget.tag_ranges(f"word::{s_idx}::{w_idx}")
+                        if ranges:
+                            self.widget.tag_add("moved", ranges[0], ranges[1])
+                            marked.append(str(ranges[0]))
+            elif segment.start >= first - 1e-6 and segment.end <= last + 1e-6:
+                ranges = self.widget.tag_ranges(f"line::{s_idx}")
+                if ranges:
+                    self.widget.tag_add("moved", ranges[0], f"{ranges[0]} lineend")
+                    marked.append(str(ranges[0]))
+        if not marked:
+            return
+        self.widget.see(marked[0])
+        if self._moved_job is not None:
+            self.widget.after_cancel(self._moved_job)
+        self._moved_job = self.widget.after(
+            _MOVED_MS, lambda: self.widget.tag_remove("moved", "1.0", "end")
+        )
 
     def _cursor_handler(self, cursor: str) -> Callable[[object], None]:
         def handler(_event: object) -> None:
@@ -325,6 +425,8 @@ class TranscriptView:
         def handler(event: object) -> None:
             if self._has_selection():
                 return  # a drag-select; leave it for right-click "Move selection"
+            if self._drag is not None and self._drag.get("moved"):
+                return  # the end of a drag, handled as a drop
             result = self._result
             if result is None or index >= len(result.segments):
                 return
@@ -339,7 +441,7 @@ class TranscriptView:
             on_compare = self._on_compare
             if on_compare is not None and result.segments[index].speaker:
                 # Reads the transcript, changes nothing: offered mid-run too.
-                shown = self._speaker_names.get(current, current)
+                shown = shown_name(current, self._speaker_names)
                 menu.add_command(
                     label=f"Compare \u2018{shown}\u2019 to speaker profiles…",
                     command=lambda: on_compare(current),
@@ -352,14 +454,14 @@ class TranscriptView:
             # Reassign just this line to the correct speaker - the fix for the
             # boundary/overlap errors diarization can't get right on its own.
             for sid in self._ordered_speaker_ids():
-                name = self._speaker_names.get(sid, sid)
+                name = shown_name(sid, self._speaker_names)
                 mark = "  ✓" if sid == current else ""
                 menu.add_command(
                     label=f"This line is {name}{mark}",
                     command=self._reassign_command(index, sid),
                 )
             menu.add_separator()
-            cur_name = self._speaker_names.get(current, current)
+            cur_name = shown_name(current, self._speaker_names)
             menu.add_command(
                 label=(
                     f"Confirm or correct \u2018{bare_name(cur_name)}\u2019…"
@@ -384,6 +486,7 @@ class TranscriptView:
             return
         segment = result.segments[index]
         segment.speaker = speaker_id
+        self._moved = (segment.start, segment.end, speaker_id)
         # This line's audio is now confirmed to be that speaker - learn from it.
         self._enroll(speaker_id, [(segment.start, segment.end)])
         self._changed()
@@ -425,8 +528,75 @@ class TranscriptView:
 
     # -- Playback ----------------------------------------------------------
 
+    def _click_handler(
+        self,
+        play: Callable[[], None],
+        menu: Optional[Callable[[object], None]] = None,
+    ) -> Callable[[object], None]:
+        """A left click: play, once it is clear it was not a double-click.
+
+        Not a click at all after a drag or a drag-select. Where nothing can be
+        played, the click opens ``menu`` (the corrections) instead, as it did
+        before clicking played.
+        """
+
+        def handler(event: object) -> None:
+            if self._has_selection():
+                return  # a drag-select; leave it for right-click "Move selection"
+            if self._drag is not None and self._drag.get("moved"):
+                return  # the end of a drag, handled as a drop
+            if self._on_play is None:
+                if menu is not None:
+                    menu(event)
+                return
+            self._cancel_click()
+
+            def run() -> None:
+                self._click_job = None
+                play()
+
+            self._click_job = self.widget.after(_CLICK_MS, run)
+
+        return handler
+
+    def _cancel_click(self, _event: object = None) -> None:
+        if self._click_job is not None:
+            self.widget.after_cancel(self._click_job)
+            self._click_job = None
+
+    def _context_menu(self, event: object) -> Optional[str]:
+        """Right-click: the corrections for what is under the pointer."""
+        if self._has_selection() and self._index_in_selection(event):
+            self._selection_menu(event)
+            return "break"
+        try:
+            idx = self.widget.index(f"@{event.x},{event.y}")  # type: ignore[attr-defined]
+        except tk.TclError:
+            return None
+        # A selection elsewhere would make the menus think this is a drag-select.
+        self.widget.tag_remove("sel", "1.0", "end")
+        names = self.widget.tag_names(idx)
+        seg = self._segment_at(idx)
+        if seg is None:
+            return None
+        if any(tag.startswith("spk::") for tag in names):
+            self._speaker_menu_handler(seg)(event)
+            return "break"
+        for tag in names:
+            if tag.startswith("word::"):
+                try:
+                    word = int(tag.split("::")[2])
+                except (IndexError, ValueError):
+                    continue
+                self._word_menu_handler(seg, word)(event)
+                return "break"
+        if self._on_play is not None:
+            self._line_menu_handler(seg)(event)
+            return "break"
+        return None
+
     def _line_menu_handler(self, index: int) -> Callable[[object], None]:
-        """Single-click menu for a non-diarized line (just Play)."""
+        """Right-click menu for a non-diarized line (just Play)."""
 
         def handler(event: object) -> None:
             if self._on_play is None or self._has_selection():
@@ -436,22 +606,6 @@ class TranscriptView:
                 label="▶ Play this line", command=lambda: self._play_line(index)
             )
             self._popup(menu, event)
-
-        return handler
-
-    def _play_line_handler(self, index: int) -> Callable[[object], str]:
-        def handler(_event: object) -> str:
-            self._play_line(index)
-            return "break"  # don't also fire the speaker-menu single-click
-
-        return handler
-
-    def _play_word_handler(
-        self, seg_index: int, word_index: int
-    ) -> Callable[[object], str]:
-        def handler(_event: object) -> str:
-            self._play_from_word(seg_index, word_index)
-            return "break"
 
         return handler
 
@@ -477,6 +631,8 @@ class TranscriptView:
         def handler(event: object) -> None:
             if self._has_selection():
                 return  # a drag-select; leave it for right-click "Move selection"
+            if self._drag is not None and self._drag.get("moved"):
+                return  # the end of a drag, handled as a drop
             result = self._result
             if result is None or seg_index >= len(result.segments):
                 return
@@ -500,7 +656,7 @@ class TranscriptView:
             for sid in self._ordered_speaker_ids():
                 if sid == current:
                     continue
-                name = self._speaker_names.get(sid, sid)
+                name = shown_name(sid, self._speaker_names)
                 menu.add_command(
                     label=f"Move “{word_text}” → {name}",
                     command=self._word_command(seg_index, word_index, sid, False),
@@ -511,7 +667,7 @@ class TranscriptView:
             for sid in self._ordered_speaker_ids():
                 if sid == current:
                     continue
-                name = self._speaker_names.get(sid, sid)
+                name = shown_name(sid, self._speaker_names)
                 menu.add_command(
                     label=f"From “{word_text}” onward → {name}",
                     command=self._word_command(seg_index, word_index, sid, True),
@@ -543,6 +699,7 @@ class TranscriptView:
         result.segments[seg_index : seg_index + 1] = parts
         result.segments = coalesce_segments(result.segments)
         if moved:
+            self._moved = (moved[0].start, moved[-1].end, speaker_id)
             self._enroll(speaker_id, [(moved[0].start, moved[-1].end)])
         self._changed()
 
@@ -610,7 +767,7 @@ class TranscriptView:
             return
         menu = tk.Menu(self.root, tearoff=0)
         for sid in targets:
-            name = self._speaker_names.get(sid, sid)
+            name = shown_name(sid, self._speaker_names)
             menu.add_command(
                 label=f"Move selection → {name}",
                 command=self._span_command(seg_index, first_word, last_word, sid),
@@ -637,6 +794,7 @@ class TranscriptView:
         result.segments[seg_index : seg_index + 1] = parts
         result.segments = coalesce_segments(result.segments)
         if moved:
+            self._moved = (moved[0].start, moved[-1].end, speaker_id)
             self._enroll(speaker_id, [(moved[0].start, moved[-1].end)])
         self._changed()
 
@@ -674,40 +832,128 @@ class TranscriptView:
         return None
 
     def _on_drag_press(self, event: object) -> Optional[str]:
-        """Begin dragging the selection if the press lands inside it."""
+        """Begin a drag: of the selection if the press lands inside it, or of a
+        whole line if it lands on that line's speaker tag."""
         self._drag = None
         if not self._editable:
             return None
-        if not self._has_selection() or not self._index_in_selection(event):
+        if self._has_selection() and self._index_in_selection(event):
+            span = self._selected_word_span()
+            if span is None:
+                return None
+            # Keep the selection (suppress the default click that would clear
+            # it) so the following motion drags the span, not a new selection.
+            self._drag = {"span": span, "moved": False, "from": span[0]}
+            return "break"
+        line = self._tag_line_at_event(event)
+        if line is None:
             return None
-        span = self._selected_word_span()
-        if span is None:
-            return None
-        # Keep the selection (suppress the default click that would clear it) so
-        # the following motion drags the span rather than starting a new select.
-        self._drag = {"span": span, "moved": False}
+        x, y = event.x, event.y  # type: ignore[attr-defined]
+        # Not yet a drag: a press that does not travel is a click, and opens
+        # the speaker menu as it always has.
+        self._drag = {"line": line, "moved": False, "from": line, "x": x, "y": y}
         return "break"
 
-    def _on_drag_motion(self, event: object) -> Optional[str]:
-        if self._drag is None:
+    def _tag_line_at_event(self, event: object) -> Optional[int]:
+        """The line whose ``[speaker]`` tag is under the pointer, if any."""
+        try:
+            idx = self.widget.index(f"@{event.x},{event.y}")  # type: ignore[attr-defined]
+        except tk.TclError:
             return None
-        self._drag["moved"] = True
-        self.widget.config(cursor="fleur")  # the four-arrow "move" cursor
-        return "break"  # dragging the span, not extending the selection
+        names = self.widget.tag_names(idx)
+        if not any(tag.startswith("spk::") for tag in names):
+            return None
+        return self._segment_at(idx)
 
-    def _on_drag_release(self, event: object) -> Optional[str]:
-        """Drop: reassign the dragged span to the speaker under the pointer."""
+    def _on_drag_motion(self, event: object) -> Optional[str]:
         drag = self._drag
-        self._drag = None
         if drag is None:
             return None
+        x, y = event.x, event.y  # type: ignore[attr-defined]
+        if "line" in drag and not drag["moved"]:
+            if max(abs(x - cast(int, drag["x"])), abs(y - cast(int, drag["y"]))) < (
+                _DRAG_START
+            ):
+                return "break"
+        drag["moved"] = True
+        drag["y"] = y
+        if _EDGE <= y <= self.widget.winfo_height() - _EDGE:
+            # Clear of both edges once: from now on, nearing one scrolls. A
+            # drag that starts on the top line must not scroll off at once.
+            drag["armed"] = True
+        self.widget.config(cursor="fleur")  # the four-arrow "move" cursor
+        self._show_drop_target(event)
+        self._autoscroll()
+        return "break"  # dragging, not extending a selection
+
+    def _show_drop_target(self, event: object) -> None:
+        """Shade the line a drop would land on, when it would change something."""
+        self.widget.tag_config("droptarget", background=palette().info_bg)
+        self.widget.tag_remove("droptarget", "1.0", "end")
+        drag, result = self._drag, self._result
+        if drag is None or result is None:
+            return
+        try:
+            idx = self.widget.index(f"@{event.x},{event.y}")  # type: ignore[attr-defined]
+        except tk.TclError:
+            return
+        target = self._segment_at(idx)
+        source = cast(int, drag["from"])
+        if (
+            target is None
+            or target >= len(result.segments)
+            or source >= len(result.segments)
+        ):
+            return
+        if result.segments[target].speaker == result.segments[source].speaker:
+            return
+        self.widget.tag_add("droptarget", f"{idx} linestart", f"{idx} lineend")
+
+    def _autoscroll(self) -> None:
+        """Scroll while a drag is held near the top or bottom edge."""
+        drag = self._drag
+        if drag is None or self._scroll_job is not None:
+            return
+        y = cast(int, drag.get("y", 0))
+        height = self.widget.winfo_height()
+        if not drag.get("armed") and 0 <= y <= height:
+            return
+        step = -1 if y < _EDGE else 1 if y > height - _EDGE else 0
+        if not step:
+            return
+        self.widget.yview_scroll(step, "units")
+
+        def again() -> None:
+            self._scroll_job = None
+            self._autoscroll()
+
+        self._scroll_job = self.widget.after(60, again)
+
+    def _end_drag(self) -> None:
+        self._drag = None
         self.widget.config(cursor="")
-        if not drag.get("moved"):
+        self.widget.tag_remove("droptarget", "1.0", "end")
+        if self._scroll_job is not None:
+            self.widget.after_cancel(self._scroll_job)
+            self._scroll_job = None
+
+    def _on_drag_release(self, event: object) -> Optional[str]:
+        """Drop: give the dragged words or line to the speaker under the pointer."""
+        drag = self._drag
+        self._end_drag()
+        if drag is None or not drag.get("moved"):
             return None
         result = self._result
         target = self._speaker_at_event(event)
         if result is None or target is None:
             return None
+        if "line" in drag:
+            line = cast(int, drag["line"])
+            if line >= len(result.segments):
+                return None
+            if (result.segments[line].speaker or "UNKNOWN") != target:
+                self._reassign_segment(line, target)
+            return "break"
         seg_index, first_word, last_word = cast("Tuple[int, int, int]", drag["span"])
         if seg_index >= len(result.segments):
             return None
@@ -719,7 +965,7 @@ class TranscriptView:
     def _rename_speaker(self, speaker_id: str) -> None:
         if not self._editable:
             return
-        current = self._speaker_names.get(speaker_id, speaker_id)
+        current = shown_name(speaker_id, self._speaker_names)
         if is_lead(current):
             # A voice-similarity suggestion is confirmed in its own dialog, not
             # this rename box: confirming trains the profile, so it has to be

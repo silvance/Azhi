@@ -516,8 +516,13 @@ def _transcribe_and_separate(
     try:
         resolved = resolve_model_choice(model, bundled_models())
         progress(f"{case.name}: transcribing with word timings…")
+        # Verbatim, as the application transcribes English by default.
         result = transcribe_audio(
-            wav, model_size=resolved, word_timestamps=True, language=language
+            wav,
+            model_size=resolved,
+            word_timestamps=True,
+            language=language,
+            verbatim=True,
         )
         retimed: Optional[List[Segment]] = None
         if alignment.available() and alignment.applies(result.language):
@@ -526,7 +531,7 @@ def _transcribe_and_separate(
             progress(f"{case.name}: re-timing words…")
             retimed = deepcopy(list(result.segments))
             alignment.align_segments(retimed, wav, progress=progress)
-        backend = chosen_backend(engine)
+        backend = chosen_backend(engine, speakers)
         progress(f"{case.name}: separating speakers ({backend})…")
         turns = diarize(wav, backend=backend, num_speakers=speakers, progress=progress)
     finally:
@@ -542,6 +547,7 @@ def _transcribe_and_separate(
         "engine": backend,
         "speakers_given": speakers,
         "language": result.language,
+        "verbatim": result.verbatim,
     }
     return list(result.segments), list(turns), meta, retimed
 

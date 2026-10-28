@@ -100,13 +100,13 @@ def diarize(
 
     ``backend`` selects the engine:
 
-    * ``"auto"`` (default) - pyannote.audio if installed, else sherpa-onnx.
-    * ``"pyannote"`` - force pyannote (best on hard/low-quality audio).
-    * ``"sherpa"`` - force the sherpa-onnx ONNX pipeline (no PyTorch, faster;
-      good enough for clean audio).
+    * ``"auto"`` (default) - see :func:`chosen_backend`: Nemotron where the
+      build includes it, else pyannote, else sherpa-onnx.
     * ``"nemotron"`` - NVIDIA's end-to-end model (:mod:`whispers.nemotron`), when
-      the build includes it. Never chosen by "auto": it has not been measured
-      on this deployment's recordings.
+      the build includes it.
+    * ``"pyannote"`` - force pyannote (strong on hard/low-quality audio).
+    * ``"sherpa"`` - force the sherpa-onnx ONNX pipeline (no PyTorch; good
+      enough for clean audio).
 
     Every engine returns the same ``SpeakerSegment`` list, so the rest of the
     app is unaffected.
@@ -116,6 +116,7 @@ def diarize(
         raise ValueError(
             f"unknown diarization backend {backend!r}; choose from {', '.join(BACKENDS)}"
         )
+    backend = chosen_backend(backend, num_speakers)
 
     if backend == "pyannote" and not _pyannote_available():
         raise RuntimeError(
@@ -143,10 +144,7 @@ def diarize(
             )
         ]
 
-    # Not just "is the library installed": in a bundle without the pyannote
-    # cache, Pipeline.from_pretrained would go to the Hugging Face Hub for it.
-    use_pyannote = chosen_backend(backend) == "pyannote"
-    if use_pyannote:
+    if backend == "pyannote":
         return _diarize_pyannote(
             wav_path,
             num_speakers=num_speakers,
@@ -217,18 +215,30 @@ def _pyannote_available() -> bool:
         return False
 
 
-def chosen_backend(backend: str = "auto") -> str:
+def chosen_backend(backend: str = "auto", num_speakers: Optional[int] = None) -> str:
     """The engine :func:`diarize` will run for ``backend`` - never "auto".
 
     One answer for two questions: which engine to run, and which engine the
-    analysis record says ran. The record used to store the *setting*, so a
-    report could only ever say "auto", and could not say which engine's
-    models to name.
+    analysis record says ran.
+
+    Auto takes Nemotron where the build includes it: in use it has been both
+    faster than sherpa and better than pyannote at quick back-and-forth. Not
+    for more people than its :data:`~whispers.nemotron.MAX_SPEAKERS`, which it
+    cannot hold apart. Then pyannote where it can run offline, then sherpa.
+    (Not just "is the library installed": in a bundle without the pyannote
+    cache, Pipeline.from_pretrained would go to the Hugging Face Hub.)
     """
+    from . import resources
+
     backend = (backend or "auto").lower()
-    if backend == "auto":
-        return "pyannote" if _pyannote_usable_offline() else "sherpa"
-    return backend
+    if backend != "auto":
+        return backend
+    if resources.bundled_nemotron() is not None:
+        from .nemotron import MAX_SPEAKERS
+
+        if num_speakers is None or num_speakers <= MAX_SPEAKERS:
+            return "nemotron"
+    return "pyannote" if _pyannote_usable_offline() else "sherpa"
 
 
 def _pyannote_usable_offline() -> bool:

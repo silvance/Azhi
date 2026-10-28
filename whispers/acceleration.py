@@ -127,12 +127,12 @@ def describe_hardware() -> str:
     if not build_supports_cuda():
         # Not "no CUDA device detected": that invites someone to go and fit a
         # card, which would change nothing in this build.
-        return "CPU only (this build does not include GPU support)"
+        return "Processor only (this copy has no graphics-card support)"
     count = cuda_device_count()
     if count <= 0:
-        return "CPU only (no CUDA device detected)"
+        return "Processor only (no supported graphics card found)"
     plural = "device" if count == 1 else "devices"
-    return f"CUDA available ({count} {plural}); CPU also supported"
+    return f"Graphics card available ({count} {plural}); the processor also works"
 
 
 def resolve(mode: str = DEFAULT_MODE) -> Device:

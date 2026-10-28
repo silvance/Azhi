@@ -23,7 +23,7 @@ from ..diarization import is_available as diarization_available
 from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber, test_connection
 from ..live_speakers import SpeakerReviewer
 from ..resources import bundled_models, is_bundle
-from ..speaker_names import cluster_index
+from ..speaker_names import shown_name
 from ..transcription import (
     MODEL_SIZES,
     ModelUnavailable,
@@ -79,7 +79,7 @@ class LiveTab:
         self.segment_var = tk.StringVar(value=str(DEFAULT_SEGMENT_SECONDS))
         self.save_var = tk.BooleanVar(value=False)
         self.save_path_var = tk.StringVar(value="")
-        self.status_var = tk.StringVar(value="Idle")
+        self.status_var = tk.StringVar(value="Ready")
         # Who is speaking, worked out behind the words. Off by default: it is a
         # second model running beside the first, on the same processor.
         self.speakers_var = tk.BooleanVar(value=False)
@@ -130,10 +130,8 @@ class LiveTab:
         ttk.Label(
             settings,
             text=(
-                "Point this at a stream ffmpeg can read — e.g. a GoPro pushing "
-                "RTMP to a local server (rtmp://localhost/live/stream). Tick the "
-                "box above only if this PC should listen for the incoming stream "
-                "directly."
+                "For example, a GoPro streaming to a local RTMP server. Tick "
+                "the box only if the source sends straight to this PC."
             ),
             wraplength=560,
             justify="left",
@@ -186,7 +184,7 @@ class LiveTab:
 
         ttk.Checkbutton(
             settings,
-            text="Skip silence (voice activity detection)",
+            text="Skip silence",
             variable=self.vad_var,
             style=Style.CHECK,
         ).grid(row=8, column=1, columnspan=2, sticky="w", pady=(4, 0))
@@ -235,10 +233,7 @@ class LiveTab:
             container,
             title="Live transcript",
             window_title="Whispers — Live transcript",
-            note=(
-                "The live transcript is open in its own window — resize or "
-                "maximise it on whichever screen suits. It keeps running."
-            ),
+            note=("The live transcript is open in its own window. It keeps running."),
             pack_options={"fill": "both", "expand": True, "pady": (SPACE_LG, 0)},
             on_error=self._popout_failed,
         )
@@ -290,12 +285,10 @@ class LiveTab:
         ttk.Label(
             settings,
             text=(
-                "Speakers are worked out a little behind the words: about every "
-                "20 seconds the last ten minutes are gone over again, and an "
-                "earlier line can change speaker as more of each voice is heard. "
-                "Lines marked [\u2026] have not been gone over yet. After Stop, "
-                "the end is checked once more. It runs beside the transcription, "
-                "so on a slow machine both fall further behind."
+                "Speaker labels follow a little behind the words, and an "
+                "earlier line can change speaker as more of each voice is "
+                "heard. Lines marked [\u2026] have no speaker yet. On a slow "
+                "machine, both fall further behind."
             ),
             wraplength=560,
             justify="left",
@@ -411,7 +404,7 @@ class LiveTab:
             reviewer = SpeakerReviewer(
                 on_change=self._on_speakers_change,
                 backend=chosen_backend(
-                    ENGINE_CHOICES.get(self.engine_var.get(), "auto")
+                    ENGINE_CHOICES.get(self.engine_var.get(), "auto"), people
                 ),
                 num_speakers=people,
                 on_status=self._on_status,
@@ -619,5 +612,4 @@ def speaker_text(
 
 
 def _speaker_label(speaker: Optional[str]) -> str:
-    number = cluster_index(speaker) if speaker else None
-    return f"Speaker {number + 1}" if number is not None else "Unknown speaker"
+    return shown_name(speaker)

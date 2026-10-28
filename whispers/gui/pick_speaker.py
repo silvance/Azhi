@@ -23,6 +23,7 @@ from typing import Callable, Dict, Optional, Sequence, Tuple
 
 from ..enrollment import SpeakerOption
 from ..playback import PlaybackError, SegmentPlayer, playback_available
+from ..speaker_names import shown_name
 from .dialogs import present
 from .errors import friendly_error
 from .theme import SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, palette
@@ -104,7 +105,7 @@ def ask_pick_speaker(
         if listener is None:
             return
         message.set(
-            f"Playing {option.speaker}, {clock(option.sample[0])}–"
+            f"Playing {shown_name(option.speaker)}, {clock(option.sample[0])}–"
             f"{clock(option.sample[1])}…"
         )
         listener.play(option.sample, _say)
@@ -117,7 +118,7 @@ def ask_pick_speaker(
         turns = "1 turn" if option.turns == 1 else f"{option.turns} turns"
         ttk.Radiobutton(
             text,
-            text=f"{option.speaker} — {option.seconds:.0f} s of speech in {turns}",
+            text=f"{shown_name(option.speaker)}: {option.seconds:.0f} s of speech in {turns}",
             variable=chosen,
             value=option.speaker,
             style=Style.RADIO,

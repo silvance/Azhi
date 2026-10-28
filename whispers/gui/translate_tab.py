@@ -390,7 +390,7 @@ class TranslateTab:
                 self._busy = False
                 for button in self._start_buttons:
                     button.configure(state="normal")
-            self.translate_status_var.set(message or ("Working…" if busy else "Idle"))
+            self.translate_status_var.set(message or ("Working…" if busy else "Ready"))
 
         self.root.after(0, _do)
 
@@ -439,7 +439,7 @@ class TranslateTab:
             if not from_code:
                 if self._selected_from_code() == "en":
                     self._set_translate_output(
-                        "That's English already — there's nothing to translate. To "
+                        "That's English already, so there's nothing to translate. To "
                         "pull text out of an image or PDF, use 'Extract from "
                         "image/PDF…'."
                     )
@@ -573,7 +573,7 @@ class TranslateTab:
                 parts.append(f"extracted {extracted_count}")
             if skipped:
                 parts.append(f"skipped {skipped}")
-            final = "Done — " + (", ".join(parts) if parts else "nothing to do")
+            final = "Done: " + (", ".join(parts) if parts else "nothing to do")
             if reasons:
                 # The status line holds one sentence; why each was skipped
                 # goes where it can be read.
@@ -585,7 +585,7 @@ class TranslateTab:
             # Show the cause in the Result box; the status line is too short and
             # gets overwritten by the final "busy off" message below.
             self._set_translate_output(friendly_error(exc))
-            final = "Error — see Result box"
+            final = "Error: see the Result box"
         finally:
             self._set_translate_busy(False, final)
 
@@ -606,7 +606,7 @@ class TranslateTab:
 
     def _extract_to_paste_worker(self, path: Path, lang: str) -> None:
         self._set_translate_busy(True, f"Reading {path.name} (OCR)…")
-        final = "Extracted — review, then Translate"
+        final = "Extracted. Review it, then Translate."
         try:
             text = extract_text(
                 path,
@@ -669,7 +669,7 @@ class TranslateTab:
                 self._set_translate_input(read_text(path))
             except UnreadableText as exc:
                 self._set_translate_output(str(exc))
-                self.translate_status_var.set("Not loaded — see Result")
+                self.translate_status_var.set("Not loaded: see Result")
             except OSError as exc:
                 self.translate_status_var.set(friendly_error(exc))
 

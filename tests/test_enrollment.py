@@ -278,13 +278,13 @@ def test_spans_by_speaker_name_follows_the_corrected_labels():
     names = {"SPEAKER_00": "A. Suspect", "SPEAKER_02": "A. Suspect"}
     grouped = spans_by_speaker_name(segments, names)
     assert grouped["A. Suspect"] == [(0.0, 10.0), (14.0, 30.0)]
-    # An unnamed cluster is still selectable under its raw label.
-    assert grouped["SPEAKER_01"] == [(10.0, 14.0)]
+    # An unnamed cluster is still selectable, under the label it is shown by.
+    assert grouped["Speaker 2"] == [(10.0, 14.0)]
 
 
 def test_spans_by_speaker_name_ignores_undiarized_segments():
     segments = [_Seg(0.0, 5.0, None), _Seg(5.0, 9.0, "SPEAKER_00")]
-    assert spans_by_speaker_name(segments, {}) == {"SPEAKER_00": [(5.0, 9.0)]}
+    assert spans_by_speaker_name(segments, {}) == {"Speaker 1": [(5.0, 9.0)]}
 
 
 # -- operator-typed time ranges -------------------------------------------

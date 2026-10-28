@@ -111,6 +111,11 @@ class TranscriptionProvenance:
     # (off for large-v3 and turbo; see transcription.carries_context). None in
     # a record made before this was recorded.
     previous_text_context: Optional[bool] = None
+    # Whether the verbatim example was given, to keep hesitations and repeats,
+    # and how many lines that only repeated it were taken out. None in a
+    # record made before this was recorded.
+    verbatim: Optional[bool] = None
+    example_lines_removed: Optional[int] = None
     word_timing: str = ""
     word_timing_model_sha256: str = ""
     words_retimed: Optional[int] = None
@@ -132,6 +137,8 @@ class TranscriptionProvenance:
             "listening_copy": self.listening_copy,
             "listening_filters": self.listening_filters,
             "previous_text_context": self.previous_text_context,
+            "verbatim": self.verbatim,
+            "example_lines_removed": self.example_lines_removed,
             "word_timing": self.word_timing,
             "word_timing_model_sha256": self.word_timing_model_sha256,
             "words_retimed": self.words_retimed,
@@ -161,6 +168,10 @@ class TranscriptionProvenance:
                 if isinstance(data.get("previous_text_context"), bool)
                 else None
             ),
+            verbatim=(
+                data["verbatim"] if isinstance(data.get("verbatim"), bool) else None
+            ),
+            example_lines_removed=_count(data.get("example_lines_removed")),
             word_timing=str(data.get("word_timing") or ""),
             word_timing_model_sha256=str(data.get("word_timing_model_sha256") or ""),
             words_retimed=_count(data.get("words_retimed")),
@@ -483,6 +494,23 @@ class AnalysisProvenance:
                         "yes"
                         if context
                         else "no (each 30-second stretch started afresh)"
+                    )
+                )
+            verbatim = self.transcription.verbatim
+            if verbatim is not None:
+                removed = self.transcription.example_lines_removed or 0
+                lines.append(
+                    "Hesitations and repeats kept (verbatim example given): "
+                    + (
+                        "yes"
+                        + (
+                            f"; {removed} line(s) that only repeated the "
+                            "example were left out"
+                            if removed
+                            else ""
+                        )
+                        if verbatim
+                        else "no"
                     )
                 )
             if self.transcription.word_timing:

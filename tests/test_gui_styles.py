@@ -256,3 +256,42 @@ def test_a_transcript_speaker_can_be_searched_against_every_profile(
     # Edited by hand, the ranges are no longer "Anna's lines".
     compare.ranges_var.set("0:00-0:02")
     assert "Anna" not in compare._selection_description([(0.0, 2.0)])
+
+
+def test_hesitations_are_kept_by_default_and_the_choice_is_remembered(app):
+    page = app.transcribe
+    assert page.verbatim_var.get() is True
+    page.verbatim_var.set(False)
+    saved = page.get_settings()
+    assert saved["verbatim"] is False
+    page.verbatim_var.set(True)
+    page.apply_settings(saved)
+    assert page.verbatim_var.get() is False
+
+
+def test_a_method_saved_under_an_old_label_keeps_its_choice(app):
+    page = app.transcribe
+    page.apply_settings({"engine": "pyannote - most accurate"})
+    assert page.engine_var.get() == "pyannote (strong on noisy audio)"
+    page.apply_settings({"engine": "Auto (pyannote if available)"})
+    assert page.engine_var.get() == "Auto (recommended)"
+
+
+def test_the_task_box_shows_words_and_runs_on_the_value(app):
+    page = app.transcribe
+    page.task_var.set("translate")
+    assert page.task_choice_var.get() == "Translate into English"
+    page.task_var.set("transcribe")
+    assert page.task_choice_var.get() == "Transcribe (keep the language)"
+
+
+def test_grouping_sensitivity_shows_only_where_it_does_something(app):
+    page = app.transcribe
+    page.num_speakers_var.set("")
+    page.engine_var.set("sherpa (lightest, for clean audio)")
+    assert page._sensitivity_row.winfo_manager() == "grid"
+    page.num_speakers_var.set("2")  # a count given: sherpa does not group
+    assert page._sensitivity_row.winfo_manager() == ""
+    page.num_speakers_var.set("")
+    page.engine_var.set("pyannote (strong on noisy audio)")
+    assert page._sensitivity_row.winfo_manager() == ""

@@ -81,3 +81,9 @@ def test_from_label_gives_the_count_asked_for():
     assert speaker_count.from_label("3 people") == 3
     assert speaker_count.from_label(speaker_count.UNKNOWN) is None
     assert speaker_count.from_label(speaker_count.UNSET) is None
+
+
+def test_an_answer_saved_in_the_old_wording_still_counts():
+    assert speaker_count.canonical("Not sure — work it out") == speaker_count.UNKNOWN
+    assert speaker_count.is_answered(speaker_count.canonical("Not sure — work it out"))
+    assert speaker_count.canonical("2 people") == "2 people"
