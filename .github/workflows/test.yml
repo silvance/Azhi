@@ -41,7 +41,7 @@ jobs:
       - name: mypy
         run: |
           pip install --upgrade mypy
-          mypy whispers
+          mypy sotto
   tests:
     needs: pre-commit
     # 24.04: ubuntu-latest (26.04) has no Python 3.9 build for setup-python.

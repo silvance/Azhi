@@ -1,9 +1,9 @@
 import pytest
 
-from whispers import app, diagnostics, diarization
-from whispers.buildinfo import BuildInfo
-from whispers.diagnostics import Check, format_report, gather
-from whispers.hashing import sha256_file
+from sotto import app, diagnostics, diarization
+from sotto.buildinfo import BuildInfo
+from sotto.diagnostics import Check, format_report, gather
+from sotto.hashing import sha256_file
 
 
 def test_gather_returns_checks_covering_each_area():
@@ -20,7 +20,7 @@ def test_format_report_marks_ok_and_missing():
         Check("Thing B", False, "MISSING"),
     ]
     report = format_report(checks)
-    assert "Whispers system status" in report
+    assert "Sotto system status" in report
     assert "[OK ] Thing A" in report
     assert "[-- ] Thing B" in report
     assert "MISSING" in report
@@ -238,7 +238,7 @@ def test_self_test_shows_the_thresholds_in_force(monkeypatch, tmp_path):
 
 
 # -- headless self-test -----------------------------------------------------
-# `Whispers --self-test` is what the release build runs against the frozen
+# `Sotto --self-test` is what the release build runs against the frozen
 # executable to prove it starts. It must never need a display: a bundle that
 # only fails once a window opens is a bundle nobody checks.
 
@@ -253,7 +253,7 @@ def test_self_test_prints_the_report_and_succeeds(capsys, monkeypatch):
     # No window was opened: this has to run on a build machine with no display.
     assert launched == []
     out = capsys.readouterr().out
-    assert "Whispers system status" in out
+    assert "Sotto system status" in out
 
 
 def test_without_the_flag_the_gui_still_launches(monkeypatch):
@@ -282,7 +282,7 @@ def test_self_test_reports_a_reduced_build_rather_than_failing(monkeypatch):
 
 
 def _cache(tmp_path, monkeypatch, *, ref=True):
-    from whispers import hub_cache
+    from sotto import hub_cache
 
     hub = tmp_path / "hub"
     for repo in hub_cache.PYANNOTE_REPOS:

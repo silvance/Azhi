@@ -14,8 +14,8 @@ import types
 
 import pytest
 
-from whispers import diagnostics, diarization, resources, transcription
-from whispers.transcription import ModelUnavailable, resolve_model_choice
+from sotto import diagnostics, diarization, resources, transcription
+from sotto.transcription import ModelUnavailable, resolve_model_choice
 
 _OFFLINE = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
 _ARGOS = ("ARGOS_MODEL_PROVIDER", "ARGOS_CHUNK_TYPE")
@@ -93,7 +93,7 @@ def test_no_model_chosen_is_refused(source):
 
 
 def test_a_refusal_reaches_the_operator_as_written():
-    friendly_error = pytest.importorskip("whispers.gui.errors").friendly_error
+    friendly_error = pytest.importorskip("sotto.gui.errors").friendly_error
     message = "This copy has no ‘medium’ model. System status lists them."
     assert friendly_error(ModelUnavailable(message)) == message
 
@@ -243,7 +243,7 @@ def test_running_from_source_does_not_refuse_downloads(source):
 
 
 def test_the_refusal_reaches_the_operator_as_written():
-    friendly_error = pytest.importorskip("whispers.gui.errors").friendly_error
+    friendly_error = pytest.importorskip("sotto.gui.errors").friendly_error
     message = "This copy tried to download https://x and was stopped."
     assert friendly_error(resources.NetworkRefused(message)) == message
 

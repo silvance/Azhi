@@ -2,18 +2,18 @@ import math
 
 import pytest
 
-from whispers.matching import (
+from sotto.matching import (
     ComparisonResult,
     compare_embedding_to_profile,
     search_gallery,
 )
-from whispers.quality import GOOD, INSUFFICIENT, POOR
-from whispers.speaker_profiles import (
+from sotto.quality import GOOD, INSUFFICIENT, POOR
+from sotto.speaker_profiles import (
     EmbeddingModelIdentity,
     EnrollmentSample,
     SpeakerProfile,
 )
-from whispers.thresholds import (
+from sotto.thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
     BAND_INTERMEDIATE,
@@ -346,7 +346,7 @@ def test_comparison_result_defaults_are_inconclusive():
 
 def test_a_configured_threshold_override_is_honoured(monkeypatch):
     """The comparison band edge comes from the active set, not a frozen default."""
-    from whispers import thresholds as th
+    from sotto import thresholds as th
 
     monkeypatch.setattr(th, "_active", th.Thresholds(comparison_high=0.99))
     profile = _profile(seconds=30.0)
@@ -551,8 +551,8 @@ def test_a_ranking_on_audio_too_poor_to_assess_carries_no_bands():
     "Viktor Marchenko 0.83 High similarity" in History, in the full result and
     in the report. On audio too poor to assess, every entry is "Not assessed".
     """
-    from whispers.comparison_log import record_from_gallery
-    from whispers.thresholds import BAND_NOT_ASSESSED
+    from sotto.comparison_log import record_from_gallery
+    from sotto.thresholds import BAND_NOT_ASSESSED
 
     result = search_gallery(
         [1.0, 0.0],

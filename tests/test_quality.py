@@ -2,9 +2,9 @@ import wave
 
 import numpy as np
 
-from whispers import quality
-from whispers.enrollment import WINDOW_SECONDS
-from whispers.quality import (
+from sotto import quality
+from sotto.enrollment import WINDOW_SECONDS
+from sotto.quality import (
     FAIR,
     GOOD,
     INSUFFICIENT,

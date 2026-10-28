@@ -9,7 +9,8 @@ thumbs.db
 .DS_Store
 .idea
 
-# Whispers runtime assets - keep large models/binaries out of git
+# Sotto runtime assets - keep large models/binaries out of git
+sotto_assets/
 whispers_assets/
 models/
 *.ct2

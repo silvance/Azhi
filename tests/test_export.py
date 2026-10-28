@@ -2,8 +2,8 @@ import importlib.util
 
 import pytest
 
-from whispers.export import text_to_docx, transcript_to_docx
-from whispers.transcription import Segment, TranscriptionResult
+from sotto.export import text_to_docx, transcript_to_docx
+from sotto.transcription import Segment, TranscriptionResult
 
 _HAS_DOCX = importlib.util.find_spec("docx") is not None
 

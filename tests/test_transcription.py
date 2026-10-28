@@ -1,7 +1,7 @@
 import pytest
 
-from whispers import transcription
-from whispers.transcription import (
+from sotto import transcription
+from sotto.transcription import (
     Segment,
     TranscriptionResult,
     Word,
@@ -203,7 +203,7 @@ def test_transcribe_audio_without_backend(tmp_path):
 # makes the loss visible when it still happens.
 
 
-def test_speech_is_entered_below_faster_whispers_default():
+def test_speech_is_entered_below_faster_sotto_default():
     """0.5 is tuned for clean speech and discards muffled speech after a pause."""
     assert transcription.VAD_THRESHOLD < 0.5
     assert transcription.vad_options()["threshold"] == transcription.VAD_THRESHOLD
@@ -338,7 +338,7 @@ def test_an_unfiltered_run_does_not_claim_a_filtered_duration(monkeypatch, tmp_p
     ],
 )
 def test_models_that_cannot_translate_are_named(model):
-    from whispers.transcription import translation_refusal
+    from sotto.transcription import translation_refusal
 
     reason = translation_refusal(model)
     assert reason and "medium or large-v3" in reason
@@ -346,13 +346,13 @@ def test_models_that_cannot_translate_are_named(model):
 
 @pytest.mark.parametrize("model", ["medium", "large-v3", "small", "/models/large-v3"])
 def test_multilingual_models_can_translate(model):
-    from whispers.transcription import translation_refusal
+    from sotto.transcription import translation_refusal
 
     assert translation_refusal(model) is None
 
 
 def test_a_translation_left_in_chinese_is_spotted():
-    from whispers.transcription import UNTRANSLATED_SHARE, Segment, untranslated_share
+    from sotto.transcription import UNTRANSLATED_SHARE, Segment, untranslated_share
 
     chinese = [
         Segment(0, 2, "他们就不许摘了之后呢然后杭州的查克索六几年的时候去那个武夷山")
@@ -405,7 +405,7 @@ def test_turbo_starts_each_stretch_afresh_but_keeps_the_expected_words(
 
 
 def test_the_record_says_whether_earlier_text_was_context():
-    from whispers.provenance import AnalysisProvenance, TranscriptionProvenance
+    from sotto.provenance import AnalysisProvenance, TranscriptionProvenance
 
     record = TranscriptionProvenance(model_name="turbo", previous_text_context=False)
     assert TranscriptionProvenance.from_dict(record.to_dict()) == record
@@ -626,7 +626,7 @@ def test_without_verbatim_a_matching_line_is_left_alone(monkeypatch, tmp_path):
 
 
 def test_the_record_says_whether_hesitations_were_kept():
-    from whispers.provenance import AnalysisProvenance, TranscriptionProvenance
+    from sotto.provenance import AnalysisProvenance, TranscriptionProvenance
 
     record = TranscriptionProvenance(
         model_name="turbo", verbatim=True, example_lines_removed=2

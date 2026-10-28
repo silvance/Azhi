@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from whispers import ocr
-from whispers.ocr import (
+from sotto import ocr
+from sotto.ocr import (
     extract_text,
     is_image,
     is_ocr_file,

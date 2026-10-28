@@ -1,7 +1,7 @@
 """The listening copy: what plain filtering does, and what it must never claim.
 
 An operator asked for something built in house that cleans a recording up
-slightly so a listener can focus on the speech. whispers/listening.py is that,
+slightly so a listener can focus on the speech. sotto/listening.py is that,
 and it is deliberately arithmetic rather than a model, so its behaviour is
 measurable rather than a matter of opinion. These tests measure it.
 
@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from whispers import listening
+from sotto import listening
 
 RATE = 16000
 
@@ -435,7 +435,7 @@ def test_a_listening_copy_can_be_written_somewhere_else(tmp_path):
 
 
 def test_the_guard_recognises_both_kinds_of_derived_copy():
-    from whispers import enhance
+    from sotto import enhance
 
     assert listening.derived_kind("a.wav" + listening.SUFFIX) == "listening copy"
     assert listening.derived_kind("a.wav" + enhance.SUFFIX) == "cleaned copy"
@@ -512,7 +512,7 @@ def test_an_unusual_sample_rate_is_handled(tmp_path):
 
 def test_derived_copies_are_recognised_whatever_the_case():
     """On Windows "X.CLEANED.WAV" and "x.cleaned.wav" are the same file."""
-    from whispers import enhance
+    from sotto import enhance
 
     assert listening.looks_polished("CALL.WAV.LISTENING.WAV")
     assert enhance.looks_cleaned("Call.Wav.Cleaned.Wav")

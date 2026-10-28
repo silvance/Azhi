@@ -1,6 +1,6 @@
-# Whispers
+# Sotto
 
-Whispers is an offline desktop application for transcribing recordings,
+Sotto is an offline desktop application for transcribing recordings,
 working out who spoke when, and comparing a voice against reference profiles.
 It is built for investigative triage on air-gapped Windows and
 Linux machines: nothing it does reaches the network, and a voice comparison is a
@@ -16,12 +16,25 @@ models through [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 (CTranslate2). Speaker separation uses NVIDIA's Nemotron 3 Diarization,
 pyannote.audio or sherpa-onnx; translation uses Argos Translate,
 and OCR Tesseract. Reports name the exact models a result came from. Licences:
-[`LICENSE`](LICENSE) for Whispers, [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+[`LICENSE`](LICENSE) for Sotto, [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 for everything it ships.
+
+**Formerly Whispers** (and Whispr before that). An earlier version's saved
+work carries over on first launch:
+
+- **The settings folder** (`%APPDATA%\Whispers`, or `~/.config/whispers` or
+  `~/.config/whispr`) is renamed, never copied. It holds the speaker profiles,
+  comparison records and operation profiles.
+- **Files under the old endings** are renamed in place (`.whispers-speaker.json`,
+  `.whispers-comparison.json` and so on). Projects (`.whispers.json`) and
+  exported profiles still open.
+- **Old environment variables** (`WHISPERS_ASSETS`, `WHISPERS_MODE`,
+  `WHISPERS_DEBUG`) still count; the `SOTTO_` names win.
+- **An existing `whispers_assets` folder** in a source checkout is still found.
 
 ## The application
 
-Whispers transcribes audio and video files (and translates text) without the
+Sotto transcribes audio and video files (and translates text) without the
 command line. It is built for CPU-only hosts: transcription runs through
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) with
 int8 quantization, which is fast and light on a CPU.
@@ -39,7 +52,7 @@ Install the optional GUI extras and launch it:
 
 ```bash
 pip install ".[gui]"
-whispers            # or: python -m whispers
+sotto            # or: python -m sotto
 ```
 
 In the window, pick a recording, choose a model, pick the **task** — *transcribe*
@@ -101,7 +114,7 @@ the bundled ffmpeg and played with the OS's built-in audio, so it works offline.
 
 **Save & reopen a project.** Transcription and the manual speaker fixes are real
 work, so **Save project…** writes the result, your speaker names and corrections,
-and the source path to a `.whispers.json` file; **Open project…** loads it back so
+and the source path to a `.sotto.json` file; **Open project…** loads it back so
 you can keep editing (and re-listening) in a later session.
 
 **Batch.** Drop a whole folder onto the window — or use **Add a folder…** — and
@@ -141,7 +154,7 @@ is reported once rather than fifty times.
 **Remembered settings.** The Transcribe tab's choices (model, language, output
 folder, diarization and the other options) are saved on exit and restored next
 launch, so you don't re-set them each time. Stored in a small per-user JSON file
-(`%APPDATA%\Whispers\settings.json` on Windows).
+(`%APPDATA%\Sotto\settings.json` on Windows).
 
 **Find.** Use the **Find** box under the transcript to jump through matches
 (Enter = next, Shift+Enter = previous); every hit is highlighted and the current
@@ -187,10 +200,10 @@ swap.
 
 - **pyannote.audio** (`speaker-diarization-3.1`, PyTorch) — much better on hard /
   low-quality / overlapping audio. Loads from a bundled offline model cache at
-  `whispers_assets/pyannote` (no network or token needed at runtime; see below).
+  `sotto_assets/pyannote` (no network or token needed at runtime; see below).
 - **sherpa-onnx** (ONNX / CPU, no PyTorch) — lighter and faster, with no PyTorch
   to load; a good choice for clean audio. Needs a segmentation model and a speaker
-  embedding model at `whispers_assets/diarization/segmentation.onnx` and
+  embedding model at `sotto_assets/diarization/segmentation.onnx` and
   `.../embedding.onnx` (embedding is NeMo TitaNet-large, English).
 
 - **Nemotron** (the default; NVIDIA Nemotron 3 Diarization through the
@@ -318,7 +331,7 @@ never the duration of a selection that was only partly usable.
 
 **Sharing and comparing speakers.** A profile can be moved between machines with
 **Export…** / **Import…** (the whole profile — settings and learned voices — as one
-`*.whispers-profile.json`; import warns before overwriting a same-named profile).
+`*.sotto-profile.json`; import warns before overwriting a same-named profile).
 
 Comparing one voice with another is done on the **Compare Speakers** page, against
 a subject built on **Speaker Profiles**, and nowhere else. It reports a
@@ -337,10 +350,10 @@ Comparison History. **Export speaker…**, which only produced those files, went
 with it.
 
 The score is **not** a percentage and **not** a probability: a cosine similarity of
-0.78 does not mean "78% the same person". Whispers deliberately never reports a
+0.78 does not mean "78% the same person". Sotto deliberately never reports a
 percentage, a confidence of identity or a likelihood of identity.
 
-> Speaker similarity results produced by Whispers are investigative indicators
+> Speaker similarity results produced by Sotto are investigative indicators
 > intended to support lead development and analyst review. They are not forensic
 > speaker identification, are not a biometric probability of identity, and should
 > not be treated as proof that two recordings contain the same person.
@@ -348,7 +361,7 @@ percentage, a confidence of identity or a likelihood of identity.
 A high-similarity result never becomes "this is John Doe" — it means *the questioned
 speaker produced high similarity to the John Doe reference profile, and further
 review is warranted*. Both voiceprints must come from builds using the same
-speaker-embedding model; Whispers refuses the comparison outright when the model
+speaker-embedding model; Sotto refuses the comparison outright when the model
 hash or vector dimension differs, and asks for explicit confirmation when an older
 profile cannot prove which model produced it.
 
@@ -356,10 +369,10 @@ profile cannot prove which model produced it.
 
 The unit tests exercise software behaviour on synthetic vectors. They say nothing
 about whether the system can tell two people apart — that needs real recordings of
-known speakers. `whispers.validation` is the offline harness for measuring it:
+known speakers. `sotto.validation` is the offline harness for measuring it:
 
 ```bash
-python -m whispers.validation /path/to/corpus --out validation-results
+python -m sotto.validation /path/to/corpus --out validation-results
 ```
 
 The corpus is either a directory of per-speaker folders
@@ -375,7 +388,7 @@ comparisons, and writes:
 - `roc.csv` — ROC data (false-accept vs genuine-accept)
 - `validation.png` — plots, if matplotlib is installed (never a bundle dependency)
 
-**The operational thresholds in `whispers/thresholds.py` are conservative defaults,
+**The operational thresholds in `sotto/thresholds.py` are conservative defaults,
 not calibrated values.** They should be replaced with figures measured on
 recordings representative of the intended deployment — language, channel,
 microphone, noise and speech duration all move these numbers substantially. Until
@@ -385,12 +398,12 @@ that has been done, treat similarity results as directional only.
 
 Speaker labels are weakest in quick exchanges — one-word replies, interruptions,
 overlapping speech — and how weak depends on the deployment's own audio.
-`whispers.diarization_eval` scores the transcript against recordings an analyst
+`sotto.diarization_eval` scores the transcript against recordings an analyst
 has labelled by ear (Audacity label exports or RTTM), offline:
 
 ```bash
-Whispers --score-test-set /path/to/testset --out results     # shipped copy
-python -m whispers.diarization_eval /path/to/testset --out results
+Sotto --score-test-set /path/to/testset --out results     # shipped copy
+python -m sotto.diarization_eval /path/to/testset --out results
 ```
 
 It reports, per recording and pooled: the share of words shown against the
@@ -431,7 +444,7 @@ keep up on CPU — a big model will fall behind.
 both in the ffmpeg a bundle already ships; no other library) is the other
 source. **Refresh** lists what is plugged in. Its audio exists nowhere else, so
 the whole of it is always kept: ffmpeg writes it, at the device's own rate and
-channels, to a WAV in **Keep recordings in** (`Documents\Whispers recordings`
+channels, to a WAV in **Keep recordings in** (`Documents\Sotto recordings`
 by default), beside the live chunks it transcribes. On **Stop**, a record is
 written next to it (`<recording>.wav.capture.json`): the device, start and stop
 times, the transcription model, the file's size and SHA-256, and the rate,
@@ -449,7 +462,7 @@ a mic close to the speaker beats the camera's on-board mic.
 The transcription backend is also usable directly from Python:
 
 ```python
-from whispers import transcribe_audio
+from sotto import transcribe_audio
 
 result = transcribe_audio(
     "recording.mp3", model_size="base", task="transcribe", language=None
@@ -489,8 +502,8 @@ fetched at runtime.
 
 **Build the bundles** with the `release-bundles` GitHub Actions workflow
 (Actions → *release-bundles* → *Run workflow*, or push a `bundle-v*` tag). It
-builds on hosted Windows and Linux runners and uploads `whispers-windows-x86_64` and
-`whispers-linux-x86_64` artifacts. The build runners use the internet; the target
+builds on hosted Windows and Linux runners and uploads `sotto-windows-x86_64` and
+`sotto-linux-x86_64` artifacts. The build runners use the internet; the target
 machines never do. You choose which models to bundle via the **`models`** input —
 a comma-separated list such as `base.en,small,medium.en,large-v3`. **Only the
 models you list here are in the build**; the app's Model dropdown still shows every
@@ -531,13 +544,13 @@ on and its SHA-256; speaker profiles and comparisons are only valid between
 builds that share that exact model.
 
 **Getting a large bundle (bypassing the 2 GB release cap).** Every run already
-uploads the full per-OS bundle as an **Actions artifact** (`dist/Whispers`), and
+uploads the full per-OS bundle as an **Actions artifact** (`dist/Sotto`), and
 artifacts are **not** subject to the 2 GB per-file limit that Release assets are —
 so to ship `medium.en`/`large-v3` and the full translation/OCR stacks, just *Run
 workflow* with your chosen `models` and **leave `release_tag` empty**. Download the
-`whispers-linux-x86_64` / `whispers-windows-x86_64` artifact from the run's **Summary**
+`sotto-linux-x86_64` / `sotto-windows-x86_64` artifact from the run's **Summary**
 page, and copy it to the air-gapped machine. The artifact downloads as a single
-`.zip`; unzip it once to get the runnable `Whispers` bundle folder. Two caveats vs. a
+`.zip`; unzip it once to get the runnable `Sotto` bundle folder. Two caveats vs. a
 Release: only someone signed in with repo access can download an artifact, and it's
 retained for 14 days by default (raise `retention-days` in the workflow if you need
 longer). The **`translate_langs`** input controls which offline text-translation
@@ -552,9 +565,9 @@ skip OCR), so OCR also runs air-gapped.
 page (a permanent, public download — unlike the temporary, login-only Actions
 *artifacts*), give the **`release_tag`** input a version (e.g. `v1.0.0`) when you
 *Run workflow*, or push a `bundle-v*` tag. The per-OS bundle is archived
-(`whispers-windows-x86_64.zip`, `whispers-linux-x86_64.tar.gz`) and attached to a
+(`sotto-windows-x86_64.zip`, `sotto-linux-x86_64.tar.gz`) and attached to a
 GitHub Release at that tag; visitors then download it, unzip, and run
-`Whispers` / `Whispers.exe` — no install or network. **Mind the size:** a release
+`Sotto` / `Sotto.exe` — no install or network. **Mind the size:** a release
 asset is capped at ~2 GB, so a public release should be a lean build (e.g.
 `models=base.en`, `diarizer=sherpa`, empty `translate_langs`/`ocr_langs`) — the
 full multi-GB bundle won't upload as a single asset. (Re-running the same tag
@@ -566,7 +579,7 @@ setting **`models=base.en`**, **`translate_langs=`** and **`ocr_langs=`** (both
 empty): this drops the multi-GB models and the ~1 GB Argos/translation and OCR
 stacks while keeping full transcription and diarization. The GUI detects that no translation engine is
 present and **hides the Translate tab**, so the app opens as a clean,
-single-purpose transcriber. (Even on a full bundle, set the `WHISPERS_MODE=transcribe`
+single-purpose transcriber. (Even on a full bundle, set the `SOTTO_MODE=transcribe`
 environment variable to force the transcriber-only view — e.g. on a locked-down
 shortcut.)
 
@@ -580,7 +593,7 @@ the processing hardware. Run it before copying a bundle to an air-gapped machine
 
 **Auditable, and pinned.** Two files do two different jobs.
 
-`packaging/build_manifest.py` writes `whispers_assets/build_manifest.json` with the
+`packaging/build_manifest.py` writes `sotto_assets/build_manifest.json` with the
 build id, git commit, timestamp, platform, resolved dependency versions and a
 SHA-256 for every bundled model, so a result can always be traced back to the
 exact bundle that produced it — and two bundles can be compared file by file.
@@ -622,7 +635,7 @@ commit the lock it uploads as `<artifact>-assets-lock`. An update nobody chose i
 what this prevents; an update somebody chose is one commit.
 
 Freezing the bundle you tested and recording its SHA-256 is still worth doing —
-`Whispers --verify` checks a copy against `bundle-inventory.json` — but it is no
+`Sotto --verify` checks a copy against `bundle-inventory.json` — but it is no
 longer the only defence against a rebuild drifting.
 
 Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
@@ -647,31 +660,31 @@ To build locally instead on a connected machine of each OS:
 
 ```bash
 # sherpa-onnx diarizer (smaller, no token)
-pip install "whispers[gui,bundle]"
+pip install "sotto[gui,bundle]"
 python packaging/fetch_assets.py ffmpeg
 python packaging/fetch_assets.py models small,medium,large-v3
 python packaging/fetch_assets.py diarization
-pyinstaller --noconfirm packaging/whispers.spec      # output in dist/Whispers/
+pyinstaller --noconfirm packaging/sotto.spec      # output in dist/Sotto/
 
 # pyannote diarizer (best quality; adds CPU PyTorch, needs a token)
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-pip install "whispers[gui,bundle,pyannote]"
+pip install "sotto[gui,bundle,pyannote]"
 python packaging/fetch_assets.py ffmpeg
 python packaging/fetch_assets.py models small,medium,large-v3
 HF_TOKEN=hf_... python packaging/fetch_assets.py pyannote
-pyinstaller --noconfirm packaging/whispers.spec      # output in dist/Whispers/
+pyinstaller --noconfirm packaging/sotto.spec      # output in dist/Sotto/
 ```
 
 **Deploy:** download/copy the bundle folder onto a USB drive, copy it to the
-air-gapped PC, and run the `Whispers` executable inside (`Whispers.exe` on Windows; on
-Linux you may need `chmod +x Whispers`). The bundled models appear at the top of the
+air-gapped PC, and run the `Sotto` executable inside (`Sotto.exe` on Windows; on
+Linux you may need `chmod +x Sotto`). The bundled models appear at the top of the
 **Model** dropdown and are used without any download; the bundled `ffmpeg` is found
-automatically. (Set the `WHISPERS_ASSETS` environment variable to point at a
-`whispers_assets/` directory if you keep models/ffmpeg outside the bundle.)
+automatically. (Set the `SOTTO_ASSETS` environment variable to point at a
+`sotto_assets/` directory if you keep models/ffmpeg outside the bundle.)
 
 ## Licence
 
-Whispers is released under the MIT licence - see [`LICENSE`](LICENSE). The
+Sotto is released under the MIT licence - see [`LICENSE`](LICENSE). The
 models and libraries it runs on keep their own licences; see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and a bundle's `licenses/`
 folder for every Python package it contains.

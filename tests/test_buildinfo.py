@@ -4,14 +4,14 @@ import json
 
 import pytest
 
-from whispers import buildinfo
-from whispers.buildinfo import UNKNOWN, BuildInfo, build_info, load_manifest
+from sotto import buildinfo
+from sotto.buildinfo import UNKNOWN, BuildInfo, build_info, load_manifest
 
 
 @pytest.fixture
 def assets(tmp_path, monkeypatch):
-    """A stand-in ``whispers_assets`` directory for the manifest to live in."""
-    directory = tmp_path / "whispers_assets"
+    """A stand-in ``sotto_assets`` directory for the manifest to live in."""
+    directory = tmp_path / "sotto_assets"
     directory.mkdir()
     monkeypatch.setattr(buildinfo, "asset_dirs", lambda: [directory])
     return directory

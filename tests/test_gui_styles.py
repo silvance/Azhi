@@ -26,13 +26,13 @@ pytestmark = pytest.mark.skipif(
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    import whispers.gui.app as app_mod
+    import sotto.gui.app as app_mod
 
     # Build the speaker pages too, without needing the model file.
     monkeypatch.setattr(app_mod, "bundled_embedding_model", lambda: Path("e.onnx"))
     root = tb.Window(themename="darkly")
     try:
-        yield app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True)
+        yield app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True)
     finally:
         root.destroy()
 
@@ -49,7 +49,7 @@ def _styles(widget):
 
 
 def test_custom_styles_survive_ttkbootstrap(app):
-    from whispers.gui.theme import Style
+    from sotto.gui.theme import Style
 
     seen = _styles(app.root)
     for name in (
@@ -84,9 +84,9 @@ def test_translate_with_a_model_that_cannot_is_refused_before_it_runs(app):
 
 
 def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
-    from whispers import alignment
-    from whispers.provenance import TranscriptionProvenance
-    from whispers.transcription import Segment, TranscriptionResult, Word
+    from sotto import alignment
+    from sotto.provenance import TranscriptionProvenance
+    from sotto.transcription import Segment, TranscriptionResult, Word
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
@@ -100,11 +100,11 @@ def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
         return alignment.AlignmentSummary(words=3, retimed=2)
 
     monkeypatch.setattr(alignment, "align_segments", align_segments)
-    import whispers.gui.app as app_mod
+    import sotto.gui.app as app_mod
 
     root = tb.Window(themename="darkly")
     try:
-        page = app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True).transcribe
+        page = app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True).transcribe
         # Offered, and on, where the build carries the model.
         assert page.retime_var.get() is True
         assert "retime_words" in page.get_settings()
@@ -140,19 +140,19 @@ def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
 def test_live_speakers_relabel_the_transcript_and_rewrite_the_file(
     tmp_path, monkeypatch
 ):
-    from whispers.transcription import Segment
+    from sotto.transcription import Segment
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    import whispers.gui.app as app_mod
-    import whispers.gui.live_tab as live_mod
+    import sotto.gui.app as app_mod
+    import sotto.gui.live_tab as live_mod
 
     monkeypatch.setattr(live_mod, "diarization_available", lambda: True)
     # The Live page is only built where ffmpeg can read a stream.
     monkeypatch.setattr(app_mod, "find_ffmpeg", lambda: Path("ffmpeg"))
     root = tb.Window(themename="darkly")
     try:
-        page = app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True).live
+        page = app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True).live
         assert page.speakers_var.get() is False  # a second model: asked for
 
         saved = tmp_path / "live.txt"
@@ -194,23 +194,23 @@ def test_live_speakers_relabel_the_transcript_and_rewrite_the_file(
 @pytest.fixture
 def app_with_profiles(app, monkeypatch):
     # The Transcribe page asks for itself whether voices can be measured.
-    import whispers.gui.transcribe_tab as transcribe_mod
+    import sotto.gui.transcribe_tab as transcribe_mod
 
     monkeypatch.setattr(
         transcribe_mod, "bundled_embedding_model", lambda: Path("e.onnx")
     )
-    import whispers.gui.app as app_mod
+    import sotto.gui.app as app_mod
 
     root = app.root
     for child in list(root.winfo_children()):
         child.destroy()
-    return app_mod.WhispersApp(root, drag_and_drop=False, bootstrap=True)
+    return app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True)
 
 
 def test_a_transcript_speaker_can_be_searched_against_every_profile(
     app_with_profiles, tmp_path
 ):
-    from whispers.transcription import Segment, TranscriptionResult
+    from sotto.transcription import Segment, TranscriptionResult
 
     app = app_with_profiles
     recording = tmp_path / "call.wav"
