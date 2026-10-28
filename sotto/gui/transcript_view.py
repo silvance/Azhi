@@ -68,6 +68,7 @@ class TranscriptView:
         on_enroll: Optional[Callable[[str, List[Tuple[float, float]]], None]] = None,
         on_compare: Optional[Callable[[str], None]] = None,
         placeholder: str = "",
+        on_save_clip: Optional[Callable[[float, float], None]] = None,
     ) -> None:
         self.root = root
         self.blank_lines_var = blank_lines_var
@@ -85,6 +86,9 @@ class TranscriptView:
         # Search the speaker profiles for one speaker's lines (speaker id).
         # None where this build has no speaker profiles.
         self._on_compare = on_compare
+        # Save a [start, end] passage of the recording as audio; None where
+        # there is nothing to cut it with.
+        self._on_save_clip = on_save_clip
         self._result: Optional[TranscriptionResult] = None
         self._speaker_names: Dict[str, str] = {}
         # Off while a run or redo is going: an edit made then was lost when the
@@ -437,6 +441,8 @@ class TranscriptView:
                     label="▶ Play this line",
                     command=lambda: self._play_line(index),
                 )
+            self._add_save_line(menu, index)
+            if self._on_play is not None or self._on_save_clip is not None:
                 menu.add_separator()
             on_compare = self._on_compare
             if on_compare is not None and result.segments[index].speaker:
@@ -590,7 +596,7 @@ class TranscriptView:
                     continue
                 self._word_menu_handler(seg, word)(event)
                 return "break"
-        if self._on_play is not None:
+        if self._on_play is not None or self._on_save_clip is not None:
             self._line_menu_handler(seg)(event)
             return "break"
         return None
@@ -599,15 +605,31 @@ class TranscriptView:
         """Right-click menu for a non-diarized line (just Play)."""
 
         def handler(event: object) -> None:
-            if self._on_play is None or self._has_selection():
+            if self._has_selection():
+                return
+            if self._on_play is None and self._on_save_clip is None:
                 return
             menu = tk.Menu(self.root, tearoff=0)
-            menu.add_command(
-                label="▶ Play this line", command=lambda: self._play_line(index)
-            )
+            if self._on_play is not None:
+                menu.add_command(
+                    label="▶ Play this line", command=lambda: self._play_line(index)
+                )
+            self._add_save_line(menu, index)
             self._popup(menu, event)
 
         return handler
+
+    def _add_save_line(self, menu: tk.Menu, index: int) -> None:
+        """ "Save this line as audio…", where a passage can be saved."""
+        on_save = self._on_save_clip
+        result = self._result
+        if on_save is None or result is None or index >= len(result.segments):
+            return
+        segment = result.segments[index]
+        menu.add_command(
+            label="Save this line as audio…",
+            command=lambda: on_save(segment.start, segment.end),
+        )
 
     def _play_line(self, index: int) -> None:
         result = self._result
@@ -754,25 +776,71 @@ class TranscriptView:
         return (s_idx, w_idxs[0], w_idxs[-1])
 
     def _selection_menu(self, event: object) -> None:
-        if not self._editable:
-            return
         result = self._result
-        span = self._selected_word_span()
-        if result is None or span is None:
-            return
-        seg_index, first_word, last_word = span
-        current = result.segments[seg_index].speaker or "UNKNOWN"
-        targets = [sid for sid in self._ordered_speaker_ids() if sid != current]
-        if not targets:
+        if result is None:
             return
         menu = tk.Menu(self.root, tearoff=0)
-        for sid in targets:
-            name = shown_name(sid, self._speaker_names)
+        on_save = self._on_save_clip
+        times = self._selected_time_span()
+        if on_save is not None and times is not None:
+            # Reads the transcript, changes nothing: offered mid-run too.
             menu.add_command(
-                label=f"Move selection → {name}",
-                command=self._span_command(seg_index, first_word, last_word, sid),
+                label="Save the selection as audio…",
+                command=lambda: on_save(*times),
             )
+        span = self._selected_word_span() if self._editable else None
+        if span is not None:
+            seg_index, first_word, last_word = span
+            current = result.segments[seg_index].speaker or "UNKNOWN"
+            targets = [sid for sid in self._ordered_speaker_ids() if sid != current]
+            if targets and menu.index("end") is not None:
+                menu.add_separator()
+            for sid in targets:
+                name = shown_name(sid, self._speaker_names)
+                menu.add_command(
+                    label=f"Move selection → {name}",
+                    command=self._span_command(seg_index, first_word, last_word, sid),
+                )
+        if menu.index("end") is None:
+            return
         self._popup(menu, event)
+
+    def _selected_time_span(self) -> "Optional[tuple[float, float]]":
+        """The stretch of recording the selection covers, across any lines.
+
+        From the first selected word's start to the last one's end; where the
+        transcript has no word times, from the first selected line's start to
+        the last one's end.
+        """
+        result = self._result
+        if result is None:
+            return None
+        try:
+            sel_first = self.widget.index("sel.first")
+            sel_last = self.widget.index("sel.last")
+        except tk.TclError:
+            return None
+        starts: List[float] = []
+        ends: List[float] = []
+        for s_idx, segment in enumerate(result.segments):
+            for w_idx, word in enumerate(segment.words):
+                ranges = self.widget.tag_ranges(f"word::{s_idx}::{w_idx}")
+                if ranges and (
+                    self.widget.compare(str(ranges[0]), "<", sel_last)
+                    and self.widget.compare(str(ranges[1]), ">", sel_first)
+                ):
+                    starts.append(word.start)
+                    ends.append(word.end)
+        if not starts:
+            first = self._segment_at(sel_first)
+            last = self._segment_at(self.widget.index(f"{sel_last} -1c"))
+            if first is None or last is None:
+                return None
+            lo, hi = min(first, last), max(first, last)
+            starts = [result.segments[lo].start]
+            ends = [result.segments[hi].end]
+        start, end = min(starts), max(ends)
+        return (start, end) if end > start else None
 
     def _span_command(
         self, seg_index: int, first_word: int, last_word: int, speaker_id: str

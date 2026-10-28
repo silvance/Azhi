@@ -264,3 +264,51 @@ def test_without_a_player_a_click_still_opens_the_corrections(view):
     _click(view, "word::2::1.first")
     _settle(view.root)
     assert menus
+
+
+@pytest.fixture
+def saving(view):
+    """The same view, able to save passages: records what it was asked for."""
+    saved = []
+    view.view._on_save_clip = lambda start, end: saved.append((start, end))
+    menus = []
+    view.view._popup = lambda menu, _event: menus.append(menu)
+    view.saved, view.menus = saved, menus
+    return view
+
+
+def _choose(menu, label):
+    for i in range(menu.index("end") + 1):
+        if menu.type(i) == "command" and menu.entrycget(i, "label") == label:
+            menu.invoke(i)
+            return True
+    return False
+
+
+def test_a_selection_across_lines_saves_as_one_passage(saving):
+    w = saving.view.widget
+    w.tag_add("sel", "word::2::1.first", "word::4::0.last")
+    saving.view._context_menu(_event_at(saving.view, "word::3::1.first"))
+    assert _choose(saving.menus[-1], "Save the selection as audio…")
+    # From the first selected word's start to the last one's end.
+    assert saving.saved == [(9.0, 16.8)]
+
+
+def test_a_selection_within_a_line_still_offers_the_moves(saving):
+    w = saving.view.widget
+    w.tag_add("sel", "word::2::0.first", "word::2::1.last")
+    saving.view._context_menu(_event_at(saving.view, "word::2::1.first"))
+    menu = saving.menus[-1]
+    labels = [
+        menu.entrycget(i, "label")
+        for i in range(menu.index("end") + 1)
+        if menu.type(i) == "command"
+    ]
+    assert labels[0] == "Save the selection as audio…"
+    assert any(label.startswith("Move selection") for label in labels)
+
+
+def test_a_line_saves_from_its_speaker_tag(saving):
+    saving.view._context_menu(_event_at(saving.view, "line::3.first"))
+    assert _choose(saving.menus[-1], "Save this line as audio…")
+    assert saving.saved == [(12.0, 15.0)]

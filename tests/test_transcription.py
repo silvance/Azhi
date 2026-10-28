@@ -657,3 +657,88 @@ def test_a_recording_with_nothing_to_detect_is_transcribed_without_the_example(
     assert model.kwargs["language"] is None  # left to faster-whisper, as before
     assert model.kwargs["hotwords"] is None
     assert result.verbatim is False
+
+
+# -- Times on each line, and the spreadsheet ---------------------------------
+
+
+def _two_speakers():
+    from sotto.transcription import Segment, TranscriptionResult, Word
+
+    return TranscriptionResult(
+        text="",
+        language="en",
+        language_probability=1.0,
+        duration=4000.0,
+        segments=[
+            Segment(5.25, 7.0, "Hello there.", speaker="SPEAKER_00"),
+            Segment(
+                3725.5,
+                3727.0,
+                "=SUM(A1) he said",
+                speaker="SPEAKER_01",
+                words=[Word(3725.5, 3727.0, " =SUM(A1)", probability=0.2)],
+            ),
+        ],
+    )
+
+
+def test_clock_time_is_hours_minutes_seconds():
+    from sotto.transcription import clock_time
+
+    assert clock_time(754.5) == "00:12:34"
+    assert clock_time(754.5, millis=True) == "00:12:34.500"
+    assert clock_time(7205.0004, millis=True) == "02:00:05.000"
+    assert clock_time(-3) == "00:00:00"
+
+
+def test_times_start_each_line_only_when_asked():
+    result = _two_speakers()
+    names = {"SPEAKER_00": "Ann"}
+    plain = result.to_txt(names)
+    timed = result.to_txt(names, times=True)
+    assert plain.splitlines()[0] == "[Ann] Hello there."
+    assert timed.splitlines()[0] == "[00:00:05] [Ann] Hello there."
+    assert timed.splitlines()[1].startswith("[01:02:05] [")
+
+
+def test_times_without_speakers():
+    from sotto.transcription import Segment, TranscriptionResult
+
+    result = TranscriptionResult(
+        "",
+        "en",
+        1.0,
+        10.0,
+        segments=[Segment(1.0, 2.0, "one"), Segment(65.0, 66.0, "two")],
+    )
+    assert result.to_txt(times=True) == "[00:00:01] one\n[00:01:05] two"
+
+
+def test_the_spreadsheet_has_a_row_per_line_and_never_a_formula():
+    import csv
+    import io
+
+    rows = list(csv.reader(io.StringIO(_two_speakers().to_csv({"SPEAKER_00": "Ann"}))))
+    assert rows[0] == [
+        "Start",
+        "End",
+        "Start (s)",
+        "End (s)",
+        "Speaker",
+        "Text",
+        "Low confidence",
+    ]
+    assert rows[1] == [
+        "00:00:05.250",
+        "00:00:07.000",
+        "5.250",
+        "7.000",
+        "Ann",
+        "Hello there.",
+        "",
+    ]
+    # Someone else's words can't become a formula on the analyst's machine.
+    assert rows[2][5] == "'=SUM(A1) he said"
+    assert rows[2][6] == "yes"  # a low-confidence word marks the line
+    assert len(rows) == 3

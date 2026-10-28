@@ -83,9 +83,12 @@ which can be a different file on each run.
       traceback appears outside the Status tab.
 - [ ] **No file chosen:** selecting Transcribe recording says so rather than
       failing silently.
-- [ ] Find, Copy transcript, Save as Word…, Analysis report…, Save project…,
-      Open project… all still work, and clicking a speaker tag or dragging a
-      run of words still reassigns speech.
+- [ ] Find, Copy transcript, Save as… (Word, spreadsheet and text), Analysis
+      report…, Save project…, Open project… all still work, and clicking a
+      speaker tag or dragging a run of words still reassigns speech.
+- [ ] The speed box beside Stop audio plays a clicked line slower at the same
+      pitch; **Save this line as audio…** (right-click) writes a WAV with a
+      `.clip.json` record beside it.
 - [ ] A batch of several files still runs, and the queue summary appears with a
       **Clear list** action only when there is a queue.
 

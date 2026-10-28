@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Optional, Union
 
 from .speaker_names import LEAD_LEGEND, any_leads
-from .transcription import TranscriptionResult
+from .transcription import Segment, TranscriptionResult, clock_time
 
 PathLike = Union[str, Path]
 
@@ -59,23 +59,29 @@ def transcript_to_docx(
     *,
     blank_lines: bool = True,
     title: Optional[str] = None,
+    times: bool = False,
 ) -> Path:
     """Write a transcript to a ``.docx``.
 
     When diarized, each paragraph starts with the speaker label in bold
     (optionally remapped via ``speaker_names``); otherwise one paragraph per
-    segment. ``blank_lines`` is accepted for signature parity with the text
-    exporters - Word paragraphs already render with spacing between them.
+    segment. ``times`` starts each paragraph with when it starts in the
+    recording, ``[00:12:34]``. ``blank_lines`` is accepted for signature parity
+    with the text exporters - Word paragraphs already render with spacing
+    between them.
     """
     document = _document()
     if title:
         document.add_heading(title, level=1)
 
+    def at(segment: Segment) -> str:
+        return f"[{clock_time(segment.start)}] " if times else ""
+
     if not result.has_speakers:
         segments = result.segments
         if segments:
             for segment in segments:
-                document.add_paragraph(segment.text)
+                document.add_paragraph(at(segment) + segment.text)
         else:
             for line in result.text.split("\n"):
                 document.add_paragraph(line)
@@ -90,6 +96,8 @@ def transcript_to_docx(
         for segment in result.segments:
             label = result._speaker_label(segment.speaker, speaker_names)
             paragraph = document.add_paragraph()
+            if times:
+                paragraph.add_run(at(segment))
             run = paragraph.add_run(f"[{label}] ")
             run.bold = True
             paragraph.add_run(segment.text)

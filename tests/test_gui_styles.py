@@ -295,3 +295,53 @@ def test_grouping_sensitivity_shows_only_where_it_does_something(app):
     page.num_speakers_var.set("")
     page.engine_var.set("pyannote (strong on noisy audio)")
     assert page._sensitivity_row.winfo_manager() == ""
+
+
+def _page_with_transcript(app, tmp_path):
+    from sotto.transcription import Segment, TranscriptionResult
+
+    page = app.transcribe
+    result = TranscriptionResult(
+        text="",
+        language="en",
+        language_probability=1.0,
+        duration=80.0,
+        segments=[Segment(75.0, 76.0, "Come in.", speaker="SPEAKER_00")],
+    )
+    page._result, page._result_source = result, tmp_path / "call.wav"
+    page._speaker_names = {"SPEAKER_00": "Anna"}
+    page.transcript_view.set_result(result, page._speaker_names)
+    return page
+
+
+@pytest.mark.parametrize(
+    "kind, ending, expect",
+    [
+        ("Spreadsheet (CSV)", ".csv", "00:01:15.000,00:01:16.000,75.000"),
+        ("Text file", ".txt", "[00:01:15] [Anna] Come in."),
+    ],
+)
+def test_save_as_writes_the_type_picked_even_without_an_ending(
+    app, tmp_path, monkeypatch, kind, ending, expect
+):
+    import sotto.gui.transcribe_tab as transcribe_mod
+
+    page = _page_with_transcript(app, tmp_path)
+    page.times_var.set(True)
+
+    def dialog(**options):
+        options["typevariable"].set(kind)  # what the analyst picked
+        return str(tmp_path / "typed-without-an-ending")
+
+    monkeypatch.setattr(transcribe_mod.filedialog, "asksaveasfilename", dialog)
+    page._save_transcript_as()
+    written = tmp_path / f"typed-without-an-ending{ending}"
+    assert expect in written.read_text(encoding="utf-8-sig")
+
+
+def test_the_playback_speed_is_remembered_and_checked(app):
+    page = app.transcribe
+    page.playback_speed_var.set("0.5× speed")
+    assert page.get_settings()["playback_speed"] == "0.5× speed"
+    page.apply_settings({"playback_speed": "9× speed"})  # not on offer
+    assert page.playback_speed_var.get() == "Normal speed"
