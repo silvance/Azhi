@@ -57,6 +57,20 @@ GOOD_VOICED_RATIO = 0.6
 HIGH_CLIPPING_PCT = 1.0
 QUIET_RMS = 0.01
 
+# Frequency range: the speech frames' average spectrum is split into bands this
+# wide, and the range runs up to the highest band no more than this far below
+# the loudest. Full-band speech falls about 40 dB from its peak to 8 kHz;
+# telephone audio, and audio coded at a low bit rate, holds next to nothing
+# above its cut-off. The lowest band is left out of the peak, so mains hum
+# cannot set it.
+_BAND_HZ = 250.0
+_BAND_FLOOR_DB = 50.0
+# A minute of frames is plenty for an average spectrum; a long selection is
+# sampled evenly rather than transformed whole (an hour would be ~500 MB).
+_BAND_MAX_FRAMES = 2000
+# Below this the recording carries no more than a telephone line does.
+NARROW_BAND_HZ = 4750.0
+
 
 @dataclass
 class QualityReport:
@@ -75,6 +89,9 @@ class QualityReport:
     # True when the span has no quiet part to measure a noise floor from, so the
     # speech/silence split had to be estimated from the speech level itself.
     level_spread_low: bool = False
+    # How high the frequencies in the speech reach, in Hz (0 when unmeasured).
+    # An estimate of the recording channel, not a property of the voice.
+    bandwidth_hz: float = 0.0
     assessment: str = INSUFFICIENT
     warnings: List[str] = field(default_factory=list)
 
@@ -92,6 +109,7 @@ class QualityReport:
             "clipping_percent": round(self.clipping_percent, 3),
             "level_margin_db": round(self.level_margin_db, 1),
             "level_spread_low": self.level_spread_low,
+            "bandwidth_hz": round(self.bandwidth_hz),
             "assessment": self.assessment,
             "warnings": list(self.warnings),
         }
@@ -144,9 +162,44 @@ def analyse_samples(samples: Any, sample_rate: int) -> QualityReport:
     frame_seconds = frames.shape[1] / float(sample_rate)
     report.voiced_seconds = float(voiced.sum()) * frame_seconds
     report.voiced_ratio = float(voiced.mean())
+    report.bandwidth_hz = _bandwidth(
+        frames[voiced] if voiced.any() else frames, sample_rate
+    )
 
     _classify(report)
     return report
+
+
+def _bandwidth(frames: Any, sample_rate: int) -> float:
+    """How high the frequencies in ``frames`` reach, in Hz; see _BAND_FLOOR_DB."""
+    import numpy as np
+
+    if len(frames) == 0:
+        return 0.0
+    if len(frames) > _BAND_MAX_FRAMES:
+        frames = frames[np.linspace(0, len(frames) - 1, _BAND_MAX_FRAMES).astype(int)]
+    window = np.hanning(frames.shape[1]).astype(np.float32)
+    power = np.mean(np.abs(np.fft.rfft(frames * window, axis=1)) ** 2, axis=0)
+    freqs = np.fft.rfftfreq(frames.shape[1], 1.0 / sample_rate)
+    edges = np.arange(0.0, sample_rate / 2.0, _BAND_HZ)
+    bands = []
+    for low in edges:
+        inside = power[(freqs >= low) & (freqs < low + _BAND_HZ)]
+        bands.append(float(inside.mean()) if inside.size else 0.0)
+    peak = max(bands[1:], default=0.0)
+    if peak <= 0.0:
+        return 0.0
+    floor = peak * 10.0 ** (-_BAND_FLOOR_DB / 10.0)
+    top = max(index for index, level in enumerate(bands) if level >= floor)
+    return float(min(edges[top] + _BAND_HZ, sample_rate / 2.0))
+
+
+def describe_bandwidth(hz: float) -> str:
+    """A frequency range in words: "up to 3.8 kHz (telephone-like)"."""
+    if hz <= 0:
+        return "not measured"
+    text = f"up to {hz / 1000.0:.1f} kHz"
+    return text + " (telephone-like)" if hz < NARROW_BAND_HZ else text
 
 
 def _voiced_threshold(

@@ -680,6 +680,45 @@ measurement. It is **not** a percentage, not a probability, and not a
 likelihood that the two recordings contain the same person — see
 [section 12](#12-what-the-results-do-and-do-not-mean).
 
+### Window by window
+
+Under the result, one bar for each 8-second window of the questioned speech,
+each compared on its own with the reference, against the **High** and
+**Intermediate** lines. A single window scores lower and varies more than the
+whole selection, which averages them, so read the pattern, not one bar:
+
+- **Bars at about the same height** — the speech you selected behaves like
+  one voice throughout.
+- **One bar well apart from the rest** — Sotto names it under the strip
+  (0.15 or more from the typical window). Click it to listen: a second voice,
+  or a burst of noise, in one window moves the whole score.
+- **Bars that wander** — the selection may hold more than one person; check
+  the speaker separation, or select the speech by hand.
+
+An outlined empty bar is a window that was not used (too little speech in
+it); point at it to see why. Where turns were joined to make a window, the
+bar plays the longest of them. The strip appears only when the result is a
+band: under **Insufficient data** there is nothing to read.
+
+### Recording conditions
+
+How the questioned recording and the reference samples were made, side by
+side: how much speech each has, the **frequency range** (how high the sound
+reaches: about 4 kHz or less through a telephone line, 7–8 kHz from a good
+recording), how far the speech stands above the background, and clipping.
+Sotto points out the differences that matter: a telephone recording against a
+full-band reference, much more background noise on one side, clipping, or
+under 10 seconds of questioned speech.
+
+These lower similarity **whoever is speaking**. A Low or Intermediate result
+on mismatched recordings says less than it would on matched ones; they say
+nothing about who it is. Reference samples enrolled before this version did
+not record the frequency range and show **not measured**; samples added from
+now on record it.
+
+The window scores and the conditions are in **Full result text**, **Copy
+result** and exported reports as well.
+
 **Thresholds…** shows the exact values in force. They are conservative
 starting points, not figures calibrated against your recordings, and they are
 recorded in every exported report so a result can always be read against the

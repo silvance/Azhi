@@ -9,7 +9,9 @@ A first-class workflow rather than a small dialog over two JSON files:
   whole file, a diarized speaker, or explicit time ranges.
 * **Result** - a similarity score out of 1.00, an assessment band, the
   operational threshold, both durations, both quality bands, model
-  compatibility, and the investigative-only disclaimer.
+  compatibility, and the investigative-only disclaimer. Under it, the
+  questioned speech window by window and how the two recordings were made
+  (see :mod:`sotto.gui.comparison_views`).
 
 Nothing here reports a percentage or a probability of identity, and an
 insufficient or mismatched input produces an explicit refusal or
@@ -43,6 +45,7 @@ from ..enrollment import (
 )
 from ..matching import (
     ComparisonResult,
+    WindowScore,
     compare_questioned_to_profile,
     search_gallery_for_questioned,
 )
@@ -73,6 +76,7 @@ from ..thresholds import (
 )
 from ..transcription import AUDIO_EXTENSIONS, CancelledError
 from ..voiceprints import SpeakerEmbedder
+from .comparison_views import ConditionsTable, WindowStrip
 from .dialogs import active_window, present
 from .errors import friendly_error
 from .pick_speaker import (
@@ -157,6 +161,9 @@ class SpeakerCompareTab:
         # The count asked for, read on the UI thread when a run starts.
         self._requested_speakers: Optional[int] = None
         self._embedder: Optional[SpeakerEmbedder] = None
+        # Plays windows of the questioned recording on screen; None where this
+        # computer cannot play audio.
+        self._listener: Optional[SampleListener] = None
 
         self.reference_var = tk.StringVar(value="")
         self.reference_detail_var = tk.StringVar(value="No reference selected.")
@@ -438,10 +445,29 @@ class SpeakerCompareTab:
         self.result_warnings = StatusBanner(self._result_body, wraplength=680)
         self.result_warnings.wrap_to(card.body)
 
+        # Under the numbers, for a one-to-one comparison: the questioned speech
+        # window by window, and how the two recordings were made.
+        self._views = ttk.Frame(self._result_body, style=Style.CARD_INNER)
+        self._views.pack(fill="x")
+        self.result_warnings.insert_before(self._views)
+        self._windows_disclosure = Disclosure(
+            self._views, "Window by window", expanded=True
+        )
+        self.window_strip = WindowStrip(
+            self._windows_disclosure.body,
+            on_play=self._play_window,
+            on_stop=self._stop_audio,
+        )
+        self.window_strip.pack(fill="x")
+        self._conditions_disclosure = Disclosure(
+            self._views, "Recording conditions", expanded=True
+        )
+        self.conditions_table = ConditionsTable(self._conditions_disclosure.body)
+        self.conditions_table.pack(fill="x")
+
         # The full text block stays: it is what an analyst copies into a case
         # file, and it holds the detail the summary above deliberately omits.
         self._detail_disclosure = Disclosure(self._result_body, "Full result text")
-        self.result_warnings.insert_before(self._detail_disclosure)
         self._detail_disclosure.pack(fill="x", pady=(SPACE_MD, 0))
         self.result_text = ScrolledText(
             self._detail_disclosure.body, wrap="word", height=12, state="disabled"
@@ -803,7 +829,8 @@ class SpeakerCompareTab:
                     questioned_spans=measured.embedded_spans,
                 )
             )
-            self.root.after(0, lambda: self._show_comparison(result))
+            listener = SampleListener.for_file(source)
+            self.root.after(0, lambda: self._show_comparison(result, listener))
             self._status("Comparison complete.")
         except PickCancelled:
             self._pick_cancelled("compared")
@@ -914,6 +941,9 @@ class SpeakerCompareTab:
         """
         self._measuring = True
         self._on_screen = None
+        self._stop_audio()
+        self._listener = None
+        self._show_views(None)
         self._cancel_event.clear()
         self._cancel_button.configure(state="normal")
         self._requested_speakers = (
@@ -952,7 +982,9 @@ class SpeakerCompareTab:
         self._result_busy.pack_forget()
         self._result_body.pack(fill="both", expand=True, before=self._disclaimer_label)
 
-    def _show_comparison(self, result: ComparisonResult) -> None:
+    def _show_comparison(
+        self, result: ComparisonResult, listener: Optional[SampleListener] = None
+    ) -> None:
         """Present a comparison as a finding, with the numbers supporting it.
 
         The band leads, in words. The score is shown out of 1.00 beside it -
@@ -961,7 +993,9 @@ class SpeakerCompareTab:
         audio cannot support outranks whatever the number happens to be.
         """
         self._on_screen = result
+        self._listener = listener
         self._show(result.format_lines())
+        self._show_views(result)
 
         if result.refused:
             self._set_band("Comparison refused", Style.DANGER)
@@ -1017,6 +1051,36 @@ class SpeakerCompareTab:
             self.result_warnings.show("warning", "  ".join(result.warnings))
         else:
             self.result_warnings.hide()
+
+    def _show_views(self, result: Optional[ComparisonResult]) -> None:
+        """The window strip and the conditions, where the result has them."""
+        windows = result is not None and bool(result.windows)
+        conditions = result is not None and result.conditions is not None
+        self._windows_disclosure.pack_forget()
+        self._conditions_disclosure.pack_forget()
+        if windows and result is not None:
+            self.window_strip.show(result)
+            self._windows_disclosure.pack(fill="x", pady=(SPACE_MD, 0))
+        if conditions and result is not None and result.conditions is not None:
+            self.conditions_table.show(result.conditions)
+            self._conditions_disclosure.pack(fill="x", pady=(SPACE_MD, 0))
+
+    def _play_window(self, window: WindowScore) -> None:
+        """Play the window (its longest stretch, where turns were joined)."""
+        if self._listener is None:
+            self.window_strip.detail_var.set(
+                "Audio can't be played on this computer (no player was found)."
+            )
+            return
+
+        def _failed(message: str) -> None:
+            self.root.after(0, lambda: self.banner.show("error", message))
+
+        self._listener.play(window.longest, _failed)
+
+    def _stop_audio(self) -> None:
+        if self._listener is not None:
+            self._listener.stop()
 
     def _cancel(self) -> None:
         """Stop the comparison at its next checkpoint."""

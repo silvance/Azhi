@@ -24,8 +24,10 @@ Three rules run through all of it:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from statistics import median
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
+from . import conditions as _conditions
 from .quality import INSUFFICIENT
 from .speaker_profiles import (
     Compatibility,
@@ -50,6 +52,70 @@ from .voiceprints import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .questioned import QuestionedSpeaker
+
+# A window this far from the typical window is pointed out: one window with
+# another voice or a burst of noise in it pulls the whole score.
+WINDOW_APART = 0.15
+# With fewer used windows than this there is no "typical" to stand apart from.
+_WINDOWS_FOR_TYPICAL = 3
+
+
+def _clock(seconds: float) -> str:
+    total = int(round(max(0.0, seconds)))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+@dataclass
+class WindowScore:
+    """One questioned window compared on its own with the reference profile.
+
+    Less reliable than the comparison as a whole, which averages every window
+    first: its use is finding the window that disagrees with the rest.
+    """
+
+    # Where the window lies in the questioned recording; several intervals
+    # when turns were joined to make it.
+    spans: List[Tuple[float, float]] = field(default_factory=list)
+    speech_seconds: float = 0.0
+    quality: str = INSUFFICIENT
+    # None for a window that was not used, with the reason in ``skipped``.
+    score: Optional[float] = None
+    skipped: str = ""
+
+    @property
+    def used(self) -> bool:
+        return self.score is not None
+
+    @property
+    def start(self) -> float:
+        return self.spans[0][0] if self.spans else 0.0
+
+    @property
+    def end(self) -> float:
+        return self.spans[-1][1] if self.spans else 0.0
+
+    @property
+    def longest(self) -> Tuple[float, float]:
+        """The longest stretch of it, to listen to."""
+        return max(self.spans, key=lambda s: s[1] - s[0]) if self.spans else (0.0, 0.0)
+
+    def where(self) -> str:
+        """``0:42-0:50``, saying so when turns were joined to make it."""
+        text = f"{_clock(self.start)}-{_clock(self.end)}"
+        if len(self.spans) > 1:
+            text += f" (joined from {len(self.spans)} turns)"
+        return text
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "spans": [list(span) for span in self.spans],
+            "speech_seconds": round(self.speech_seconds, 2),
+            "quality": self.quality,
+            "score": None if self.score is None else round(self.score, 4),
+            "skipped": self.skipped,
+        }
 
 
 @dataclass
@@ -81,6 +147,11 @@ class ComparisonResult:
     margin: Optional[float] = None
     runner_up_name: Optional[str] = None
     runner_up_score: Optional[float] = None
+    # Each questioned window compared on its own (only where the comparison
+    # supports an assessment), and how the two recordings were made (wherever
+    # it was run). Set by compare_questioned_to_profile.
+    windows: List[WindowScore] = field(default_factory=list)
+    conditions: Optional[_conditions.Conditions] = None
 
     @property
     def operational_threshold(self) -> float:
@@ -91,6 +162,64 @@ class ComparisonResult:
     def conclusive(self) -> bool:
         """False when the audio could not support any assessment."""
         return not self.refused and self.band != BAND_INSUFFICIENT
+
+    def typical_window_score(self) -> Optional[float]:
+        """The median window score, where there are enough windows for one."""
+        scores = [w.score for w in self.windows if w.score is not None]
+        return median(scores) if len(scores) >= _WINDOWS_FOR_TYPICAL else None
+
+    def windows_apart(self) -> List[WindowScore]:
+        """Windows scoring well away from the typical window, in order."""
+        typical = self.typical_window_score()
+        if typical is None:
+            return []
+        return [
+            w
+            for w in self.windows
+            if w.score is not None and abs(w.score - typical) >= WINDOW_APART
+        ]
+
+    def window_notes(self) -> List[str]:
+        """What to listen to, in words; never a finding about the speaker."""
+        typical = self.typical_window_score()
+        return [
+            f"The window at {w.where()} scores {w.score:.2f}, well apart from "
+            f"the typical {typical:.2f}. Listen to it: another voice or a burst "
+            "of noise in one window moves the whole score."
+            for w in self.windows_apart()
+            if w.score is not None and typical is not None
+        ]
+
+    def window_lines(self) -> List[str]:
+        """The window-by-window block for a text result or report."""
+        if not self.windows:
+            return []
+        lines = [
+            "Window by window (each window compared on its own, which is less "
+            "reliable than the whole):"
+        ]
+        for window in self.windows:
+            if window.score is None:
+                lines.append(f"  {window.where()}: not used ({window.skipped})")
+            else:
+                lines.append(
+                    f"  {window.where()}: {window.score:.2f} "
+                    f"({window.speech_seconds:.1f} sec of speech, "
+                    f"{window.quality.lower()})"
+                )
+        lines += [f"  Note: {note}" for note in self.window_notes()]
+        return lines
+
+    def detail_lines(self) -> List[str]:
+        """Windows and recording conditions, each block preceded by a blank."""
+        lines: List[str] = []
+        for block in (
+            self.window_lines(),
+            self.conditions.lines() if self.conditions else [],
+        ):
+            if block:
+                lines += ["", *block]
+        return lines
 
     def source_lines(self) -> List[str]:
         """The questioned recording's identity, when it was recorded."""
@@ -144,6 +273,7 @@ class ComparisonResult:
             f"Questioned quality: {self.questioned_quality}",
             f"Embedding model: {self.embedding_model}",
         ]
+        lines += self.detail_lines()
         if self.warnings:
             lines.append("")
             lines += [f"Warning: {w}" for w in self.warnings]
@@ -173,6 +303,13 @@ class ComparisonResult:
             "refused": self.refused,
             "refusal_reason": self.refusal_reason,
             "warnings": list(self.warnings),
+            "windows": [window.to_dict() for window in self.windows],
+            "conditions": (
+                [list(row) for row in self.conditions.rows()]
+                if self.conditions
+                else None
+            ),
+            "condition_notes": list(self.conditions.notes) if self.conditions else [],
             "disclaimer": DISCLAIMER,
         }
 
@@ -541,6 +678,35 @@ def compare_questioned_to_profile(
     # window map back to several intervals, so counting intervals would report
     # seven windows for two embeddings.
     result.questioned_window_count = questioned.window_count
+    if result.refused:
+        return result
+    trusted = profile.trusted_samples()
+    used = [w for w in questioned.windows if w.used]
+    result.conditions = _conditions.compare(
+        _conditions.side(
+            [w.report.to_dict() for w in used],
+            speech_seconds=questioned.speech_seconds,
+        ),
+        _conditions.side(
+            [s.quality or {} for s in trusted],
+            speech_seconds=result.reference_seconds,
+        ),
+    )
+    if result.conclusive:
+        # Window by window only where the whole supports an assessment: a
+        # column of per-window numbers under "Insufficient data" would be read
+        # as the finding the band withholds.
+        reference = profile.centroid()
+        result.windows = [
+            WindowScore(
+                spans=list(w.spans),
+                speech_seconds=round(w.report.voiced_seconds, 2),
+                quality=w.report.assessment,
+                score=cosine_similarity(w.embedding, reference) if w.used else None,
+                skipped=w.skipped,
+            )
+            for w in questioned.windows
+        ]
     return result
 
 

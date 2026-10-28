@@ -163,6 +163,7 @@ def _comparison_lines(comparison: ComparisonResult) -> List[str]:
         f"({comparison.questioned_quality}){measured}",
         f"Speaker embedding model: {comparison.embedding_model}",
     ]
+    lines += comparison.detail_lines()
     for warning in comparison.warnings:
         lines.append(f"Warning: {warning}")
     if comparison.conclusive and comparison.band.startswith("High"):

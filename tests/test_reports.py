@@ -124,6 +124,29 @@ def test_report_includes_comparison_details():
     assert "Questioned speech: 14.2 sec" in text
 
 
+def test_a_comparison_reports_its_windows_and_recording_conditions():
+    from sotto.conditions import Side, compare
+    from sotto.matching import WindowScore
+
+    comparison = _comparison(
+        windows=[
+            WindowScore(
+                spans=[(0.0, 8.0)], speech_seconds=7.1, quality=GOOD, score=0.8
+            ),
+            WindowScore(spans=[(8.0, 16.0)], skipped="poor audio (1.2s of speech)"),
+        ],
+        conditions=compare(
+            Side(speech_seconds=14.2, pieces=2, bandwidth_hz=3750.0),
+            Side(speech_seconds=38.4, pieces=5, bandwidth_hz=7000.0),
+        ),
+    )
+    text = _text(comparisons=[comparison])
+    assert "  0:00-0:08: 0.80 (7.1 sec of speech, good)" in text
+    assert "  0:08-0:16: not used (poor audio (1.2s of speech))" in text
+    assert "Frequency range: up to 3.8 kHz (telephone-like) / up to 7.0 kHz" in text
+    assert "questioned audio reaches only 3.8 kHz" in text
+
+
 def test_high_similarity_is_phrased_as_a_lead_not_an_identification():
     text = _text(
         result=_result(), provenance=_provenance(), comparisons=[_comparison()]
