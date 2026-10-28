@@ -107,6 +107,10 @@ class TranscriptionProvenance:
     # before speakers were attached: the model and rule, the model file's
     # hash, and how many of the words it re-timed. Empty when the words kept
     # the transcription's own times - or the record predates this.
+    # Whether each stretch was transcribed with the text before it as context
+    # (off for large-v3 and turbo; see transcription.carries_context). None in
+    # a record made before this was recorded.
+    previous_text_context: Optional[bool] = None
     word_timing: str = ""
     word_timing_model_sha256: str = ""
     words_retimed: Optional[int] = None
@@ -127,6 +131,7 @@ class TranscriptionProvenance:
             "denoiser_sha256": self.denoiser_sha256,
             "listening_copy": self.listening_copy,
             "listening_filters": self.listening_filters,
+            "previous_text_context": self.previous_text_context,
             "word_timing": self.word_timing,
             "word_timing_model_sha256": self.word_timing_model_sha256,
             "words_retimed": self.words_retimed,
@@ -151,6 +156,11 @@ class TranscriptionProvenance:
             denoiser_sha256=str(data.get("denoiser_sha256") or ""),
             listening_copy=str(data.get("listening_copy") or ""),
             listening_filters=str(data.get("listening_filters") or ""),
+            previous_text_context=(
+                data["previous_text_context"]
+                if isinstance(data.get("previous_text_context"), bool)
+                else None
+            ),
             word_timing=str(data.get("word_timing") or ""),
             word_timing_model_sha256=str(data.get("word_timing_model_sha256") or ""),
             words_retimed=_count(data.get("words_retimed")),
@@ -465,6 +475,16 @@ class AnalysisProvenance:
                 f"Language: {self.transcription.language_setting} "
                 f"(detected: {self.transcription.detected_language or 'n/a'})",
             ]
+            context = self.transcription.previous_text_context
+            if context is not None:
+                lines.append(
+                    "Earlier text given to the model as context: "
+                    + (
+                        "yes"
+                        if context
+                        else "no (each 30-second stretch started afresh)"
+                    )
+                )
             if self.transcription.word_timing:
                 timing = self.transcription
                 counted = (

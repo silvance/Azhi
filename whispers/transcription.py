@@ -158,6 +158,21 @@ def translation_refusal(model: str) -> Optional[str]:
     return None
 
 
+def carries_context(model: str) -> bool:
+    """Whether each 30 s stretch is transcribed with the text before it.
+
+    That is faster-whisper's default, and it keeps names and spelling
+    consistent through a recording. Not for large-v3, nor turbo, which is
+    made from it: on hard audio they sometimes write a stretch in capitals,
+    and with that stretch as context every one after it follows suit - the
+    rest of the transcript comes back in capitals. Without it, a lapse stays
+    in the stretch it happened in. Judged by name, as a bundled model or a
+    copied model folder carries it.
+    """
+    name = Path((model or "").strip()).name.lower()
+    return "large-v3" not in name and "turbo" not in name
+
+
 def untranslated_share(segments: "Sequence[Segment]") -> float:
     """Of the letters in a translation, the share not in the Latin alphabet.
 
@@ -554,7 +569,10 @@ def transcribe_audio(
     initial_prompt
         Optional text to prime the decoder - e.g. names, places, jargon or
         callsigns likely in the audio - which biases recognition toward that
-        vocabulary. ``None`` (default) disables it.
+        vocabulary. ``None`` (default) disables it. For a model that does not
+        carry the text before as context (:func:`carries_context`), it is
+        given to every stretch instead, as faster-whisper's ``hotwords``: as an
+        initial prompt it would reach only the first.
     progress
         Optional callback invoked with human-readable status/segment strings;
         the GUI uses this to stream output as it is produced.
@@ -571,6 +589,8 @@ def transcribe_audio(
 
     verb = "Translating" if task == "translate" else "Transcribing"
     _report(f"{verb} {path.name}...")
+    context = carries_context(str(model_size))
+    hint = initial_prompt or None
     segments_iter, info = model.transcribe(
         str(path),
         task=task,
@@ -581,8 +601,10 @@ def transcribe_audio(
         # Word timestamps add an alignment pass; only compute them when needed
         # (diarization uses them for word-level speaker assignment).
         word_timestamps=word_timestamps,
+        condition_on_previous_text=context,
         # None is the faster-whisper default (no priming).
-        initial_prompt=initial_prompt or None,
+        initial_prompt=hint if context else None,
+        hotwords=None if context else hint,
     )
 
     segments: List[Segment] = []

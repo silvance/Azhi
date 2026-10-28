@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 from .resources import find_ffmpeg
-from .transcription import Segment, transcribe_audio
+from .transcription import Segment, carries_context, transcribe_audio
 
 if TYPE_CHECKING:
     from .live_speakers import SpeakerReviewer
@@ -314,7 +314,9 @@ class LiveTranscriber:
         """Transcribe one finished segment, primed with the recent transcript.
 
         Word times are worked out only when someone will give the words to
-        speakers: they cost a little time on every chunk.
+        speakers: they cost a little time on every chunk. A model that should
+        not carry earlier text forward (large-v3, turbo) is not primed with
+        it here either, or one chunk in capitals would set the rest off.
         """
         result = transcribe_audio(
             segment,
@@ -322,7 +324,9 @@ class LiveTranscriber:
             language=self._language,
             vad_filter=self._vad_filter,
             word_timestamps=self._speakers is not None,
-            initial_prompt=context or None,
+            initial_prompt=(
+                context if context and carries_context(self._model_size) else None
+            ),
             cancelled=self._stop.is_set,
         )
         return result.text.strip(), list(result.segments)
