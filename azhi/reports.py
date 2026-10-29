@@ -27,7 +27,7 @@ from .transcription import TranscriptionResult, note_lines
 
 PathLike = Union[str, Path]
 
-REPORT_TITLE = "Azhí analysis report"
+REPORT_TITLE = "Azhi analysis report"
 DISCLAIMER_HEADING = "Interpretation and limitations"
 
 

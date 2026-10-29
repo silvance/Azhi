@@ -1,6 +1,6 @@
 """The one place the application's visual language is defined.
 
-Azhí is used by people who are not developers, often occasionally, on an
+Azhi is used by people who are not developers, often occasionally, on an
 air-gapped machine where there is nobody to ask. The interface therefore has to
 carry its own explanation: a clear hierarchy, one obvious action per screen, and
 technical depth available but out of the way.

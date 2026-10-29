@@ -329,7 +329,7 @@ def set_text(widget: tk.Text, text: str) -> None:
 class PageHeader(ttk.Frame):
     """A page's title and the one sentence explaining what it is for.
 
-    Every screen opens with this. An operator who has not used Azhí in a
+    Every screen opens with this. An operator who has not used Azhi in a
     month should be able to read the top of a page and know what it does without
     inferring it from the controls.
     """

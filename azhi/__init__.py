@@ -1,4 +1,4 @@
-"""Azhí - offline transcription, speaker separation and voice comparison.
+"""Azhi - offline transcription, speaker separation and voice comparison.
 
 The transcription backend (:mod:`azhi.transcription`) is importable without the
 optional GUI/transcription dependencies; those are only needed to actually run a

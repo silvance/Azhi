@@ -1278,7 +1278,7 @@ class SpeakerCompareTab:
     def _show_thresholds(self) -> None:
         """Show the decision thresholds in force (read-only)."""
         window = tk.Toplevel(self.root)
-        window.title("Azhí - active thresholds")
+        window.title("Azhi - active thresholds")
         window.configure(background=palette().background)
         frame = ttk.Frame(window, style=Style.PAGE, padding=SPACE_XL)
         frame.pack(fill="both", expand=True)

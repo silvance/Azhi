@@ -1,6 +1,6 @@
 # Third-party notices
 
-Azhí is MIT-licensed (see `LICENSE`). It runs on, and a bundle ships, other
+Azhi is MIT-licensed (see `LICENSE`). It runs on, and a bundle ships, other
 people's software and models under their own licences. Python packages carry
 their licence files with them; a bundle copies every one into its `licenses/`
 folder. This file covers the rest: the models and programs a bundle includes,

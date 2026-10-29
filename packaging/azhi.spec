@@ -1,4 +1,4 @@
-# PyInstaller spec for the Azhí GUI (one-dir bundle).
+# PyInstaller spec for the Azhi GUI (one-dir bundle).
 #
 # Build (sherpa-onnx diarizer, smaller):
 #     pip install "azhi[gui,bundle]"

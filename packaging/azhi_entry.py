@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the Azhí GUI bundle."""
+"""PyInstaller entry point for the Azhi GUI bundle."""
 
 from azhi.app import main
 

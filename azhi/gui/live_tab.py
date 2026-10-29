@@ -377,7 +377,7 @@ class LiveTab:
         self._panel = PanelWindow(
             container,
             title="Live transcript",
-            window_title="Azhí — Live transcript",
+            window_title="Azhi — Live transcript",
             note=("The live transcript is open in its own window. It keeps running."),
             pack_options={"fill": "both", "expand": True, "pady": (SPACE_LG, 0)},
             on_error=self._popout_failed,

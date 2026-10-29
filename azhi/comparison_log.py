@@ -277,7 +277,7 @@ class ComparisonRecord:
         if isinstance(version, int) and version > SCHEMA_VERSION:
             raise ProfileError(
                 f"This comparison record was written by a newer version of "
-                f"Azhí (schema {version}, this build understands "
+                f"Azhi (schema {version}, this build understands "
                 f"{SCHEMA_VERSION})."
             )
         raw_ranked = data.get("ranked")

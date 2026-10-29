@@ -263,7 +263,7 @@ def read_profile_file(path: "str | Path") -> Profile:
     except (OSError, ValueError) as exc:
         raise ValueError(f"Couldn't read the profile file: {exc}") from exc
     if not isinstance(data, dict) or not data.get("name"):
-        raise ValueError("This file isn't an Azhí profile.")
+        raise ValueError("This file isn't an Azhi profile.")
     return Profile.from_dict(data)
 
 

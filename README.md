@@ -1,14 +1,12 @@
-# Azhí
+# Azhi
 
-Azhí is an offline desktop application for transcribing recordings,
+Azhi is an offline desktop application for transcribing recordings,
 working out who spoke when, and comparing a voice against reference profiles.
 It is built for investigative triage on air-gapped Windows and
 Linux machines: nothing it does reaches the network, and a voice comparison is a
 lead for an analyst to review - never an identification.
 
-*Azhí* is the Navajo word for voice. The name honours the Navajo Code Talkers.
-The program, its folders and its files are spelt `Azhi`/`azhi`, without the
-accent, so that every Windows tool handles them.
+Azhi is the Navajo word for voice. The name honours the Navajo Code Talkers.
 
 > **Using it rather than building it?** [`docs/user-guide.md`](docs/user-guide.md)
 > is the guide for operators: what each page is for, in the order you would work
@@ -20,7 +18,7 @@ models through [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 (CTranslate2). Speaker separation uses NVIDIA's Nemotron 3 Diarization,
 pyannote.audio or sherpa-onnx; translation uses Argos Translate,
 and OCR Tesseract. Reports name the exact models a result came from. Licences:
-[`LICENSE`](LICENSE) for Azhí, [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+[`LICENSE`](LICENSE) for Azhi, [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 for everything it ships.
 
 **Formerly Sotto** (and Whispers, and Whispr, before that). An earlier
@@ -43,7 +41,7 @@ version's saved work carries over on first launch:
 
 ## The application
 
-Azhí transcribes audio and video files (and translates text) without the
+Azhi transcribes audio and video files (and translates text) without the
 command line. It is built for CPU-only hosts: transcription runs through
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) with
 int8 quantization, which is fast and light on a CPU.
@@ -385,10 +383,10 @@ Comparison History. **Export speaker…**, which only produced those files, went
 with it.
 
 The score is **not** a percentage and **not** a probability: a cosine similarity of
-0.78 does not mean "78% the same person". Azhí deliberately never reports a
+0.78 does not mean "78% the same person". Azhi deliberately never reports a
 percentage, a confidence of identity or a likelihood of identity.
 
-> Speaker similarity results produced by Azhí are investigative indicators
+> Speaker similarity results produced by Azhi are investigative indicators
 > intended to support lead development and analyst review. They are not forensic
 > speaker identification, are not a biometric probability of identity, and should
 > not be treated as proof that two recordings contain the same person.
@@ -396,7 +394,7 @@ percentage, a confidence of identity or a likelihood of identity.
 A high-similarity result never becomes "this is John Doe" — it means *the questioned
 speaker produced high similarity to the John Doe reference profile, and further
 review is warranted*. Both voiceprints must come from builds using the same
-speaker-embedding model; Azhí refuses the comparison outright when the model
+speaker-embedding model; Azhi refuses the comparison outright when the model
 hash or vector dimension differs, and asks for explicit confirmation when an older
 profile cannot prove which model produced it.
 
@@ -719,7 +717,7 @@ automatically. (Set the `AZHI_ASSETS` environment variable to point at a
 
 ## Licence
 
-Azhí is released under the MIT licence - see [`LICENSE`](LICENSE). The
+Azhi is released under the MIT licence - see [`LICENSE`](LICENSE). The
 models and libraries it runs on keep their own licences; see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and a bundle's `licenses/`
 folder for every Python package it contains.

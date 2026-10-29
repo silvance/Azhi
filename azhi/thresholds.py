@@ -79,7 +79,7 @@ NO_LEAD_EXPLAINED = (
 )
 
 DISCLAIMER = (
-    "Speaker similarity results produced by Azhí are investigative "
+    "Speaker similarity results produced by Azhi are investigative "
     "indicators intended to support lead development and analyst review. They "
     "are not forensic speaker identification, are not a biometric probability "
     "of identity, and should not be treated as proof that two recordings "

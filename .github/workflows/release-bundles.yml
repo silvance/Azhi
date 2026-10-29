@@ -1,6 +1,6 @@
 name: release-bundles
 
-# Builds self-contained, offline Azhí bundles for Windows and Linux.
+# Builds self-contained, offline Azhi bundles for Windows and Linux.
 # Each bundle includes the Python runtime, all dependencies, an ffmpeg binary, and
 # the selected Whisper models, so it can be copied to an air-gapped machine and run
 # with no network access. The build runners use the internet; the targets do not.
@@ -176,7 +176,7 @@ jobs:
       - name: Install OCR Python deps
         if: env.OCR_LANGS != ''
         run: pip install -c packaging/lockfile.txt pytesseract pypdfium2 pillow "numpy<2"
-      - name: Install the Azhí package
+      - name: Install the Azhi package
         # --no-deps: everything it needs was installed above, pinned by the
         # lockfile; pip resolving again could only move a version.
         run: pip install --no-deps .
@@ -307,7 +307,7 @@ jobs:
         run: |
           TAG="${{ steps.rel.outputs.tag }}"
           FILE=$(ls ${{ matrix.artifact }}.* | head -n1)
-          NOTES="Offline Azhí desktop bundle. Download the archive for your OS, unzip, and run Azhi (Azhi.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`./Azhi --verify\` (\`Azhi.exe --verify\` on Windows) from a terminal. It compares every file against what this build shipped and names anything missing or altered - a copy damaged in transit is the usual cause of a startup error, and it can fail in a different place on each run. \`--self-test\` then prints what this copy can do, as does the in-app **System status** button."
+          NOTES="Offline Azhi desktop bundle. Download the archive for your OS, unzip, and run Azhi (Azhi.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`./Azhi --verify\` (\`Azhi.exe --verify\` on Windows) from a terminal. It compares every file against what this build shipped and names anything missing or altered - a copy damaged in transit is the usual cause of a startup error, and it can fail in a different place on each run. \`--self-test\` then prints what this copy can do, as does the in-app **System status** button."
           gh release create "$TAG" --repo "${{ github.repository }}" \
-            --title "Azhí $TAG" --notes "$NOTES" "$FILE" \
+            --title "Azhi $TAG" --notes "$NOTES" "$FILE" \
           || gh release upload "$TAG" "$FILE" --clobber --repo "${{ github.repository }}"

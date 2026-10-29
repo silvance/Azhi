@@ -1,4 +1,4 @@
-"""The Azhí application shell: window, header, tabs, and entry point.
+"""The Azhi application shell: window, header, tabs, and entry point.
 
 Assembles the tabs this build can actually support: Transcribe always, then Speaker profiles and Speaker Compare when a
 speaker-embedding model is bundled, Live when ffmpeg is present, and Translate
@@ -66,7 +66,7 @@ class AzhiApp:
         bootstrap: bool = False,
     ) -> None:
         self.root = root
-        self.root.title("Azhí")
+        self.root.title("Azhi")
         # Whether a ttkbootstrap theme is underneath; the styles adapt but never
         # depend on it (see the stock-Tk fallback in main()).
         self._bootstrap = bootstrap
@@ -213,7 +213,7 @@ class AzhiApp:
 
         titles = ttk.Frame(header, style=Style.HEADER)
         titles.pack(side="left")
-        ttk.Label(titles, text="Azhí", style=Style.APP_TITLE).pack(anchor="w")
+        ttk.Label(titles, text="Azhi", style=Style.APP_TITLE).pack(anchor="w")
         ttk.Label(titles, text="Offline audio analysis", style=Style.APP_SUBTITLE).pack(
             anchor="w"
         )
@@ -274,10 +274,10 @@ class AzhiApp:
     def _show_help(self) -> None:
         """Open a short, plain-language guide for first-time / non-technical users."""
         guide = (
-            "Azhí — quick start\n"
+            "Azhi — quick start\n"
             "==================\n"
             "\n"
-            "Azhí is the Navajo word for voice. The name honours the Navajo\n"
+            "Azhi is the Navajo word for voice. The name honours the Navajo\n"
             "Code Talkers.\n"
             "\n"
             "Transcribe a recording\n"
@@ -330,19 +330,19 @@ class AzhiApp:
             "   the Status tab holds the technical detail.\n"
             "• System status (top right) lists exactly what this copy can do,\n"
             "   and says READY or NOT READY before an operation.\n"
-            "• Azhí analyses everything on this machine. It needs no\n"
+            "• Azhi analyses everything on this machine. It needs no\n"
             "   internet connection and uses no cloud service, and nothing you\n"
             "   load (recordings, transcripts or voices) leaves the computer.\n"
             "• The one exception is the Live page, which connects to a stream\n"
             "   address you enter yourself. It does nothing unless you use it.\n"
         )
-        self._text_window("Azhí — Help", guide, wrap="word", width=74)
+        self._text_window("Azhi — Help", guide, wrap="word", width=74)
 
     def _show_diagnostics(self) -> None:
         """Open a window listing which engines/models this build actually has."""
         report = format_report()
         self._text_window(
-            "Azhí — system status",
+            "Azhi — system status",
             report,
             # Wrapped: with "none" and no sideways scrollbar, the "Missing:"
             # line and the network statement - the longest lines - were cut.
@@ -422,7 +422,7 @@ class AzhiApp:
             if page is not None and page.is_busy():
                 losses.append(loss)
         if losses and not messagebox.askyesno(
-            "Close Azhí?",
+            "Close Azhi?",
             "\n\n".join(losses) + "\n\nClose anyway?",
             icon="warning",
             default="no",
@@ -479,7 +479,7 @@ def _enable_drag_and_drop(root: tk.Misc) -> bool:
 
 
 def main() -> None:
-    """Launch the Azhí GUI."""
+    """Launch the Azhi GUI."""
     # Must happen before faster-whisper / pyannote / argostranslate are imported
     # (which only occurs once a job runs), so configuring at startup is early
     # enough. Points HF, Argos and Tesseract at the bundled offline caches when
