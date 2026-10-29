@@ -10,7 +10,7 @@ a test that was missing:
 
 import pytest
 
-from sotto.run_summary import (
+from azhi.run_summary import (
     LOW_KEPT_FRACTION,
     FailedRun,
     SkippedRun,

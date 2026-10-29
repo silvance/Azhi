@@ -4,8 +4,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sotto import enrollment
-from sotto.enrollment import (
+from azhi import enrollment
+from azhi.enrollment import (
     EnrollmentResult,
     enroll_from_wav,
     enrolled_spans,
@@ -17,7 +17,7 @@ from sotto.enrollment import (
     subtract_spans,
     windows,
 )
-from sotto.speaker_profiles import (
+from azhi.speaker_profiles import (
     SAMPLE_LEARNED,
     SAMPLE_REFERENCE,
     EmbeddingModelIdentity,
@@ -291,26 +291,26 @@ def test_spans_by_speaker_name_ignores_undiarized_segments():
 
 
 def test_parse_time_ranges_mm_ss():
-    from sotto.enrollment import parse_time_ranges
+    from azhi.enrollment import parse_time_ranges
 
     assert parse_time_ranges("0:10-0:45, 1:20-2:00") == [(10.0, 45.0), (80.0, 120.0)]
 
 
 def test_parse_time_ranges_plain_seconds_and_hours():
-    from sotto.enrollment import parse_time_ranges
+    from azhi.enrollment import parse_time_ranges
 
     assert parse_time_ranges("5-12") == [(5.0, 12.0)]
     assert parse_time_ranges("1:00:00-1:00:30") == [(3600.0, 3630.0)]
 
 
 def test_parse_time_ranges_separators():
-    from sotto.enrollment import parse_time_ranges
+    from azhi.enrollment import parse_time_ranges
 
     assert parse_time_ranges("1-2; 3-4\n5-6") == [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)]
 
 
 def test_parse_time_ranges_rejects_bad_input():
-    from sotto.enrollment import parse_time_ranges
+    from azhi.enrollment import parse_time_ranges
 
     for bad in ("", "10", "abc-def", "10-5", "1:2:3:4-9"):
         with pytest.raises(ValueError):
@@ -322,7 +322,7 @@ def test_parse_time_ranges_rejects_bad_input():
 
 def test_a_ready_wav_is_used_as_is_without_ffmpeg(wav, monkeypatch):
     """A 16 kHz mono 16-bit WAV needs no conversion - and no ffmpeg."""
-    import sotto.transcription as transcription
+    import azhi.transcription as transcription
 
     def _no_ffmpeg(*args, **kwargs):
         raise AssertionError("convert_to_wav should not be called for a ready WAV")
@@ -335,7 +335,7 @@ def test_a_ready_wav_is_used_as_is_without_ffmpeg(wav, monkeypatch):
 
 
 def test_the_hash_is_of_the_source_the_operator_chose(wav):
-    from sotto.hashing import sha256_file
+    from azhi.hashing import sha256_file
 
     _prepared, digest, _temporary = enrollment.prepare_source(wav)
     assert digest == sha256_file(wav)
@@ -529,7 +529,7 @@ def test_subtract_spans_removes_only_the_covered_parts():
 
 
 def test_formatted_ranges_read_back_as_the_same_spans():
-    from sotto.enrollment import format_time_ranges, parse_time_ranges
+    from azhi.enrollment import format_time_ranges, parse_time_ranges
 
     spans = [(0.5, 2.25), (65.0, 67.125), (3725.5, 3730.0)]
     text = format_time_ranges(spans)

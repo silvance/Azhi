@@ -2,9 +2,9 @@ import wave
 
 import numpy as np
 
-from sotto import quality
-from sotto.enrollment import WINDOW_SECONDS
-from sotto.quality import (
+from azhi import quality
+from azhi.enrollment import WINDOW_SECONDS
+from azhi.quality import (
     FAIR,
     GOOD,
     INSUFFICIENT,

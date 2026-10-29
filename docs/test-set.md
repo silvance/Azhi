@@ -87,10 +87,10 @@ reference beside it is skipped.
 From a terminal in the application's folder:
 
 ```
-Sotto.exe --score-test-set D:\testset --out D:\testset-results
+Azhi.exe --score-test-set D:\testset --out D:\testset-results
 ```
 
-(From a source checkout: `python -m sotto.diarization_eval D:\testset --out
+(From a source checkout: `python -m azhi.diarization_eval D:\testset --out
 D:\testset-results`.)
 
 It transcribes each recording and separates the speakers with the same models
@@ -185,6 +185,6 @@ To compare speaker-separation methods, score the same test set once per method,
 each into its own results folder:
 
 ```
-Sotto.exe --score-test-set D:\testset --out D:\results-pyannote --engine pyannote
-Sotto.exe --score-test-set D:\testset --out D:\results-nemotron --engine nemotron
+Azhi.exe --score-test-set D:\testset --out D:\results-pyannote --engine pyannote
+Azhi.exe --score-test-set D:\testset --out D:\results-nemotron --engine nemotron
 ```

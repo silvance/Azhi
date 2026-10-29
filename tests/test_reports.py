@@ -1,21 +1,21 @@
 import pytest
 
-from sotto.matching import ComparisonResult, GalleryMatch, GalleryResult
-from sotto.provenance import (
+from azhi.matching import ComparisonResult, GalleryMatch, GalleryResult
+from azhi.provenance import (
     AnalysisProvenance,
     DiarizationProvenance,
     SourceRecord,
     TranscriptionProvenance,
 )
-from sotto.quality import GOOD
-from sotto.reports import (
+from azhi.quality import GOOD
+from azhi.reports import (
     DISCLAIMER_HEADING,
     GallerySearch,
     build_report_sections,
     render_text,
     write_analysis_report,
 )
-from sotto.thresholds import (
+from azhi.thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
     BAND_LOW,
@@ -23,8 +23,8 @@ from sotto.thresholds import (
     DISCLAIMER,
     NO_LEAD_EXPLAINED,
 )
-from sotto.transcription import Segment, TranscriptionResult
-from sotto.voiceprints import MatchDecision
+from azhi.transcription import Segment, TranscriptionResult
+from azhi.voiceprints import MatchDecision
 
 SOURCE_SHA = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
@@ -125,8 +125,8 @@ def test_report_includes_comparison_details():
 
 
 def test_a_comparison_reports_its_windows_and_recording_conditions():
-    from sotto.conditions import Side, compare
-    from sotto.matching import WindowDetail, WindowScore
+    from azhi.conditions import Side, compare
+    from azhi.matching import WindowDetail, WindowScore
 
     comparison = _comparison(
         detail=WindowDetail(
@@ -406,8 +406,8 @@ def test_a_searched_recording_other_than_the_transcript_is_flagged():
 
 
 def test_the_report_shows_notes_under_their_lines_unless_left_out():
-    from sotto.reports import _transcript_lines
-    from sotto.transcription import Note, Segment, TranscriptionResult
+    from azhi.reports import _transcript_lines
+    from azhi.transcription import Note, Segment, TranscriptionResult
 
     result = TranscriptionResult(
         "", "en", 1.0, 10.0, segments=[Segment(1.0, 3.0, "Meet at ten.")]

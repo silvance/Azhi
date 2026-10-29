@@ -1,4 +1,4 @@
-"""Download offline assets (ffmpeg + faster-whisper models) into ``sotto_assets/``.
+"""Download offline assets (ffmpeg + faster-whisper models) into ``azhi_assets/``.
 
 Run at build time on a connected machine (or in CI) before invoking PyInstaller.
 The downloaded assets are bundled into the executable so the target machine never
@@ -10,11 +10,11 @@ Usage::
     python packaging/fetch_assets.py models small,medium,turbo
 
 Model names are the ones the application itself offers (see
-``sotto.transcription.MODEL_SIZES``); ``turbo`` and ``large-v3`` are ~1.6 GB
+``azhi.transcription.MODEL_SIZES``); ``turbo`` and ``large-v3`` are ~1.6 GB
 each, so a bundle carrying either will exceed a 2 GB GitHub release asset once
 anything else is added.
 
-Requires the build extras: ``pip install "sotto[bundle]"``.
+Requires the build extras: ``pip install "azhi[bundle]"``.
 """
 
 from __future__ import annotations
@@ -31,13 +31,13 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sotto import asset_lock, hub_cache  # noqa: E402
-from sotto.hashing import sha256_file_or_none  # noqa: E402
+from azhi import asset_lock, hub_cache  # noqa: E402
+from azhi.hashing import sha256_file_or_none  # noqa: E402
 
-ASSETS = Path("sotto_assets")
+ASSETS = Path("azhi_assets")
 
 # Which weights this build is allowed to contain. Committed from the build that
-# was tested; enforced on every build after it. See sotto/asset_lock.py.
+# was tested; enforced on every build after it. See azhi/asset_lock.py.
 LOCKFILE = Path(__file__).resolve().parent / "assets.lock.json"
 
 
@@ -140,7 +140,7 @@ DIARIZATION_SEGMENTATION_URL = (
 # Verification performance varies substantially with language, channel,
 # microphone, background noise, the amount of usable speech, and any mismatch
 # between the enrolment and questioned recordings. No entry here is validated for
-# a particular operational setting; see sotto/validation.py for measuring one.
+# a particular operational setting; see azhi/validation.py for measuring one.
 EMBEDDING_RELEASE_BASE = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "speaker-recongition-models/"
@@ -190,7 +190,7 @@ EMBEDDING_CAVEAT = (
 
 
 def fetch_ffmpeg() -> None:
-    """Copy a platform-appropriate ffmpeg binary into ``sotto_assets/ffmpeg``."""
+    """Copy a platform-appropriate ffmpeg binary into ``azhi_assets/ffmpeg``."""
     import imageio_ffmpeg
 
     src = Path(imageio_ffmpeg.get_ffmpeg_exe())
@@ -204,7 +204,7 @@ def fetch_ffmpeg() -> None:
 
 
 def fetch_models(names: List[str]) -> None:
-    """Download each named CTranslate2 model into ``sotto_assets/models/<name>``."""
+    """Download each named CTranslate2 model into ``azhi_assets/models/<name>``."""
     from huggingface_hub import snapshot_download
 
     # Check the whole list first. Validating inside the loop meant a typo in the
@@ -246,9 +246,9 @@ PYANNOTE_REPOS = list(hub_cache.PYANNOTE_REPOS)
 def fetch_pyannote() -> None:
     """Download the gated pyannote models into an offline HF cache.
 
-    Saves them under ``sotto_assets/pyannote/hub`` in the standard Hugging Face
-    cache layout. At runtime the app points ``HF_HOME`` at ``sotto_assets/pyannote``
-    and sets ``HF_HUB_OFFLINE=1`` (see ``sotto.resources.pyannote_cache_dir``), so
+    Saves them under ``azhi_assets/pyannote/hub`` in the standard Hugging Face
+    cache layout. At runtime the app points ``HF_HOME`` at ``azhi_assets/pyannote``
+    and sets ``HF_HUB_OFFLINE=1`` (see ``azhi.resources.pyannote_cache_dir``), so
     the air-gapped machine needs neither network nor token.
 
     Requires ``HF_TOKEN`` (a Hugging Face token whose account has accepted the
@@ -342,7 +342,7 @@ def embedding_metadata(name: str, url: str, path: Optional[Path] = None) -> Dict
 
 
 def fetch_embedding(embedding: str = DEFAULT_EMBEDDING) -> None:
-    """Download the speaker-embedding model into sotto_assets/diarization.
+    """Download the speaker-embedding model into azhi_assets/diarization.
 
     Saves ``embedding.onnx`` plus two sidecars: ``embedding_model.txt`` (the
     alias, read by older builds) and ``embedding_model.json``, which describes
@@ -373,7 +373,7 @@ def fetch_embedding(embedding: str = DEFAULT_EMBEDDING) -> None:
 
 
 def fetch_segmentation() -> None:
-    """Download the sherpa-onnx segmentation model into sotto_assets/diarization."""
+    """Download the sherpa-onnx segmentation model into azhi_assets/diarization."""
     out = ASSETS / "diarization"
     out.mkdir(parents=True, exist_ok=True)
     segmentation_dest = out / "segmentation.onnx"
@@ -397,7 +397,7 @@ def fetch_segmentation() -> None:
 
 # The noise-reduction model (GTCRN, ~0.5 MB). Small enough that bundling it is
 # not a decision; what it is good for - and emphatically not good for - is
-# written down in sotto/enhance.py.
+# written down in azhi/enhance.py.
 DENOISER_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "speech-enhancement-models/gtcrn_simple.onnx"
@@ -405,7 +405,7 @@ DENOISER_URL = (
 
 
 def fetch_enhancement() -> None:
-    """Download the noise-reduction model into sotto_assets/enhancement."""
+    """Download the noise-reduction model into azhi_assets/enhancement."""
     out = ASSETS / "enhancement"
     out.mkdir(parents=True, exist_ok=True)
     dest = out / "denoiser.onnx"
@@ -424,7 +424,7 @@ def fetch_diarization(embedding: str = DEFAULT_EMBEDDING) -> None:
     fetch_segmentation()
 
 
-# NVIDIA's end-to-end diarizer (optional; see sotto/nemotron.py). Two parts,
+# NVIDIA's end-to-end diarizer (optional; see azhi/nemotron.py). Two parts,
 # under two licences, both pinned here by digest rather than trusted by name:
 #
 # - NeMo-Speech.cpp, the CPU runtime that runs it (Apache-2.0). Digests are the
@@ -472,7 +472,7 @@ def _check_digest(path: Path, expected: str, what: str) -> None:
 def fetch_nemotron() -> None:
     """Download the NeMo-Speech.cpp runtime and the Nemotron model.
 
-    Into ``sotto_assets/nemotron``: the runtime's ``bin`` folder (the program
+    Into ``azhi_assets/nemotron``: the runtime's ``bin`` folder (the program
     and the libraries it loads from beside itself), its licence files, the
     model with its licence text and NVIDIA's model card, and ``nemotron.json``
     recording exactly what was fetched.
@@ -576,7 +576,7 @@ ALIGNMENT_SIZE = 377911891
 
 
 def fetch_alignment() -> None:
-    """Download the English word-timing model into ``sotto_assets/alignment``.
+    """Download the English word-timing model into ``azhi_assets/alignment``.
 
     At the revision the lock names, or the hub's current one, pinned for every
     build after; ``alignment.json`` records the repository, revision, digest
@@ -638,7 +638,7 @@ def fetch_argos(codes: List[str]) -> None:
     """Install Argos packs (<code> -> en) and warm the offline sentence splitter.
 
     Everything lives under Argos's data dir, which it derives from XDG_DATA_HOME;
-    pointing that at ``sotto_assets/argos`` puts the packs and the MiniSBD model
+    pointing that at ``azhi_assets/argos`` puts the packs and the MiniSBD model
     cache inside the bundle. A sample translation per language is then run, which
     downloads the small per-language MiniSBD onnx into the cache - so at runtime,
     air-gapped, no model download is attempted. Unavailable codes are skipped.
@@ -688,7 +688,7 @@ def fetch_argos(codes: List[str]) -> None:
     # runs. Whatever a language needs - its own splitter, a mapped one, or the
     # English fallback for one MiniSBD does not know - has to be in the cache
     # now, or this is where the build finds out rather than an operator.
-    from sotto.resources import NetworkRefused, refuse_network_downloads
+    from azhi.resources import NetworkRefused, refuse_network_downloads
 
     refuse_network_downloads()
     for code in installed_codes:
@@ -755,12 +755,12 @@ def _copy_linux_tesseract_libs(binary: Path, dest_dir: Path) -> None:
 def fetch_tesseract(codes: List[str]) -> None:
     """Bundle Tesseract OCR: language data plus the binary and its libraries.
 
-    Downloads ``<lang>.traineddata`` into ``sotto_assets/tesseract/tessdata`` and
+    Downloads ``<lang>.traineddata`` into ``azhi_assets/tesseract/tessdata`` and
     copies a system Tesseract binary (installed by the build step) plus its
     dependent libraries next to it, so the air-gapped target needs no Tesseract
     install. Unknown/unavailable language codes are skipped with a warning.
     """
-    from sotto.ocr import tesseract_lang
+    from azhi.ocr import tesseract_lang
 
     tess_dir = ASSETS / "tesseract"
     tessdata = tess_dir / "tessdata"

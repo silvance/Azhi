@@ -7,7 +7,7 @@ nobody field-tested, and nothing in the bundle would say so.
 
 import pytest
 
-from sotto.asset_lock import (
+from azhi.asset_lock import (
     digest_for,
     empty,
     mismatch,
@@ -16,7 +16,7 @@ from sotto.asset_lock import (
     revision_for,
     summary,
 )
-from sotto.dependencies import (
+from azhi.dependencies import (
     TRACKED_PACKAGES,
     canonical,
     drift,

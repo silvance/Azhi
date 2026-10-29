@@ -1,6 +1,6 @@
 """The watch list: what counts as a hit, and what does not."""
 
-from sotto.watchlist import Matcher, describe, matcher, parse
+from azhi.watchlist import Matcher, describe, matcher, parse
 
 
 def _hits(terms, text):

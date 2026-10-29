@@ -2,7 +2,7 @@
 
 import pytest
 
-from sotto import speaker_count
+from azhi import speaker_count
 
 
 def test_the_first_choice_is_not_an_answer():

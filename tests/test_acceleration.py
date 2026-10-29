@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from sotto import acceleration
-from sotto.acceleration import (
+from azhi import acceleration
+from azhi.acceleration import (
     DEFAULT_MODE,
     MODE_CPU,
     MODE_CUDA,
@@ -222,7 +222,7 @@ def test_the_packaging_still_strips_cuda_so_the_claim_holds():
     If that stripping is ever removed to ship a GPU-capable bundle, this fails
     rather than leaving the application hiding an option that would by then work.
     """
-    spec = Path(__file__).resolve().parent.parent / "packaging" / "sotto.spec"
+    spec = Path(__file__).resolve().parent.parent / "packaging" / "azhi.spec"
     text = spec.read_text(encoding="utf-8")
     assert "_CUDA_MARKERS" in text
     for marker in ("cudnn", "cublas", "cudart", "onnxruntime_providers_cuda"):

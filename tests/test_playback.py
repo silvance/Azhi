@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from sotto import playback
-from sotto.playback import (
+from azhi import playback
+from azhi.playback import (
     PlaybackError,
     SegmentPlayer,
     _player_args,
@@ -82,7 +82,7 @@ def test_every_offered_speed_is_within_what_ffmpeg_accepts():
 
 
 def _real_ffmpeg():
-    from sotto.resources import find_ffmpeg
+    from azhi.resources import find_ffmpeg
 
     return find_ffmpeg()
 

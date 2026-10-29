@@ -1,5 +1,5 @@
-from sotto.project import PROJECT_SUFFIX, load_project, save_project
-from sotto.transcription import Segment, TranscriptionResult, Word
+from azhi.project import PROJECT_SUFFIX, load_project, save_project
+from azhi.transcription import Segment, TranscriptionResult, Word
 
 
 def _result():
@@ -83,8 +83,8 @@ def test_round_trip_preserves_non_diarized(tmp_path):
 
 import json  # noqa: E402
 
-from sotto.project import load_project_record  # noqa: E402
-from sotto.speaker_names import as_lead, is_lead  # noqa: E402
+from azhi.project import load_project_record  # noqa: E402
+from azhi.speaker_names import as_lead, is_lead  # noqa: E402
 
 
 def _older_project(tmp_path, names, version=2):
@@ -135,14 +135,14 @@ def test_a_current_project_keeps_confirmation(tmp_path):
 
 
 def test_notes_are_kept_in_the_project(tmp_path):
-    from sotto.project import SCHEMA_VERSION, load_project_record, save_project
-    from sotto.transcription import Note, Segment, TranscriptionResult
+    from azhi.project import SCHEMA_VERSION, load_project_record, save_project
+    from azhi.transcription import Note, Segment, TranscriptionResult
 
     result = TranscriptionResult(
         "", "en", 1.0, 10.0, segments=[Segment(1.0, 3.0, "Meet at ten.")]
     )
     result.notes = [Note(1.0, "Which ten?", "2026-10-28T23:00:00+00:00")]
-    path = save_project(tmp_path / "case.sotto.json", result)
+    path = save_project(tmp_path / "case.azhi.json", result)
     assert SCHEMA_VERSION == 4
     loaded = load_project_record(path).result
     assert [(n.at, n.text, n.written_utc) for n in loaded.notes] == [
@@ -153,10 +153,17 @@ def test_notes_are_kept_in_the_project(tmp_path):
 def test_a_project_from_before_notes_opens_with_none(tmp_path):
     import json
 
-    from sotto.project import load_project_record
+    from azhi.project import load_project_record
 
-    path = tmp_path / "old.sotto.json"
+    path = tmp_path / "old.azhi.json"
     path.write_text(
         json.dumps({"schema_version": 3, "result": {"segments": []}}), encoding="utf-8"
     )
     assert load_project_record(path).result.notes == []
+
+
+def test_projects_saved_under_earlier_names_are_offered_by_the_open_dialog():
+    from azhi.project import OLD_PROJECT_SUFFIXES, PROJECT_SUFFIX
+
+    assert PROJECT_SUFFIX == ".azhi.json"
+    assert OLD_PROJECT_SUFFIXES == (".sotto.json", ".whispers.json", ".whispr.json")

@@ -1,6 +1,6 @@
-# Sotto — user guide
+# Azhí — user guide
 
-Sotto turns recordings into text you can read, search and quote, works out
+Azhí turns recordings into text you can read, search and quote, works out
 who was speaking, and measures how similar a voice is to someone you already
 have a reference for.
 
@@ -46,13 +46,13 @@ damaged in transit fails in confusing ways, and it is worth ruling out first.
 Open a terminal in the extracted folder and run:
 
 ```
-Sotto.exe --verify
+Azhi.exe --verify
 ```
 
 It should report that the copy matches the build. Then:
 
 ```
-Sotto.exe --self-test
+Azhi.exe --self-test
 ```
 
 This prints what this copy can actually do. Read two lines in particular:
@@ -65,14 +65,19 @@ This prints what this copy can actually do. Read two lines in particular:
 You can see the same report any time from **System status** in the top-right
 of the window.
 
-### Coming from Whispers
+### Coming from Sotto or Whispers
 
-Sotto is the same tool, renamed (it was called Whispers). Nothing you saved
-is lost. The first time Sotto starts on a machine, it moves the Whispers
-settings folder across, with its speaker profiles, comparison history and
-operation profiles. Projects saved as `.whispers.json`, and profiles exported
-under the old name, still open from the usual buttons. Recordings and
-transcripts are untouched, wherever you keep them.
+Azhí is the same tool, renamed (it was called Sotto, and before that
+Whispers). *Azhí* is the Navajo word for voice; the name honours the Navajo
+Code Talkers. On disk it is spelt without the accent: the program is
+`Azhi.exe` and its folder `Azhi`.
+
+Nothing you saved is lost. The first time Azhí starts on a machine, it moves
+the Sotto (or Whispers) settings folder across, with its speaker profiles,
+comparison history and operation profiles. Projects saved as `.sotto.json` or
+`.whispers.json`, and profiles exported under the old names, still open from
+the usual buttons. Recordings and transcripts are untouched, wherever you keep
+them; live recordings already in `Sotto recordings` stay there.
 
 ### The window
 
@@ -506,7 +511,7 @@ Under the transcript:
   which settings, and a fingerprint of the source file. This is the one to
   export when the result may be questioned later.
 - **Save project…** — writes everything, including your speaker names and
-  corrections, to a `.sotto.json` file. **Open project…** brings it back so
+  corrections, to a `.azhi.json` file. **Open project…** brings it back so
   you can carry on in a later session.
 
 Save a project whenever you have put real work into corrections. Re-doing them
@@ -689,7 +694,7 @@ whole selection, which averages them, so read the pattern, not one bar:
 
 - **Bars at about the same height** — the speech you selected behaves like
   one voice throughout.
-- **One bar well apart from the rest** — Sotto names it under the strip
+- **One bar well apart from the rest** — Azhí names it under the strip
   (0.15 or more from the typical window). Click it to listen: a second voice,
   or a burst of noise, in one window moves the whole score.
 - **Bars that wander** — the selection may hold more than one person; check
@@ -714,7 +719,7 @@ How the questioned recording and the reference samples were made, side by
 side: how much speech each has, the **frequency range** (how high the sound
 reaches: about 4 kHz or less through a telephone line, 7–8 kHz from a good
 recording), how far the speech stands above the background, and clipping.
-Sotto points out the differences that matter: a telephone recording against a
+Azhí points out the differences that matter: a telephone recording against a
 full-band reference, much more background noise on one side, clipping, or
 under 10 seconds of questioned speech.
 
@@ -739,7 +744,7 @@ its SHA-256, the models, the thresholds, and the caveats. The open transcript
 is attached only when it is of that same recording.
 
 **Export session report…** writes every comparison and search made on this
-page since Sotto opened, in order. **Start a new session report** begins
+page since Azhí opened, in order. **Start a new session report** begins
 that list again; it does not touch Comparison History, which keeps every
 record.
 
@@ -788,7 +793,7 @@ Under **Listen to**, choose **A microphone on this PC**, pick it from the list
 
 - **Everything it hears is kept.** A microphone's audio exists nowhere else, so
   the whole recording is saved as a WAV file in **Keep recordings in** (your
-  Documents folder's *Sotto recordings*, unless you choose another), named
+  Documents folder's *Azhi recordings*, unless you choose another), named
   after the time it started. It is saved as the microphone sent it, not
   reduced to what the live transcription uses.
 - **While it records**, a red line under the buttons names the microphone and
@@ -814,7 +819,7 @@ The Live page does not keep a stream's audio. For a transcript you need to rely
 on, record the stream as well, and transcribe the recording on the Transcribe
 page afterwards: that hears all of it at once.
 
-A stream is the one thing in Sotto that uses the network, and only where you
+A stream is the one thing in Azhí that uses the network, and only where you
 tell it to: it reads the **Stream URL** you give it, or waits for an incoming
 connection when you ask this PC to host. Nothing is sent out, and the
 transcription itself still happens here. On a machine that is meant to stay
@@ -841,7 +846,7 @@ rules out half the possibilities in one look.
 | Two people came out as five | **Redo speaker separation…** with the right count. Next time, set the count before running. |
 | A model is not in this build | **System status** lists the ones that are. Pick one of those. |
 | It looks like it has frozen | Look for a dialog waiting for an answer — including on your other monitor. |
-| Odd failures, files that will not open | Run `Sotto.exe --verify`. A bundle damaged in transit fails differently every run. |
+| Odd failures, files that will not open | Run `Azhi.exe --verify`. A bundle damaged in transit fails differently every run. |
 
 The **Status** tab holds the technical detail for anything that went wrong. It
 is the right thing to copy when reporting a problem.
@@ -856,7 +861,7 @@ not stuck.
 
 This section is the most important one in this guide.
 
-> Speaker similarity results produced by Sotto are investigative indicators
+> Speaker similarity results produced by Azhí are investigative indicators
 > intended to support lead development and analyst review. They are not
 > forensic speaker identification, are not a biometric probability of identity,
 > and should not be treated as proof that two recordings contain the same

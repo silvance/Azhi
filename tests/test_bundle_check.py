@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from sotto import app, bundle_check
-from sotto.bundle_check import (
+from azhi import app, bundle_check
+from azhi.bundle_check import (
     INVENTORY_NAME,
     build_inventory,
     load_inventory,
@@ -13,9 +13,9 @@ from sotto.bundle_check import (
 
 def _bundle(tmp_path):
     """A stand-in for a built one-dir bundle: an executable and its libraries."""
-    root = tmp_path / "sotto"
+    root = tmp_path / "azhi"
     (root / "_internal").mkdir(parents=True)
-    (root / "Sotto.exe").write_bytes(b"MZ" + b"\x00" * 60)
+    (root / "Azhi.exe").write_bytes(b"MZ" + b"\x00" * 60)
     (root / "_internal" / "_socket.pyd").write_bytes(b"socket-extension")
     (root / "_internal" / "python311.dll").write_bytes(b"python-runtime")
     (root / "_internal" / "tcl8.6").mkdir()
@@ -38,7 +38,7 @@ def test_inventory_covers_every_file_but_itself(tmp_path):
     inventory = build_inventory(root)
     paths = {entry["path"] for entry in inventory["files"]}
     assert paths == {
-        "Sotto.exe",
+        "Azhi.exe",
         "_internal/_socket.pyd",
         "_internal/python311.dll",
         "_internal/tcl8.6/init.tcl",

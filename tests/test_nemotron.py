@@ -18,9 +18,9 @@ import wave
 import numpy as np
 import pytest
 
-from sotto import diarization, nemotron, resources
-from sotto.provenance import AnalysisProvenance, DiarizationProvenance
-from sotto.transcription import CancelledError
+from azhi import diarization, nemotron, resources
+from azhi.provenance import AnalysisProvenance, DiarizationProvenance
+from azhi.transcription import CancelledError
 
 STEP = 0.01
 
@@ -227,7 +227,7 @@ def _wav(path, seconds):
 @pytest.fixture
 def bundle(tmp_path, monkeypatch, fake_library):
     """A Nemotron asset folder holding the stand-in library and a fake model."""
-    assets = tmp_path / "sotto_assets"
+    assets = tmp_path / "azhi_assets"
     folder = assets / "nemotron"
     (folder / "lib").mkdir(parents=True)
     library = folder / "lib" / "libnemo_speech_asr_c.so.1"
@@ -296,7 +296,7 @@ def test_library_gets_the_bundled_model_cpu_and_the_published_configuration(bund
 def test_a_model_path_that_is_not_plain_ascii_is_passed_by_a_plain_name(
     bundle, tmp_path, monkeypatch
 ):
-    moved = tmp_path / "José" / "sotto_assets"
+    moved = tmp_path / "José" / "azhi_assets"
     shutil.copytree(bundle["assets"], moved)
     monkeypatch.setenv(resources.ENV_ASSETS, str(moved))
     turns = diarization.diarize(bundle["wav"], backend="nemotron")
@@ -406,7 +406,7 @@ def test_shipped_copy_starts_the_worker_through_its_own_executable(monkeypatch):
     assert command[1:3] == ["--nemotron-worker", "lib.dll"]
     monkeypatch.delattr(nemotron.sys, "frozen")
     command = nemotron.worker_command("lib.dll", "model.gguf", "a.wav", "out")
-    assert command[1:3] == ["-m", "sotto.nemotron_worker"]
+    assert command[1:3] == ["-m", "azhi.nemotron_worker"]
 
 
 # -- what the record says --------------------------------------------------------
@@ -414,7 +414,7 @@ def test_shipped_copy_starts_the_worker_through_its_own_executable(monkeypatch):
 
 @needs_compiler
 def test_record_names_runtime_model_revision_method_and_hash(bundle):
-    from sotto.hashing import sha256_file
+    from azhi.hashing import sha256_file
 
     (bundle["folder"] / "nemotron.json").write_text(
         json.dumps(
@@ -458,7 +458,7 @@ def test_record_invents_no_revision_the_build_did_not_write(bundle):
 @needs_compiler
 def test_method_list_offers_nemotron_only_when_bundled(bundle):
     pytest.importorskip("tkinter")
-    from sotto.gui import transcribe_tab
+    from azhi.gui import transcribe_tab
 
     offered = transcribe_tab.engine_labels()
     # Straight after Auto, which runs it.

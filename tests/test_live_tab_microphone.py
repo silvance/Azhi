@@ -51,9 +51,9 @@ class InlineThread:
 
 @pytest.fixture
 def page(tmp_path, monkeypatch):
-    from sotto.gui import live_tab
-    from sotto.gui.theme import init_theme
-    from sotto.microphone import Microphone
+    from azhi.gui import live_tab
+    from azhi.gui.theme import init_theme
+    from azhi.microphone import Microphone
 
     FakeLive.made = []
     mics = [
@@ -129,7 +129,7 @@ def test_a_microphone_session_is_recorded_shown_and_recorded_on_stop(page):
 
 
 def test_without_a_microphone_nothing_starts(page, monkeypatch):
-    from sotto.gui import live_tab
+    from azhi.gui import live_tab
 
     tab, root, _ = page
     monkeypatch.setattr(live_tab, "list_microphones", lambda _ffmpeg: [])

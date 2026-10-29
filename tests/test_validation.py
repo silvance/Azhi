@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from sotto import validation
-from sotto.validation import (
+from azhi import validation
+from azhi.validation import (
     CorpusItem,
     EmbeddedItem,
     OperatingPoint,

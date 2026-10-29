@@ -1,7 +1,7 @@
 import pytest
 
-from sotto import transcription
-from sotto.transcription import (
+from azhi import transcription
+from azhi.transcription import (
     Segment,
     TranscriptionResult,
     Word,
@@ -203,7 +203,7 @@ def test_transcribe_audio_without_backend(tmp_path):
 # makes the loss visible when it still happens.
 
 
-def test_speech_is_entered_below_faster_sotto_default():
+def test_speech_is_entered_below_faster_azhi_default():
     """0.5 is tuned for clean speech and discards muffled speech after a pause."""
     assert transcription.VAD_THRESHOLD < 0.5
     assert transcription.vad_options()["threshold"] == transcription.VAD_THRESHOLD
@@ -338,7 +338,7 @@ def test_an_unfiltered_run_does_not_claim_a_filtered_duration(monkeypatch, tmp_p
     ],
 )
 def test_models_that_cannot_translate_are_named(model):
-    from sotto.transcription import translation_refusal
+    from azhi.transcription import translation_refusal
 
     reason = translation_refusal(model)
     assert reason and "medium or large-v3" in reason
@@ -346,13 +346,13 @@ def test_models_that_cannot_translate_are_named(model):
 
 @pytest.mark.parametrize("model", ["medium", "large-v3", "small", "/models/large-v3"])
 def test_multilingual_models_can_translate(model):
-    from sotto.transcription import translation_refusal
+    from azhi.transcription import translation_refusal
 
     assert translation_refusal(model) is None
 
 
 def test_a_translation_left_in_chinese_is_spotted():
-    from sotto.transcription import UNTRANSLATED_SHARE, Segment, untranslated_share
+    from azhi.transcription import UNTRANSLATED_SHARE, Segment, untranslated_share
 
     chinese = [
         Segment(0, 2, "他们就不许摘了之后呢然后杭州的查克索六几年的时候去那个武夷山")
@@ -405,7 +405,7 @@ def test_turbo_starts_each_stretch_afresh_but_keeps_the_expected_words(
 
 
 def test_the_record_says_whether_earlier_text_was_context():
-    from sotto.provenance import AnalysisProvenance, TranscriptionProvenance
+    from azhi.provenance import AnalysisProvenance, TranscriptionProvenance
 
     record = TranscriptionProvenance(model_name="turbo", previous_text_context=False)
     assert TranscriptionProvenance.from_dict(record.to_dict()) == record
@@ -626,7 +626,7 @@ def test_without_verbatim_a_matching_line_is_left_alone(monkeypatch, tmp_path):
 
 
 def test_the_record_says_whether_hesitations_were_kept():
-    from sotto.provenance import AnalysisProvenance, TranscriptionProvenance
+    from azhi.provenance import AnalysisProvenance, TranscriptionProvenance
 
     record = TranscriptionProvenance(
         model_name="turbo", verbatim=True, example_lines_removed=2
@@ -663,7 +663,7 @@ def test_a_recording_with_nothing_to_detect_is_transcribed_without_the_example(
 
 
 def _two_speakers():
-    from sotto.transcription import Segment, TranscriptionResult, Word
+    from azhi.transcription import Segment, TranscriptionResult, Word
 
     return TranscriptionResult(
         text="",
@@ -684,7 +684,7 @@ def _two_speakers():
 
 
 def test_clock_time_is_hours_minutes_seconds():
-    from sotto.transcription import clock_time
+    from azhi.transcription import clock_time
 
     assert clock_time(754.5) == "00:12:34"
     assert clock_time(754.5, millis=True) == "00:12:34.500"
@@ -703,7 +703,7 @@ def test_times_start_each_line_only_when_asked():
 
 
 def test_times_without_speakers():
-    from sotto.transcription import Segment, TranscriptionResult
+    from azhi.transcription import Segment, TranscriptionResult
 
     result = TranscriptionResult(
         "",
@@ -750,7 +750,7 @@ def test_the_spreadsheet_has_a_row_per_line_and_never_a_formula():
 
 
 def test_a_note_belongs_to_the_line_holding_its_moment():
-    from sotto.transcription import Note, Segment, note_lines
+    from azhi.transcription import Note, Segment, note_lines
 
     lines = [Segment(0, 4, "a"), Segment(5, 9, "b"), Segment(12, 15, "c")]
     notes = [
@@ -764,7 +764,7 @@ def test_a_note_belongs_to_the_line_holding_its_moment():
 
 
 def test_notes_are_written_under_their_lines_and_labelled():
-    from sotto.transcription import Note
+    from azhi.transcription import Note
 
     result = _two_speakers()
     result.notes = [Note(5.25, "Sounds nervous.\nCheck the 05:10 call too.")]
@@ -781,7 +781,7 @@ def test_the_spreadsheet_carries_notes_in_their_own_column():
     import csv
     import io
 
-    from sotto.transcription import Note
+    from azhi.transcription import Note
 
     result = _two_speakers()
     result.notes = [Note(3725.5, "=not a formula"), Note(3726.0, "second")]

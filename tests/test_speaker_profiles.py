@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-import sotto.speaker_profiles as sp
-from sotto import atomicio
-from sotto.speaker_profiles import (
+import azhi.speaker_profiles as sp
+from azhi import atomicio
+from azhi.speaker_profiles import (
     SAMPLE_LEARNED,
     SAMPLE_REFERENCE,
     EmbeddingModelIdentity,
@@ -81,7 +81,7 @@ def test_save_is_atomic_no_partial_file_on_failure(tmp_path, monkeypatch):
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
-    # The atomic writer lives in sotto.atomicio; fail its replace step.
+    # The atomic writer lives in azhi.atomicio; fail its replace step.
     monkeypatch.setattr(atomicio.os, "replace", _boom)
     with pytest.raises(ProfileError):
         save_speaker_profile(profile, path)
@@ -198,11 +198,11 @@ def test_missing_hash_needs_confirmation():
 
 
 def test_import_legacy_voiceprint_file(tmp_path):
-    legacy = tmp_path / "old.sotto-voiceprint.json"
+    legacy = tmp_path / "old.azhi-voiceprint.json"
     legacy.write_text(
         json.dumps(
             {
-                "kind": "sotto-voiceprint",
+                "kind": "azhi-voiceprint",
                 "name": "Falcon",
                 "vectors": [[1.0, 0.0], [0.9, 0.1]],
                 "source_profile": "Op One",
@@ -221,7 +221,7 @@ def test_import_legacy_voiceprint_file(tmp_path):
 
 
 def test_import_legacy_operation_profile_yields_one_subject_per_voice(tmp_path):
-    legacy = tmp_path / "op.sotto-profile.json"
+    legacy = tmp_path / "op.azhi-profile.json"
     legacy.write_text(
         json.dumps(
             {
@@ -242,7 +242,7 @@ def test_import_legacy_operation_profile_yields_one_subject_per_voice(tmp_path):
 
 
 def test_legacy_profile_is_not_silently_discarded(tmp_path):
-    legacy = tmp_path / "empty.sotto-profile.json"
+    legacy = tmp_path / "empty.azhi-profile.json"
     legacy.write_text(json.dumps({"name": "Op", "voiceprints": []}), encoding="utf-8")
     with pytest.raises(ProfileError, match="no enrolled voices"):
         load_profile_file(legacy)
@@ -258,16 +258,16 @@ def test_malformed_profile_raises(tmp_path):
 def test_unknown_shape_raises(tmp_path):
     bad = tmp_path / "other.json"
     bad.write_text(json.dumps({"hello": "world"}), encoding="utf-8")
-    with pytest.raises(ProfileError, match="not a Sotto speaker profile"):
+    with pytest.raises(ProfileError, match="not an Azhí speaker profile"):
         load_profile_file(bad)
 
 
 def test_future_schema_version_refused(tmp_path):
-    future = tmp_path / "future.sotto-speaker.json"
+    future = tmp_path / "future.azhi-speaker.json"
     future.write_text(
         json.dumps(
             {
-                "kind": "sotto-speaker-profile",
+                "kind": "azhi-speaker-profile",
                 "schema_version": sp.SCHEMA_VERSION + 1,
                 "display_name": "X",
             }
@@ -590,7 +590,7 @@ def test_a_new_subject_is_saved_as_given(tmp_path, monkeypatch):
     assert [p.display_name for p in list_speaker_profiles()] == ["New person"]
 
 
-@pytest.mark.parametrize("old_name", ["whispers", "whispr"])
+@pytest.mark.parametrize("old_name", ["sotto", "whispers", "whispr"])
 def test_profiles_saved_before_the_rename_are_still_listed(
     tmp_path, monkeypatch, old_name
 ):
@@ -599,11 +599,11 @@ def test_profiles_saved_before_the_rename_are_still_listed(
     monkeypatch.setattr(sp, "speakers_dir", lambda: tmp_path)
     profile = sp.SpeakerProfile(display_name="Subject A")
     data = profile.to_dict()
-    assert data["kind"] == "sotto-speaker-profile"
+    assert data["kind"] == "azhi-speaker-profile"
     data["kind"] = f"{old_name}-speaker-profile"  # what an earlier version wrote
     old_file = tmp_path / f"subject-a-{profile.subject_id}.{old_name}-speaker.json"
     old_file.write_text(json.dumps(data), encoding="utf-8")
     listed = sp.list_speaker_profiles()
     assert [p.display_name for p in listed] == ["Subject A"]
-    assert (tmp_path / f"subject-a-{profile.subject_id}.sotto-speaker.json").exists()
+    assert (tmp_path / f"subject-a-{profile.subject_id}.azhi-speaker.json").exists()
     assert not old_file.exists()  # renamed in place, never copied

@@ -2,8 +2,8 @@ import math
 
 import pytest
 
-from sotto.diarization import SpeakerSegment
-from sotto.voiceprints import (
+from azhi.diarization import SpeakerSegment
+from azhi.voiceprints import (
     Voiceprint,
     best_match,
     centroid,

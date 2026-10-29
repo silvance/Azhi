@@ -2,7 +2,7 @@
 
 import re
 
-from sotto.conditions import Side, compare, side
+from azhi.conditions import Side, compare, side
 
 
 def _piece(**values):

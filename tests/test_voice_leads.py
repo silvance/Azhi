@@ -9,9 +9,9 @@ lead marker everywhere until the operator confirms it.
 
 import pytest
 
-from sotto import speaker_names as sn
-from sotto.reports import _transcript_lines
-from sotto.transcription import Segment, TranscriptionResult
+from azhi import speaker_names as sn
+from azhi.reports import _transcript_lines
+from azhi.transcription import Segment, TranscriptionResult
 
 
 def _result():
@@ -94,7 +94,7 @@ def test_no_legend_when_every_name_was_typed_or_confirmed():
 
 def test_a_word_export_marks_and_explains_the_lead(tmp_path):
     docx = pytest.importorskip("docx")
-    from sotto.export import transcript_to_docx
+    from azhi.export import transcript_to_docx
 
     out = transcript_to_docx(_result(), tmp_path / "t.docx", _names())
     paragraphs = [p.text for p in docx.Document(str(out)).paragraphs]

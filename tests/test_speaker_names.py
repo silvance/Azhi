@@ -7,7 +7,7 @@ their work when it had in fact guessed - and in this application the guess is
 a person's name on somebody else's words.
 """
 
-from sotto.speaker_names import as_lead, cluster_index, preset_names
+from azhi.speaker_names import as_lead, cluster_index, preset_names
 
 
 def test_typed_names_are_matched_in_label_order_on_a_first_run():
@@ -122,7 +122,7 @@ def test_names_are_trimmed():
 
 
 def test_a_speaker_is_shown_by_name_or_by_number():
-    from sotto.speaker_names import shown_name
+    from azhi.speaker_names import shown_name
 
     assert shown_name("SPEAKER_00") == "Speaker 1"
     assert shown_name("SPEAKER_11", {}) == "Speaker 12"
