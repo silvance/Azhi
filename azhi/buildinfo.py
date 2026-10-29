@@ -46,7 +46,7 @@ def load_manifest() -> Dict[str, Any]:
 
 
 def application_version() -> str:
-    """The Azhí version (:mod:`azhi.version`).
+    """The Azhi version (:mod:`azhi.version`).
 
     Read from the code rather than installed package metadata, which a bundle
     does not necessarily carry.

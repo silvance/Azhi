@@ -100,7 +100,7 @@ def test_import_lands_in_profiles_dir(tmp_path, monkeypatch):
 def test_read_profile_file_rejects_non_profile(tmp_path):
     bad = tmp_path / "notaprofile.json"
     bad.write_text('{"foo": 1}', encoding="utf-8")
-    with pytest.raises(ValueError, match="isn't an Azhí profile"):
+    with pytest.raises(ValueError, match="isn't an Azhi profile"):
         read_profile_file(bad)
 
 

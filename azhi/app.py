@@ -1,4 +1,4 @@
-"""Entry point for Azhí: the GUI, or a headless self-test.
+"""Entry point for Azhi: the GUI, or a headless self-test.
 
 The GUI itself lives in :mod:`azhi.gui`; this is the thin front door that
 ``azhi.app:main`` names, so the console script, ``python -m azhi`` and the
@@ -21,7 +21,7 @@ from typing import Any, List, Optional
 # one thing this module exists to avoid.
 __all__ = ["main", "self_test", "verify_install", "score_test_set", "launch"]
 
-USAGE = """Azhí - offline audio analysis
+USAGE = """Azhi - offline audio analysis
 
   Azhi                  open the application
   Azhi --self-test      print what this copy can do, and exit
@@ -86,7 +86,7 @@ def score_test_set(args: "List[str]") -> int:
 
 
 def main(argv: "Optional[List[str]]" = None) -> None:
-    """Run Azhí: a check if asked for one, otherwise the window."""
+    """Run Azhi: a check if asked for one, otherwise the window."""
     args = sys.argv[1:] if argv is None else list(argv)
     if args and args[0] == "--nemotron-worker":
         # Started by azhi.nemotron, never by a person: the shipped copy has

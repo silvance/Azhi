@@ -1,4 +1,4 @@
-"""Tkinter GUI for Azhí, split into focused modules.
+"""Tkinter GUI for Azhi, split into focused modules.
 
 - :mod:`azhi.gui.app` - the application shell and ``main`` entry point
 - :mod:`azhi.gui.transcribe_tab` - the Transcribe tab (settings + run)

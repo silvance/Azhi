@@ -484,7 +484,7 @@ class SpeakerProfilesTab:
             title="Export speaker profile",
             defaultextension=SPEAKER_PROFILE_SUFFIX,
             initialfile=f"{profile.display_name}{SPEAKER_PROFILE_SUFFIX}",
-            filetypes=[("Azhí speaker profile", f"*{SPEAKER_PROFILE_SUFFIX}")],
+            filetypes=[("Azhi speaker profile", f"*{SPEAKER_PROFILE_SUFFIX}")],
             parent=active_window(self.root),
         )
         if not path:
@@ -498,7 +498,7 @@ class SpeakerProfilesTab:
     def _import_profile(self) -> None:
         path = filedialog.askopenfilename(
             title="Import speaker profile",
-            filetypes=[("Azhí profile", "*.json"), ("All files", "*.*")],
+            filetypes=[("Azhi profile", "*.json"), ("All files", "*.*")],
             parent=active_window(self.root),
         )
         if not path:

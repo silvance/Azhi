@@ -258,7 +258,7 @@ def test_malformed_profile_raises(tmp_path):
 def test_unknown_shape_raises(tmp_path):
     bad = tmp_path / "other.json"
     bad.write_text(json.dumps({"hello": "world"}), encoding="utf-8")
-    with pytest.raises(ProfileError, match="not an Azhí speaker profile"):
+    with pytest.raises(ProfileError, match="not an Azhi speaker profile"):
         load_profile_file(bad)
 
 

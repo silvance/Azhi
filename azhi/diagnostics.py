@@ -381,7 +381,7 @@ def format_report(checks: "List[Check] | None" = None) -> str:
     ready, blockers = readiness(items)
     info = build_info()
 
-    lines = ["Azhí system status", "=" * 18, ""]
+    lines = ["Azhi system status", "=" * 18, ""]
     lines.append("READY" if ready else "NOT READY")
     if blockers:
         lines.append("Not working in this copy:")

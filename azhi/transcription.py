@@ -1,4 +1,4 @@
-"""Audio/video transcription backend for the Azhí GUI.
+"""Audio/video transcription backend for the Azhi GUI.
 
 This wraps `faster-whisper <https://github.com/SYSTRAN/faster-whisper>`_
 (a CTranslate2 reimplementation of Whisper) which is substantially faster and

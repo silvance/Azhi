@@ -1121,7 +1121,7 @@ class TranscribeTab:
         self._panel = PanelWindow(
             parent,
             title="Transcript",
-            window_title="Azhí — Transcript",
+            window_title="Azhi — Transcript",
             note=("The transcript is open in its own window."),
             pack_options={"fill": "both", "expand": True, "pady": (SPACE_XL, 0)},
             on_error=self._popout_failed,
@@ -2971,7 +2971,7 @@ class TranscribeTab:
             defaultextension=PROJECT_SUFFIX,
             initialfile=f"{stem}{PROJECT_SUFFIX}",
             filetypes=[
-                ("Azhí project", f"*{PROJECT_SUFFIX}"),
+                ("Azhi project", f"*{PROJECT_SUFFIX}"),
                 ("All files", "*.*"),
             ],
             parent=active_window(self.root),
@@ -3000,7 +3000,7 @@ class TranscribeTab:
             filetypes=[
                 # Projects saved before the rename end in the old name.
                 (
-                    "Azhí project",
+                    "Azhi project",
                     " ".join(f"*{s}" for s in (PROJECT_SUFFIX, *OLD_PROJECT_SUFFIXES)),
                 ),
                 ("All files", "*.*"),
@@ -3780,7 +3780,7 @@ class TranscribeTab:
             defaultextension=PROFILE_SUFFIX,
             initialfile=f"{profile.name}{PROFILE_SUFFIX}",
             filetypes=[
-                ("Azhí profile", f"*{PROFILE_SUFFIX}"),
+                ("Azhi profile", f"*{PROFILE_SUFFIX}"),
                 ("All files", "*.*"),
             ],
             parent=active_window(self.root),
@@ -3799,7 +3799,7 @@ class TranscribeTab:
             title="Import profile",
             filetypes=[
                 (
-                    "Azhí profile",
+                    "Azhi profile",
                     " ".join(f"*{s}" for s in (PROFILE_SUFFIX, *OLD_PROFILE_SUFFIXES)),
                 ),
                 ("All files", "*.*"),

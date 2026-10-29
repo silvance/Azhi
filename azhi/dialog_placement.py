@@ -3,7 +3,7 @@
 A second monitor turns a small default into a real failure. Tk, left to
 itself, lets the window manager place a new dialog, and on Windows that is
 usually the top-left of the *primary* display - not the display the
-application is on. An analyst working with Azhí on the second screen gets
+application is on. An analyst working with Azhi on the second screen gets
 a question they never see, behind whatever is on their first screen, while the
 application sits there apparently frozen, waiting on an answer to a dialog
 that is somewhere else entirely.

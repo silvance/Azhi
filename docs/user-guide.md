@@ -1,6 +1,6 @@
-# Azhí — user guide
+# Azhi — user guide
 
-Azhí turns recordings into text you can read, search and quote, works out
+Azhi turns recordings into text you can read, search and quote, works out
 who was speaking, and measures how similar a voice is to someone you already
 have a reference for.
 
@@ -67,12 +67,11 @@ of the window.
 
 ### Coming from Sotto or Whispers
 
-Azhí is the same tool, renamed (it was called Sotto, and before that
-Whispers). *Azhí* is the Navajo word for voice; the name honours the Navajo
-Code Talkers. On disk it is spelt without the accent: the program is
-`Azhi.exe` and its folder `Azhi`.
+Azhi is the same tool, renamed (it was called Sotto, and before that
+Whispers). Azhi is the Navajo word for voice; the name honours the Navajo
+Code Talkers.
 
-Nothing you saved is lost. The first time Azhí starts on a machine, it moves
+Nothing you saved is lost. The first time Azhi starts on a machine, it moves
 the Sotto (or Whispers) settings folder across, with its speaker profiles,
 comparison history and operation profiles. Projects saved as `.sotto.json` or
 `.whispers.json`, and profiles exported under the old names, still open from
@@ -694,7 +693,7 @@ whole selection, which averages them, so read the pattern, not one bar:
 
 - **Bars at about the same height** — the speech you selected behaves like
   one voice throughout.
-- **One bar well apart from the rest** — Azhí names it under the strip
+- **One bar well apart from the rest** — Azhi names it under the strip
   (0.15 or more from the typical window). Click it to listen: a second voice,
   or a burst of noise, in one window moves the whole score.
 - **Bars that wander** — the selection may hold more than one person; check
@@ -719,7 +718,7 @@ How the questioned recording and the reference samples were made, side by
 side: how much speech each has, the **frequency range** (how high the sound
 reaches: about 4 kHz or less through a telephone line, 7–8 kHz from a good
 recording), how far the speech stands above the background, and clipping.
-Azhí points out the differences that matter: a telephone recording against a
+Azhi points out the differences that matter: a telephone recording against a
 full-band reference, much more background noise on one side, clipping, or
 under 10 seconds of questioned speech.
 
@@ -744,7 +743,7 @@ its SHA-256, the models, the thresholds, and the caveats. The open transcript
 is attached only when it is of that same recording.
 
 **Export session report…** writes every comparison and search made on this
-page since Azhí opened, in order. **Start a new session report** begins
+page since Azhi opened, in order. **Start a new session report** begins
 that list again; it does not touch Comparison History, which keeps every
 record.
 
@@ -819,7 +818,7 @@ The Live page does not keep a stream's audio. For a transcript you need to rely
 on, record the stream as well, and transcribe the recording on the Transcribe
 page afterwards: that hears all of it at once.
 
-A stream is the one thing in Azhí that uses the network, and only where you
+A stream is the one thing in Azhi that uses the network, and only where you
 tell it to: it reads the **Stream URL** you give it, or waits for an incoming
 connection when you ask this PC to host. Nothing is sent out, and the
 transcription itself still happens here. On a machine that is meant to stay
@@ -861,7 +860,7 @@ not stuck.
 
 This section is the most important one in this guide.
 
-> Speaker similarity results produced by Azhí are investigative indicators
+> Speaker similarity results produced by Azhi are investigative indicators
 > intended to support lead development and analyst review. They are not
 > forensic speaker identification, are not a biometric probability of identity,
 > and should not be treated as proof that two recordings contain the same

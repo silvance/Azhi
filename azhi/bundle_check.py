@@ -187,7 +187,7 @@ def load_inventory(path: PathLike) -> List[FileRecord]:
     version = data.get("schema_version")
     if isinstance(version, int) and version > SCHEMA_VERSION:
         raise ValueError(
-            f"inventory was written by a newer version of Azhí "
+            f"inventory was written by a newer version of Azhi "
             f"(schema {version}, this build understands {SCHEMA_VERSION})"
         )
     raw = data.get("files")

@@ -559,7 +559,7 @@ class SpeakerProfile:
 # -- Migration from the v1 formats ----------------------------------------
 
 _MIGRATION_NOTE = (
-    "Imported from a pre-versioned Azhí profile. The embedding model that "
+    "Imported from a pre-versioned Azhi profile. The embedding model that "
     "produced these vectors was not recorded, so model compatibility cannot be "
     "proven."
 )
@@ -640,14 +640,14 @@ def load_profile_file(path: PathLike) -> List[SpeakerProfile]:
     except (OSError, ValueError) as exc:
         raise ProfileError(f"Couldn't read the profile file: {exc}") from exc
     if not isinstance(data, dict):
-        raise ProfileError("This file is not an Azhí speaker profile.")
+        raise ProfileError("This file is not an Azhi speaker profile.")
 
     version = data.get("schema_version")
     if data.get("kind") in SPEAKER_PROFILE_KINDS or isinstance(version, int):
         if isinstance(version, int) and version > SCHEMA_VERSION:
             raise ProfileError(
                 f"This profile uses schema version {version}, newer than this "
-                f"build understands (version {SCHEMA_VERSION}). Update Azhí."
+                f"build understands (version {SCHEMA_VERSION}). Update Azhi."
             )
         return [SpeakerProfile.from_dict(data)]
     if data.get("kind") == "whispr-voiceprint":  # v1, before the rename
@@ -659,7 +659,7 @@ def load_profile_file(path: PathLike) -> List[SpeakerProfile]:
         return migrated
     if data.get("vectors") is not None and data.get("name"):
         return [migrate_legacy_voiceprint(data)]
-    raise ProfileError("This file is not an Azhí speaker profile.")
+    raise ProfileError("This file is not an Azhi speaker profile.")
 
 
 # -- Persistence -----------------------------------------------------------

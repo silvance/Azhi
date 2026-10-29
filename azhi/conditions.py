@@ -147,7 +147,7 @@ def compare(questioned: Side, reference: Side) -> Conditions:
         )
     elif q_hz and not r_hz:
         notes.append(
-            "The reference samples were enrolled before Azhí measured "
+            "The reference samples were enrolled before Azhi measured "
             "frequency range, so the two channels cannot be compared."
         )
     q_db, r_db = questioned.margin_db, reference.margin_db

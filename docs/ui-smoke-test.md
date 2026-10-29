@@ -1,4 +1,4 @@
-# Azhí UI smoke test
+# Azhi UI smoke test
 
 Automated checks cannot prove a graphical interface is right. `pytest`, `ruff`
 and `mypy` say the code is sound; only a person at the window can say whether
@@ -38,16 +38,14 @@ which can be a different file on each run.
 
 - [ ] The window opens at a sensible size and can be resized down to its
       minimum (940×600) without controls being clipped or overlapping.
-- [ ] The header shows **Azhí**, "Offline audio analysis", the green
+- [ ] The header shows **Azhi**, "Offline audio analysis", the green
       **Local processing** marker, **Help** and **System status**.
 - [ ] The navigation rail lists only the pages this build supports. On a
       transcribe-only build (or `AZHI_MODE=transcribe`) the rail is absent
       and the Transcribe page fills the window.
 - [ ] Nothing renders as a pale box on the dark ground — text areas,
       scrollbars, tables and dialogs all take the application's own colours.
-- [ ] The accent in **Azhí** shows correctly in the window title, the header,
-      Help (which opens by saying the name is the Navajo word for voice) and
-      an exported report — not as a box or `Ã`.
+- [ ] **Help** opens by saying the name is the Navajo word for voice.
 - [ ] On a machine that ran Sotto: the first launch moves `%APPDATA%\Sotto`
       to `%APPDATA%\Azhi` (`~/.config/sotto` to `~/.config/azhi`), and the
       speaker profiles, comparison history and operation profiles are all
@@ -509,7 +507,7 @@ looks like the application has frozen on two. Do this with the main window on
 the secondary screen, and again with it on a monitor placed to the *left* of
 the primary one if the office has such a setup.
 
-- [ ] Move the Azhí window to the second screen. Add a recording on the
+- [ ] Move the Azhi window to the second screen. Add a recording on the
       Speaker Profiles page: **Which speech is the subject?** opens on that
       screen, over the window — not on the primary screen, and not behind
       whatever else is open there.

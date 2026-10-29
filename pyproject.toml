@@ -5,7 +5,7 @@ requires = [ "setuptools>=61.2" ]
 
 [project]
 name = "azhi"
-description = "Azhí: offline transcription, speaker separation and voice comparison for investigative triage"
+description = "Azhi: offline transcription, speaker separation and voice comparison for investigative triage"
 readme.content-type = "text/markdown"
 readme.file = "README.md"
 license = { text = "MIT" }
@@ -22,7 +22,7 @@ classifiers = [
 dynamic = [ "version" ]
 dependencies = [ "numpy" ]
 optional-dependencies.dev = [ "mypy", "pytest", "ruff" ]
-# GUI / CPU-optimized transcription extras for the Azhí desktop app.
+# GUI / CPU-optimized transcription extras for the Azhi desktop app.
 # tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
 # python-docx (Word export), langdetect (auto source-language) and tkinterdnd2
 # (file drag-and-drop) are small UX add-ons used when present.

@@ -43,7 +43,7 @@ from azhi.dependencies import (  # noqa: E402
 LOCKFILE = Path(__file__).resolve().parent / "lockfile.txt"
 
 HEADER = """\
-# Operational dependency lock for the Azhí offline bundle.
+# Operational dependency lock for the Azhi offline bundle.
 #
 # These are the versions an operational bundle is built from, resolved on the
 # build platform (Python 3.11). The point is not that they are the newest: it is

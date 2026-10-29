@@ -31,7 +31,7 @@ def fit_geometry(
 ) -> str:
     """Where to open the panel's window: the wanted size, cut down to the screen.
 
-    An operator who moves Azhí onto a laptop panel after working on a
+    An operator who moves Azhi onto a laptop panel after working on a
     desktop monitor should not get a transcript window taller than the screen
     with its buttons off the bottom edge, so the wanted size is a ceiling
     rather than a promise. The window is only *placed* here; the point of the
