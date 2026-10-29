@@ -697,8 +697,16 @@ whole selection, which averages them, so read the pattern, not one bar:
 
 An outlined empty bar is a window that was not used (too little speech in
 it); point at it to see why. Where turns were joined to make a window, the
-bar plays the longest of them. The strip appears only when the result is a
-band: under **Insufficient data** there is nothing to read.
+bar plays the longest of them. Where the audio on either side is too little
+to assess, the bars are not drawn and the reason is given instead: under
+**Insufficient data** there is nothing to read.
+
+After **Search all profiles**, the strip and the conditions are shown against
+the first profile in the ranking, and **Windows and conditions against** picks
+any other. This is worth doing whenever a search finds a lead on a recording
+with more than one person in it: a lead on the whole recording can rest on the
+speech of one of them, and the window that drops against the lead's profile is
+often the window that rises against someone else's.
 
 ### Recording conditions
 
@@ -717,7 +725,8 @@ not record the frequency range and show **not measured**; samples added from
 now on record it.
 
 The window scores and the conditions are in **Full result text**, **Copy
-result** and exported reports as well.
+result** and exported reports as well (for a search, against the first profile
+in the ranking).
 
 **Thresholds…** shows the exact values in force. They are conservative
 starting points, not figures calibrated against your recordings, and they are

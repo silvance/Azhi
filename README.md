@@ -360,9 +360,11 @@ window that disagrees with the rest (a second voice, a burst of noise) stands
 out and can be played. **Recording conditions** sets the two sides' audio
 next to each other (speech, frequency range, speech above background,
 clipping) and says where they differ enough to lower similarity whoever is
-speaking, such as a telephone recording against a full-band reference. Neither
-shows the voice measurement itself, and neither is a finding about who is
-speaking.
+speaking, such as a telephone recording against a full-band reference. A search
+of all profiles shows both against the first profile in the ranking, or any
+other the analyst picks, which is how a lead on a recording with two people in
+it is checked. Neither shows the voice measurement itself, and neither is a
+finding about who is speaking.
 
 An earlier **Compare voices…** button on the operation-profile card compared two
 exported voiceprint files directly. It was removed: a voiceprint file records

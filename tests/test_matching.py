@@ -641,22 +641,22 @@ def _compare(questioned, profile=None):
 
 def test_each_window_is_scored_on_its_own_and_a_skipped_one_says_why():
     result = _compare(_measured([0.9, 0.8, 0.85], skipped=1))
-    assert [round(w.score, 2) for w in result.windows[:3]] == [0.9, 0.8, 0.85]
-    left_out = result.windows[3]
+    assert [round(w.score, 2) for w in result.detail.windows[:3]] == [0.9, 0.8, 0.85]
+    left_out = result.detail.windows[3]
     assert left_out.score is None and not left_out.used
     assert "insufficient audio" in left_out.skipped
-    assert result.typical_window_score() == pytest.approx(0.85)
-    assert result.windows_apart() == []
-    lines = result.window_lines()
+    assert result.detail.typical_window_score() == pytest.approx(0.85)
+    assert result.detail.windows_apart() == []
+    lines = result.detail.window_lines()
     assert lines[1] == "  0:00-0:08: 0.90 (7.0 sec of speech, good)"
     assert lines[4] == "  0:24-0:32: not used (insufficient audio (1.0s of speech))"
 
 
 def test_a_window_apart_from_the_rest_is_pointed_out_to_listen_to():
     result = _compare(_measured([0.85, 0.82, 0.88, 0.3]))
-    (apart,) = result.windows_apart()
+    (apart,) = result.detail.windows_apart()
     assert apart.start == 24.0
-    (note,) = result.window_notes()
+    (note,) = result.detail.window_notes()
     assert note.startswith("The window at 0:24-0:32 scores 0.30")
     assert "Listen to it" in note
     text = "\n".join(result.format_lines())
@@ -665,14 +665,14 @@ def test_a_window_apart_from_the_rest_is_pointed_out_to_listen_to():
 
 def test_two_windows_have_no_typical_to_stand_apart_from():
     result = _compare(_measured([0.9, 0.2]))
-    assert len(result.windows) == 2
-    assert result.typical_window_score() is None
-    assert result.window_notes() == []
+    assert len(result.detail.windows) == 2
+    assert result.detail.typical_window_score() is None
+    assert result.detail.window_notes() == []
 
 
 def test_a_joined_window_says_so_and_offers_its_longest_stretch():
     result = _compare(_measured([0.9, 0.8, 0.85], joined=True))
-    window = result.windows[0]
+    window = result.detail.windows[0]
     assert window.where() == "0:00-0:25 (joined from 2 turns)"
     assert window.longest == (20.0, 25.0)
 
@@ -681,21 +681,25 @@ def test_no_window_scores_under_insufficient_data_but_the_conditions_stay():
     """Per-window numbers under "Insufficient data" would be read as the finding."""
     result = _compare(_measured([0.9], seconds_each=2.0))
     assert result.band == BAND_INSUFFICIENT
-    assert result.windows == []
-    assert result.conditions is not None
-    assert any("Only 2.0 sec" in note for note in result.conditions.notes)
+    assert result.detail.windows == []
+    assert result.detail.withheld.startswith("Questioned speech is only 2.0s")
+    assert "Window by window: not shown. Questioned speech" in "\n".join(
+        result.format_lines()
+    )
+    assert result.detail.conditions is not None
+    assert any("Only 2.0 sec" in note for note in result.detail.conditions.notes)
 
 
 def test_a_refused_comparison_has_neither_windows_nor_conditions():
     result = _compare(_measured([0.9, 0.8, 0.85]), _profile(model=OTHER_MODEL))
     assert result.refused
-    assert result.windows == [] and result.conditions is None
+    assert result.detail is None
     assert "Window by window" not in "\n".join(result.format_lines())
 
 
 def test_the_record_holds_window_scores_and_conditions_never_vectors():
     result = _compare(_measured([0.9, 0.8, 0.85]))
-    data = result.to_dict()
+    data = result.to_dict()["detail"]
     assert [w["score"] for w in data["windows"]] == [0.9, 0.8, 0.85]
     assert data["windows"][0]["spans"] == [[0.0, 8.0]]
     assert "embedding" not in str(data["windows"])
@@ -706,3 +710,56 @@ def test_the_record_holds_window_scores_and_conditions_never_vectors():
     ]
     # The reference here predates the measurement, and says so.
     assert any("enrolled before" in note for note in data["condition_notes"])
+
+
+# -- The same on a search of every profile -----------------------------------
+
+
+def _search(questioned, profiles):
+    from sotto.matching import search_gallery_for_questioned
+
+    return search_gallery_for_questioned(questioned, profiles, questioned_model=MODEL)
+
+
+def test_a_search_carries_windows_and_conditions_against_each_ranked_profile():
+    near, far = _profile("Near", vec=(1.0, 0.0)), _profile("Far", vec=(0.0, 1.0))
+    result = _search(_measured([0.9, 0.8, 0.85]), [far, near])
+    assert [m.display_name for m in result.matches] == ["Near", "Far"]
+    assert set(result.details) == {near.subject_id, far.subject_id}
+    first = result.first_detail()
+    assert first.reference_name == "Near"
+    assert [round(w.score, 2) for w in first.windows] == [0.9, 0.8, 0.85]
+    # Against the other profile, the same windows score as they do against it.
+    other = result.details[far.subject_id]
+    assert [round(w.score, 2) for w in other.windows] == [0.44, 0.6, 0.53]
+
+    text = "\n".join(result.summary_lines())
+    assert "Against Near, the first in the ranking" in text
+    assert "  0:00-0:08: 0.90 (7.0 sec of speech, good)" in text
+    assert "Recording conditions (questioned / reference):" in text
+    assert result.to_dict()["first_detail"]["reference_name"] == "Near"
+
+
+def test_a_search_on_audio_too_poor_to_assess_shows_conditions_only():
+    result = _search(_measured([0.9], seconds_each=2.0), [_profile()])
+    assert result.inadequate_reason
+    first = result.first_detail()
+    assert first.windows == [] and first.withheld == result.inadequate_reason
+    assert first.conditions is not None
+    assert "Window by window: not shown." in "\n".join(result.summary_lines())
+
+
+def test_a_thin_reference_withholds_its_windows_but_not_the_others():
+    """The same rule as one-to-one: no per-window numbers where no band could be."""
+    thin, full = _profile("Thin", seconds=4.0), _profile("Full", vec=(0.6, 0.8))
+    result = _search(_measured([0.9, 0.8, 0.85]), [thin, full])
+    assert result.details[thin.subject_id].windows == []
+    assert "holds only 4.0s of speech" in result.details[thin.subject_id].withheld
+    assert len(result.details[full.subject_id].windows) == 3
+
+
+def test_a_skipped_profile_gets_no_detail():
+    result = _search(
+        _measured([0.9, 0.8, 0.85]), [_profile(), _profile("Other", model=OTHER_MODEL)]
+    )
+    assert len(result.details) == 1 and result.skipped

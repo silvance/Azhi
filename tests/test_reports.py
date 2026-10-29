@@ -126,19 +126,21 @@ def test_report_includes_comparison_details():
 
 def test_a_comparison_reports_its_windows_and_recording_conditions():
     from sotto.conditions import Side, compare
-    from sotto.matching import WindowScore
+    from sotto.matching import WindowDetail, WindowScore
 
     comparison = _comparison(
-        windows=[
-            WindowScore(
-                spans=[(0.0, 8.0)], speech_seconds=7.1, quality=GOOD, score=0.8
+        detail=WindowDetail(
+            windows=[
+                WindowScore(
+                    spans=[(0.0, 8.0)], speech_seconds=7.1, quality=GOOD, score=0.8
+                ),
+                WindowScore(spans=[(8.0, 16.0)], skipped="poor audio (1.2s of speech)"),
+            ],
+            conditions=compare(
+                Side(speech_seconds=14.2, pieces=2, bandwidth_hz=3750.0),
+                Side(speech_seconds=38.4, pieces=5, bandwidth_hz=7000.0),
             ),
-            WindowScore(spans=[(8.0, 16.0)], skipped="poor audio (1.2s of speech)"),
-        ],
-        conditions=compare(
-            Side(speech_seconds=14.2, pieces=2, bandwidth_hz=3750.0),
-            Side(speech_seconds=38.4, pieces=5, bandwidth_hz=7000.0),
-        ),
+        )
     )
     text = _text(comparisons=[comparison])
     assert "  0:00-0:08: 0.80 (7.1 sec of speech, good)" in text
