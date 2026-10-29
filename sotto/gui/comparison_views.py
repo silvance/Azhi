@@ -19,7 +19,7 @@ from tkinter import ttk
 from typing import Callable, List, Optional
 
 from ..conditions import Conditions
-from ..matching import ComparisonResult, WindowScore
+from ..matching import WindowDetail, WindowScore
 from ..thresholds import BAND_HIGH, BAND_INTERMEDIATE
 from .theme import SPACE_MD, SPACE_SM, SPACE_XS, Style, palette, theme
 from .widgets import subtle_button, wrap_to
@@ -104,18 +104,18 @@ class WindowStrip(ttk.Frame):
         )
         wrap_to(self, self._notes)
 
-    def show(self, result: ComparisonResult) -> None:
-        self._windows = list(result.windows)
-        self._apart = [self._windows.index(w) for w in result.windows_apart()]
-        self._high = result.thresholds.comparison_high
-        self._intermediate = result.thresholds.comparison_intermediate
+    def show(self, detail: WindowDetail) -> None:
+        self._windows = list(detail.windows)
+        self._apart = [self._windows.index(w) for w in detail.windows_apart()]
+        self._high = detail.thresholds.comparison_high
+        self._intermediate = detail.thresholds.comparison_intermediate
         self._selected = None
         used = sum(1 for w in self._windows if w.used)
         self.detail_var.set(
             f"{used} of {len(self._windows)} window(s) used. Point at a bar for "
             "its time and score."
         )
-        notes = result.window_notes()
+        notes = detail.window_notes()
         self.notes_var.set("\n".join(notes))
         if notes:
             self._notes.pack(anchor="w", fill="x", pady=(SPACE_SM, 0))

@@ -406,10 +406,11 @@ def test_copy_carries_the_lead_legend_once_with_times_and_notes(app, tmp_path):
     assert page.get_settings()["notes"] is False
 
 
-def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
+def _voices(*profiles):
+    """Reference profiles at the given (name, vector, seconds), and a
+    questioned speaker of four windows, one joined from two turns."""
     import math
 
-    from sotto.matching import compare_questioned_to_profile
     from sotto.quality import GOOD, QualityReport
     from sotto.questioned import MeasuredWindow, QuestionedSpeaker
     from sotto.speaker_profiles import (
@@ -419,14 +420,21 @@ def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
     )
 
     model = EmbeddingModelIdentity(name="m", sha256="a" * 64, vector_dimension=2)
-    profile = SpeakerProfile(display_name="Subject A", embedding_model=model)
-    profile.add_reference_sample(
-        EnrollmentSample(
-            embedding=[1.0, 0.0],
-            speech_duration=20.0,
-            quality={"assessment": GOOD, "voiced_seconds": 20.0, "bandwidth_hz": 7000},
+    built = []
+    for name, vector, seconds in profiles:
+        profile = SpeakerProfile(display_name=name, embedding_model=model)
+        profile.add_reference_sample(
+            EnrollmentSample(
+                embedding=list(vector),
+                speech_duration=seconds,
+                quality={
+                    "assessment": GOOD,
+                    "voiced_seconds": seconds,
+                    "bandwidth_hz": 7000,
+                },
+            )
         )
-    )
+        built.append(profile)
 
     def window(spans, cosine):
         return MeasuredWindow(
@@ -449,29 +457,41 @@ def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
             window([(40.0, 48.0)], 0.88),
         ],
     )
+    return model, built, measured
+
+
+class _Listener:
+    def __init__(self):
+        self.played = []
+
+    def play(self, span, _on_error):
+        self.played.append(span)
+
+    def stop(self):
+        self.played.append("stop")
+
+
+def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
+    from sotto.matching import compare_questioned_to_profile
+
+    model, (profile,), measured = _voices(("Subject A", (1.0, 0.0), 20.0))
     result = compare_questioned_to_profile(measured, profile, questioned_model=model)
 
-    played = []
-
-    class Listener:
-        def play(self, span, _on_error):
-            played.append(span)
-
-        def stop(self):
-            played.append("stop")
-
+    listener = _Listener()
     page = app.speaker_compare
-    page._show_comparison(result, Listener())
+    page._show_comparison(result, listener)
     app.root.update()
     assert page._windows_disclosure.winfo_manager() == "pack"
     assert page._conditions_disclosure.winfo_manager() == "pack"
+    # One reference: nothing to choose between.
+    assert page._against_row.winfo_manager() == ""
 
     strip = page.window_strip
     assert len(strip.canvas.find_withtag("hit")) == 4
     assert "0:16-0:36 (joined from 2 turns) scores 0.30" in strip.notes_var.get()
     # Clicking the bar plays its longest stretch and says what it is.
     strip._play(2)
-    assert played == [(30.0, 36.0)]
+    assert listener.played == [(30.0, 36.0)]
     assert strip.detail_var.get().startswith("0:16-0:36 (joined from 2 turns): 0.30")
 
     notes = page.conditions_table.notes_var.get()
@@ -479,6 +499,59 @@ def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
 
     # A new run takes both off the card, and stops the audio.
     page._start_measuring(Path("next.wav"), "Comparing")
-    assert played[-1] == "stop"
+    assert listener.played[-1] == "stop"
     assert page._windows_disclosure.winfo_manager() == ""
     assert page._conditions_disclosure.winfo_manager() == ""
+
+
+def test_a_search_shows_them_against_the_first_profile_or_a_chosen_one(app):
+    from sotto.matching import search_gallery_for_questioned
+    from sotto.reports import GallerySearch
+
+    model, (near, thin, far), measured = _voices(
+        ("Near", (1.0, 0.0), 20.0),
+        ("Thin", (0.9, 0.436), 4.0),
+        ("Far", (0.0, 1.0), 20.0),
+    )
+    result = search_gallery_for_questioned(
+        measured, [far, thin, near], questioned_model=model
+    )
+    search = GallerySearch(result, questioned_seconds=28.0, questioned_quality="Good")
+    listener = _Listener()
+    page = app.speaker_compare
+    page._show_gallery(measured, search, listener)
+    app.root.update()
+
+    # The ranking's order, the first chosen.
+    assert list(page._against_box.cget("values")) == ["1. Near", "2. Thin", "3. Far"]
+    assert page.against_var.get() == "1. Near"
+    assert page._against_row.winfo_manager() == "pack"
+    assert page.window_strip.winfo_manager() == "pack"
+    assert "0.30" in page.window_strip.notes_var.get()
+
+    # A reference too thin to assess: the reason instead of the bars.
+    page.against_var.set("2. Thin")
+    page._on_against_changed()
+    app.root.update()
+    assert listener.played[-1] == "stop"
+    assert page.window_strip.winfo_manager() == ""
+    assert page.windows_withheld_var.get().startswith(
+        "Not shown: The reference profile holds only 4.0s"
+    )
+    assert page._conditions_disclosure.winfo_manager() == "pack"
+
+    page.against_var.set("3. Far")
+    page._on_against_changed()
+    app.root.update()
+    assert page.window_strip.winfo_manager() == "pack"
+    page.window_strip._play(0)
+    assert page.window_strip.detail_var.get().startswith("0:00-0:08: 0.44")
+    assert listener.played[-1] == (0.0, 8.0)
+
+    # A one-to-one comparison afterwards has no picker.
+    from sotto.matching import compare_questioned_to_profile
+
+    page._show_comparison(
+        compare_questioned_to_profile(measured, near, questioned_model=model), None
+    )
+    assert page._against_row.winfo_manager() == ""

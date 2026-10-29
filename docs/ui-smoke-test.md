@@ -424,15 +424,21 @@ recording containing that person speaking for more than three seconds.
       outlined empty bar for a window not used. Pointing at a bar names its
       time and score; clicking plays it; **Stop audio** stops it. A window well
       apart from the rest is outlined and named under the strip.
-- [ ] Under **Insufficient data** the strip is not shown; **Recording
-      conditions** still is.
+- [ ] Under **Insufficient data** the bars are not drawn; **Window by window**
+      says why, and **Recording conditions** is still shown.
 - [ ] Compare a telephone recording (or one converted to 8 kHz) against a
       full-band reference: the frequency ranges read about 3.8 and 7 kHz and
       the note under the table says a different channel lowers similarity
       whoever is speaking.
 - [ ] A reference enrolled before this version reads **not measured** for
       frequency range, with a note saying so.
-- [ ] A search of all profiles shows neither the strip nor the conditions.
+- [ ] **Search all profiles** shows both against the first in the ranking,
+      with **Windows and conditions against** listing every ranked profile as
+      "1. name", "2. name"… Choosing another redraws both and stops any audio.
+      A profile with under 10 seconds of reference speech shows the reason
+      instead of bars.
+- [ ] Search a two-person recording: against the first profile, the window
+      where the other person speaks stands apart and is named under the strip.
 - [ ] **Export this result…** writes the result on screen. Compare recording A,
       then search all profiles with recording B: the report holds B's search
       only, and leaves out a transcript that is not of B.

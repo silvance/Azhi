@@ -45,6 +45,7 @@ from ..enrollment import (
 )
 from ..matching import (
     ComparisonResult,
+    WindowDetail,
     WindowScore,
     compare_questioned_to_profile,
     search_gallery_for_questioned,
@@ -445,11 +446,31 @@ class SpeakerCompareTab:
         self.result_warnings = StatusBanner(self._result_body, wraplength=680)
         self.result_warnings.wrap_to(card.body)
 
-        # Under the numbers, for a one-to-one comparison: the questioned speech
-        # window by window, and how the two recordings were made.
+        # Under the numbers: the questioned speech window by window, and how
+        # the two recordings were made. A search ranks many profiles, so it
+        # shows these against one of them, the first unless another is chosen.
         self._views = ttk.Frame(self._result_body, style=Style.CARD_INNER)
         self._views.pack(fill="x")
         self.result_warnings.insert_before(self._views)
+        self._against_row = ttk.Frame(self._views, style=Style.CARD_INNER)
+        ttk.Label(
+            self._against_row,
+            text="Windows and conditions against",
+            style=Style.FIELD_LABEL,
+        ).pack(side="left")
+        self.against_var = tk.StringVar(value="")
+        self._against_box = ttk.Combobox(
+            self._against_row, textvariable=self.against_var, state="readonly", width=28
+        )
+        self._against_box.pack(side="left", padx=(SPACE_SM, 0))
+        self._against_box.bind("<<ComboboxSelected>>", self._on_against_changed)
+        ttk.Label(
+            self._against_row,
+            text="by their place in the ranking",
+            style=Style.MUTED,
+        ).pack(side="left", padx=(SPACE_SM, 0))
+        # subject_id per label in the picker, and each one's detail.
+        self._against: dict = {}
         self._windows_disclosure = Disclosure(
             self._views, "Window by window", expanded=True
         )
@@ -458,7 +479,16 @@ class SpeakerCompareTab:
             on_play=self._play_window,
             on_stop=self._stop_audio,
         )
-        self.window_strip.pack(fill="x")
+        # Where the audio supports no assessment, the reason instead of bars.
+        self.windows_withheld_var = tk.StringVar(value="")
+        self._windows_withheld = ttk.Label(
+            self._windows_disclosure.body,
+            textvariable=self.windows_withheld_var,
+            style=Style.MUTED,
+            wraplength=640,
+            justify="left",
+        )
+        wrap_to(card.body, self._windows_withheld)
         self._conditions_disclosure = Disclosure(
             self._views, "Recording conditions", expanded=True
         )
@@ -884,7 +914,8 @@ class SpeakerCompareTab:
                 questioned_window_count=measured.window_count,
             )
             self._session.append(search)
-            self.root.after(0, lambda: self._show_gallery(measured, search))
+            listener = SampleListener.for_file(source)
+            self.root.after(0, lambda: self._show_gallery(measured, search, listener))
             self._status("Search complete.")
         except PickCancelled:
             self._pick_cancelled("searched")
@@ -943,6 +974,7 @@ class SpeakerCompareTab:
         self._on_screen = None
         self._stop_audio()
         self._listener = None
+        self._against = {}
         self._show_views(None)
         self._cancel_event.clear()
         self._cancel_button.configure(state="normal")
@@ -994,8 +1026,9 @@ class SpeakerCompareTab:
         """
         self._on_screen = result
         self._listener = listener
+        self._against = {}
         self._show(result.format_lines())
-        self._show_views(result)
+        self._show_views(result.detail)
 
         if result.refused:
             self._set_band("Comparison refused", Style.DANGER)
@@ -1052,18 +1085,38 @@ class SpeakerCompareTab:
         else:
             self.result_warnings.hide()
 
-    def _show_views(self, result: Optional[ComparisonResult]) -> None:
-        """The window strip and the conditions, where the result has them."""
-        windows = result is not None and bool(result.windows)
-        conditions = result is not None and result.conditions is not None
-        self._windows_disclosure.pack_forget()
-        self._conditions_disclosure.pack_forget()
-        if windows and result is not None:
-            self.window_strip.show(result)
+    def _show_views(self, detail: Optional[WindowDetail]) -> None:
+        """The window strip and the conditions, where there is a detail to show."""
+        for widget in (
+            self._against_row,
+            self._windows_disclosure,
+            self._conditions_disclosure,
+        ):
+            widget.pack_forget()
+        if detail is None:
+            return
+        if self._against:
+            self._against_row.pack(fill="x", pady=(SPACE_MD, 0))
+        self.window_strip.pack_forget()
+        self._windows_withheld.pack_forget()
+        if detail.windows:
+            self.window_strip.show(detail)
+            self.window_strip.pack(fill="x")
             self._windows_disclosure.pack(fill="x", pady=(SPACE_MD, 0))
-        if conditions and result is not None and result.conditions is not None:
-            self.conditions_table.show(result.conditions)
+        elif detail.withheld:
+            self.windows_withheld_var.set(f"Not shown: {detail.withheld}")
+            self._windows_withheld.pack(anchor="w", fill="x")
+            self._windows_disclosure.pack(fill="x", pady=(SPACE_MD, 0))
+        if detail.conditions is not None:
+            self.conditions_table.show(detail.conditions)
             self._conditions_disclosure.pack(fill="x", pady=(SPACE_MD, 0))
+
+    def _on_against_changed(self, _event: object = None) -> None:
+        """Show the windows and conditions against another ranked profile."""
+        detail = self._against.get(self.against_var.get())
+        if detail is not None:
+            self._stop_audio()
+            self._show_views(detail)
 
     def _play_window(self, window: WindowScore) -> None:
         """Play the window (its longest stretch, where turns were joined)."""
@@ -1150,13 +1203,29 @@ class SpeakerCompareTab:
         self.band_var.set(text)
         self.band_label.configure(style=style_name)
 
-    def _show_gallery(self, measured: object, search: GallerySearch) -> None:
+    def _show_gallery(
+        self,
+        measured: object,
+        search: GallerySearch,
+        listener: Optional[SampleListener] = None,
+    ) -> None:
         """A ranked search is context, not an identification."""
         self._on_screen = search
+        self._listener = listener
         result = search.result
         describe = getattr(measured, "describe", None)
         lines = list(describe()) if callable(describe) else []
         self._show(lines + [""] + result.summary_lines())
+        # Against each ranked profile, in ranking order; the first is shown.
+        self._against = {
+            f"{place}. {match.display_name}": result.details[match.subject_id]
+            for place, match in enumerate(result.matches, 1)
+            if match.subject_id in result.details
+        }
+        labels = list(self._against)
+        self._against_box.configure(values=labels)
+        self.against_var.set(labels[0] if labels else "")
+        self._show_views(self._against[labels[0]] if labels else None)
         if result.inadequate_reason:
             self._set_band(BAND_INSUFFICIENT, Style.WARNING)
             self.lead_var.set(

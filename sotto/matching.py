@@ -119,49 +119,17 @@ class WindowScore:
 
 
 @dataclass
-class ComparisonResult:
-    """One questioned speaker measured against one reference profile."""
+class WindowDetail:
+    """The questioned speech window by window, and how both recordings were
+    made, against one reference profile."""
 
     reference_name: str = ""
-    reference_subject_id: str = ""
-    questioned_label: str = "Questioned speaker"
-    score: float = 0.0
-    band: str = BAND_INSUFFICIENT
-    reference_seconds: float = 0.0
-    questioned_seconds: float = 0.0
-    reference_quality: str = INSUFFICIENT
-    questioned_quality: str = INSUFFICIENT
-    embedding_model: str = "unknown"
-    # The questioned recording, so a report describes what was compared rather
-    # than whatever analysis happened to be open elsewhere in the application.
-    questioned_source_filename: Optional[str] = None
-    questioned_source_sha256: Optional[str] = None
-    questioned_selection: str = ""
-    questioned_window_count: int = 0
-    thresholds: Thresholds = field(default_factory=active)
-    compatibility: Optional[Compatibility] = None
-    refused: bool = False
-    refusal_reason: str = ""
-    warnings: List[str] = field(default_factory=list)
-    # Set for gallery results, where the runner-up matters.
-    margin: Optional[float] = None
-    runner_up_name: Optional[str] = None
-    runner_up_score: Optional[float] = None
-    # Each questioned window compared on its own (only where the comparison
-    # supports an assessment), and how the two recordings were made (wherever
-    # it was run). Set by compare_questioned_to_profile.
+    # Each questioned window compared on its own, in order; empty where the
+    # comparison supports no assessment, with the reason in ``withheld``.
     windows: List[WindowScore] = field(default_factory=list)
+    withheld: str = ""
     conditions: Optional[_conditions.Conditions] = None
-
-    @property
-    def operational_threshold(self) -> float:
-        """The band edge a score must clear to read as 'High similarity'."""
-        return self.thresholds.comparison_high
-
-    @property
-    def conclusive(self) -> bool:
-        """False when the audio could not support any assessment."""
-        return not self.refused and self.band != BAND_INSUFFICIENT
+    thresholds: Thresholds = field(default_factory=active)
 
     def typical_window_score(self) -> Optional[float]:
         """The median window score, where there are enough windows for one."""
@@ -210,16 +178,77 @@ class ComparisonResult:
         lines += [f"  Note: {note}" for note in self.window_notes()]
         return lines
 
-    def detail_lines(self) -> List[str]:
+    def lines(self) -> List[str]:
         """Windows and recording conditions, each block preceded by a blank."""
         lines: List[str] = []
-        for block in (
-            self.window_lines(),
-            self.conditions.lines() if self.conditions else [],
-        ):
+        windows = self.window_lines() or (
+            [f"Window by window: not shown. {self.withheld}"] if self.withheld else []
+        )
+        for block in (windows, self.conditions.lines() if self.conditions else []):
             if block:
                 lines += ["", *block]
         return lines
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "reference_name": self.reference_name,
+            "windows": [window.to_dict() for window in self.windows],
+            "windows_withheld": self.withheld,
+            "conditions": (
+                [list(row) for row in self.conditions.rows()]
+                if self.conditions
+                else None
+            ),
+            "condition_notes": list(self.conditions.notes) if self.conditions else [],
+        }
+
+
+@dataclass
+class ComparisonResult:
+    """One questioned speaker measured against one reference profile."""
+
+    reference_name: str = ""
+    reference_subject_id: str = ""
+    questioned_label: str = "Questioned speaker"
+    score: float = 0.0
+    band: str = BAND_INSUFFICIENT
+    reference_seconds: float = 0.0
+    questioned_seconds: float = 0.0
+    reference_quality: str = INSUFFICIENT
+    questioned_quality: str = INSUFFICIENT
+    embedding_model: str = "unknown"
+    # The questioned recording, so a report describes what was compared rather
+    # than whatever analysis happened to be open elsewhere in the application.
+    questioned_source_filename: Optional[str] = None
+    questioned_source_sha256: Optional[str] = None
+    questioned_selection: str = ""
+    questioned_window_count: int = 0
+    thresholds: Thresholds = field(default_factory=active)
+    compatibility: Optional[Compatibility] = None
+    refused: bool = False
+    refusal_reason: str = ""
+    warnings: List[str] = field(default_factory=list)
+    # Set for gallery results, where the runner-up matters.
+    margin: Optional[float] = None
+    runner_up_name: Optional[str] = None
+    runner_up_score: Optional[float] = None
+    # The questioned speech window by window and both recordings' conditions,
+    # wherever the comparison was run. Set by compare_questioned_to_profile.
+    detail: Optional[WindowDetail] = None
+
+    @property
+    def operational_threshold(self) -> float:
+        """The band edge a score must clear to read as 'High similarity'."""
+        return self.thresholds.comparison_high
+
+    @property
+    def conclusive(self) -> bool:
+        """False when the audio could not support any assessment."""
+        return not self.refused and self.band != BAND_INSUFFICIENT
+
+    def detail_lines(self) -> List[str]:
+        """Windows and recording conditions, each block preceded by a blank."""
+        return self.detail.lines() if self.detail else []
 
     def source_lines(self) -> List[str]:
         """The questioned recording's identity, when it was recorded."""
@@ -303,13 +332,7 @@ class ComparisonResult:
             "refused": self.refused,
             "refusal_reason": self.refusal_reason,
             "warnings": list(self.warnings),
-            "windows": [window.to_dict() for window in self.windows],
-            "conditions": (
-                [list(row) for row in self.conditions.rows()]
-                if self.conditions
-                else None
-            ),
-            "condition_notes": list(self.conditions.notes) if self.conditions else [],
+            "detail": self.detail.to_dict() if self.detail else None,
             "disclaimer": DISCLAIMER,
         }
 
@@ -363,6 +386,37 @@ def questioned_adequacy(
         return (
             "The questioned audio holds too little usable speech for an "
             "assessment, whatever the score."
+        )
+    return None
+
+
+def _withheld(
+    profile: SpeakerProfile,
+    *,
+    reference_seconds: float,
+    reference_quality: str,
+    questioned_seconds: float,
+    questioned_quality: str,
+    thresholds: Thresholds,
+) -> Optional[str]:
+    """Why the audio on either side cannot support an assessment, or ``None``."""
+    if not profile.trusted_samples():
+        return "The reference profile has no trusted samples."
+    inadequate = questioned_adequacy(
+        speech_seconds=questioned_seconds,
+        quality=questioned_quality,
+        thresholds=thresholds,
+    )
+    if inadequate:
+        return inadequate
+    if reference_seconds < thresholds.min_reference_seconds:
+        return (
+            f"The reference profile holds only {reference_seconds:.1f}s of speech; "
+            f"at least {thresholds.min_reference_seconds:.1f}s is recommended."
+        )
+    if reference_quality == INSUFFICIENT:
+        return (
+            "The reference profile's audio quality is insufficient for an assessment."
         )
     return None
 
@@ -422,31 +476,17 @@ def compare_embedding_to_profile(
 
     # Audio adequacy overrides the number: too little usable speech on either
     # side means no assessment, however high the score looks.
-    if not profile.trusted_samples():
-        result.band = BAND_INSUFFICIENT
-        result.warnings.append("The reference profile has no trusted samples.")
-        return result
-    inadequate = questioned_adequacy(
-        speech_seconds=questioned_seconds,
-        quality=questioned_quality,
+    withheld = _withheld(
+        profile,
+        reference_seconds=reference_seconds,
+        reference_quality=reference_quality,
+        questioned_seconds=questioned_seconds,
+        questioned_quality=questioned_quality,
         thresholds=thresholds,
     )
-    if inadequate:
+    if withheld:
         result.band = BAND_INSUFFICIENT
-        result.warnings.append(inadequate)
-        return result
-    if reference_seconds < thresholds.min_reference_seconds:
-        result.band = BAND_INSUFFICIENT
-        result.warnings.append(
-            f"The reference profile holds only {reference_seconds:.1f}s of speech; "
-            f"at least {thresholds.min_reference_seconds:.1f}s is recommended."
-        )
-        return result
-    if reference_quality == INSUFFICIENT:
-        result.band = BAND_INSUFFICIENT
-        result.warnings.append(
-            "The reference profile's audio quality is insufficient for an assessment."
-        )
+        result.warnings.append(withheld)
         return result
 
     result.band, _ = similarity_band(
@@ -483,6 +523,13 @@ class GalleryResult:
     questioned_source_filename: Optional[str] = None
     questioned_source_sha256: Optional[str] = None
     questioned_selection: str = ""
+    # subject_id -> the questioned windows and conditions against that profile,
+    # for every ranked profile. Set by search_gallery_for_questioned.
+    details: Dict[str, WindowDetail] = field(default_factory=dict)
+
+    def first_detail(self) -> Optional[WindowDetail]:
+        """The detail against the first profile in the ranking, where there is one."""
+        return self.details.get(self.matches[0].subject_id) if self.matches else None
 
     @property
     def accepted_name(self) -> Optional[str]:
@@ -530,9 +577,18 @@ class GalleryResult:
             lines.append(self.decision.reason)
         for reason in self.skipped:
             lines.append(f"Skipped: {reason}")
+        first = self.first_detail()
+        if first is not None:
+            lines += [
+                "",
+                f"Against {first.reference_name}, the first in the ranking "
+                "(not a finding about who is speaking):",
+                *first.lines()[1:],
+            ]
         return lines
 
     def to_dict(self) -> Dict[str, Any]:
+        first = self.first_detail()
         return {
             "questioned_label": self.questioned_label,
             "searched": self.searched,
@@ -552,6 +608,7 @@ class GalleryResult:
             "questioned_source_sha256": self.questioned_source_sha256,
             "questioned_selection": self.questioned_selection,
             "skipped": list(self.skipped),
+            "first_detail": first.to_dict() if first else None,
             "thresholds": self.thresholds.to_dict(),
             "disclaimer": DISCLAIMER,
         }
@@ -678,36 +735,90 @@ def compare_questioned_to_profile(
     # window map back to several intervals, so counting intervals would report
     # seven windows for two embeddings.
     result.questioned_window_count = questioned.window_count
-    if result.refused:
-        return result
-    trusted = profile.trusted_samples()
+    if not result.refused:
+        result.detail = window_detail(
+            questioned,
+            profile,
+            reference_name=result.reference_name,
+            thresholds=result.thresholds,
+        )
+    return result
+
+
+def window_detail(
+    questioned: "QuestionedSpeaker",
+    profile: SpeakerProfile,
+    *,
+    reference_name: str,
+    thresholds: Thresholds,
+) -> WindowDetail:
+    """The questioned windows and both recordings' conditions against ``profile``.
+
+    The caller has already checked the two are from the same voice model.
+    Windows are scored only where the audio on both sides supports an
+    assessment: a column of per-window numbers under "Insufficient data" would
+    be read as the finding the band withholds. The conditions are set out
+    either way, since they are often why.
+    """
+    reference_seconds, reference_quality, _ = _reference_view(profile)
     used = [w for w in questioned.windows if w.used]
-    result.conditions = _conditions.compare(
-        _conditions.side(
-            [w.report.to_dict() for w in used],
-            speech_seconds=questioned.speech_seconds,
-        ),
-        _conditions.side(
-            [s.quality or {} for s in trusted],
-            speech_seconds=result.reference_seconds,
+    detail = WindowDetail(
+        reference_name=reference_name,
+        thresholds=thresholds,
+        conditions=_conditions.compare(
+            _conditions.side(
+                [w.report.to_dict() for w in used],
+                speech_seconds=questioned.speech_seconds,
+            ),
+            _conditions.side(
+                [s.quality or {} for s in profile.trusted_samples()],
+                speech_seconds=reference_seconds,
+            ),
         ),
     )
-    if result.conclusive:
-        # Window by window only where the whole supports an assessment: a
-        # column of per-window numbers under "Insufficient data" would be read
-        # as the finding the band withholds.
-        reference = profile.centroid()
-        result.windows = [
-            WindowScore(
-                spans=list(w.spans),
-                speech_seconds=round(w.report.voiced_seconds, 2),
-                quality=w.report.assessment,
-                score=cosine_similarity(w.embedding, reference) if w.used else None,
-                skipped=w.skipped,
-            )
-            for w in questioned.windows
-        ]
-    return result
+    withheld = _withheld(
+        profile,
+        reference_seconds=reference_seconds,
+        reference_quality=reference_quality,
+        questioned_seconds=questioned.speech_seconds,
+        questioned_quality=questioned.quality,
+        thresholds=thresholds,
+    )
+    if withheld:
+        detail.withheld = withheld
+        return detail
+    scores = iter(_cosines([w.embedding for w in used], profile.centroid()))
+    detail.windows = [
+        WindowScore(
+            spans=list(w.spans),
+            speech_seconds=round(w.report.voiced_seconds, 2),
+            quality=w.report.assessment,
+            score=next(scores) if w.used else None,
+            skipped=w.skipped,
+        )
+        for w in questioned.windows
+    ]
+    return detail
+
+
+def _cosines(
+    vectors: Sequence[Sequence[float]], reference: Sequence[float]
+) -> List[float]:
+    """:func:`cosine_similarity` of each vector with ``reference``, in one product.
+
+    A search scores every window against every ranked profile: an hour of
+    speech against 200 profiles is 90,000 of them, seconds one at a time.
+    """
+    import numpy as np
+
+    if not vectors:
+        return []
+    matrix = np.asarray(vectors, dtype=np.float64)
+    target = np.asarray(reference, dtype=np.float64)
+    norms = np.linalg.norm(matrix, axis=1) * np.linalg.norm(target)
+    dots = matrix @ target
+    safe = np.where(norms > 0, norms, 1.0)
+    return [float(v) for v in np.where(norms > 0, dots / safe, 0.0)]
 
 
 def search_gallery_for_questioned(
@@ -730,4 +841,13 @@ def search_gallery_for_questioned(
     result.questioned_source_filename = questioned.source_filename or None
     result.questioned_source_sha256 = questioned.source_sha256
     result.questioned_selection = questioned.selection_mode
+    by_id = {profile.subject_id: profile for profile in profiles}
+    for match in result.matches:
+        profile = by_id[match.subject_id]
+        result.details[match.subject_id] = window_detail(
+            questioned,
+            profile,
+            reference_name=match.display_name,
+            thresholds=result.thresholds,
+        )
     return result
