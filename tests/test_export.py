@@ -2,8 +2,8 @@ import importlib.util
 
 import pytest
 
-from sotto.export import text_to_docx, transcript_to_docx
-from sotto.transcription import Segment, TranscriptionResult
+from azhi.export import text_to_docx, transcript_to_docx
+from azhi.transcription import Segment, TranscriptionResult
 
 _HAS_DOCX = importlib.util.find_spec("docx") is not None
 
@@ -84,7 +84,7 @@ def test_word_transcript_can_carry_the_time_of_each_line(tmp_path):
 def test_word_notes_follow_their_line_in_italics(tmp_path):
     from docx import Document
 
-    from sotto.transcription import Note
+    from azhi.transcription import Note
 
     result = TranscriptionResult(
         text="",

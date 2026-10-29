@@ -7,13 +7,13 @@ import wave
 
 import pytest
 
-from sotto import clips
-from sotto.hashing import sha256_file
-from sotto.transcription import Segment
+from azhi import clips
+from azhi.hashing import sha256_file
+from azhi.transcription import Segment
 
 
 def _ffmpeg():
-    from sotto.resources import find_ffmpeg
+    from azhi.resources import find_ffmpeg
 
     return find_ffmpeg()
 

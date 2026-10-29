@@ -9,7 +9,7 @@ another hour of work, with nothing on screen to say it had happened.
 
 from pathlib import Path
 
-from sotto.output_names import (
+from azhi.output_names import (
     converted_audio_name,
     plan,
     subtitle_name,

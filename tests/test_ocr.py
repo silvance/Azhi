@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from sotto import ocr
-from sotto.ocr import (
+from azhi import ocr
+from azhi.ocr import (
     extract_text,
     is_image,
     is_ocr_file,

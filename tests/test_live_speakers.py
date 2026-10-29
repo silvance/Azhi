@@ -12,9 +12,9 @@ import wave
 
 import numpy as np
 
-from sotto.diarization import SpeakerSegment
-from sotto.live_speakers import SpeakerReviewer, merge_pass, stitch_labels
-from sotto.transcription import Segment, Word
+from azhi.diarization import SpeakerSegment
+from azhi.live_speakers import SpeakerReviewer, merge_pass, stitch_labels
+from azhi.transcription import Segment, Word
 
 
 def turn(start, end, speaker):

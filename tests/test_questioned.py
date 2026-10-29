@@ -10,8 +10,8 @@ import wave
 import numpy as np
 import pytest
 
-from sotto import questioned
-from sotto.questioned import (
+from azhi import questioned
+from azhi.questioned import (
     SELECTION_DIARIZED,
     SELECTION_RANGES,
     QuestionedSpeaker,
@@ -195,7 +195,7 @@ def test_an_empty_selection_measures_nothing(long_wav):
 
 
 def test_source_intervals_map_a_joined_window_back():
-    from sotto.questioned import source_intervals
+    from azhi.questioned import source_intervals
 
     pieces = [(0.0, 5.0, 100.0, 105.0), (5.0, 9.0, 200.0, 204.0)]
     # A window spanning the join maps to both original stretches.
@@ -254,7 +254,7 @@ def test_a_partly_usable_selection_warns_that_it_measured_less(tmp_path):
 
 
 def test_the_measurement_identifies_the_recording_it_came_from(long_wav):
-    from sotto.hashing import sha256_file
+    from azhi.hashing import sha256_file
 
     result = measure(long_wav, [(0.0, 40.0)], _CountingEmbedder())
     assert result.source_filename == long_wav.name
@@ -266,7 +266,7 @@ def test_the_measurement_identifies_the_recording_it_came_from(long_wav):
 
 
 def test_the_hash_is_of_the_operators_file_not_a_converted_copy(long_wav):
-    from sotto.hashing import sha256_file
+    from azhi.hashing import sha256_file
 
     before = sha256_file(long_wav)
     result = measure(long_wav, None, _CountingEmbedder())
@@ -322,9 +322,9 @@ def test_short_digest_abbreviates_for_status_lines():
 
 
 def test_a_comparison_inherits_the_measurement_and_its_provenance(long_wav):
-    from sotto.matching import compare_questioned_to_profile
-    from sotto.quality import GOOD
-    from sotto.speaker_profiles import (
+    from azhi.matching import compare_questioned_to_profile
+    from azhi.quality import GOOD
+    from azhi.speaker_profiles import (
         EmbeddingModelIdentity,
         EnrollmentSample,
         SpeakerProfile,
@@ -353,9 +353,9 @@ def test_a_comparison_inherits_the_measurement_and_its_provenance(long_wav):
 
 def test_a_comparison_counts_embeddings_not_source_intervals(scattered_wav):
     """Joined turns make one window map to several intervals - report windows."""
-    from sotto.matching import compare_questioned_to_profile
-    from sotto.quality import GOOD
-    from sotto.speaker_profiles import (
+    from azhi.matching import compare_questioned_to_profile
+    from azhi.quality import GOOD
+    from azhi.speaker_profiles import (
         EmbeddingModelIdentity,
         EnrollmentSample,
         SpeakerProfile,

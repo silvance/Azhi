@@ -1,9 +1,9 @@
-from sotto.editing import (
+from azhi.editing import (
     coalesce_segments,
     split_segment_on_span,
     split_segment_on_word,
 )
-from sotto.transcription import Segment, Word
+from azhi.transcription import Segment, Word
 
 
 def _seg(words, speaker):

@@ -1,6 +1,6 @@
 name: release-bundles
 
-# Builds self-contained, offline Sotto bundles for Windows and Linux.
+# Builds self-contained, offline Azhí bundles for Windows and Linux.
 # Each bundle includes the Python runtime, all dependencies, an ffmpeg binary, and
 # the selected Whisper models, so it can be copied to an air-gapped machine and run
 # with no network access. The build runners use the internet; the targets do not.
@@ -67,8 +67,8 @@ jobs:
     steps:
       - id: matrix
         run: |
-          linux='{"os":"ubuntu-latest","artifact":"sotto-linux-x86_64"}'
-          windows='{"os":"windows-latest","artifact":"sotto-windows-x86_64"}'
+          linux='{"os":"ubuntu-latest","artifact":"azhi-linux-x86_64"}'
+          windows='{"os":"windows-latest","artifact":"azhi-windows-x86_64"}'
           case "${{ github.event.inputs.platform || 'both' }}" in
             linux) include="[$linux]" ;;
             windows) include="[$windows]" ;;
@@ -176,7 +176,7 @@ jobs:
       - name: Install OCR Python deps
         if: env.OCR_LANGS != ''
         run: pip install -c packaging/lockfile.txt pytesseract pypdfium2 pillow "numpy<2"
-      - name: Install the Sotto package
+      - name: Install the Azhí package
         # --no-deps: everything it needs was installed above, pinned by the
         # lockfile; pip resolving again could only move a version.
         run: pip install --no-deps .
@@ -229,28 +229,28 @@ jobs:
           --build-id "${{ github.run_id }}-${{ github.run_attempt }}"
           --commit "${{ github.sha }}"
       - name: Build bundle
-        run: pyinstaller --noconfirm packaging/sotto.spec
+        run: pyinstaller --noconfirm packaging/azhi.spec
       # The guide has to travel with the tool. An air-gapped machine cannot be
       # sent a link, so a bundle that ships without it leaves the operator with
       # an executable and nothing to read. Copied in before the inventory so it
-      # is covered by `Sotto --verify` like everything else that shipped.
+      # is covered by `Azhi --verify` like everything else that shipped.
       - name: Include the user guide
         shell: bash
-        run: cp docs/user-guide.md "dist/Sotto/USER-GUIDE.md"
+        run: cp docs/user-guide.md "dist/Azhi/USER-GUIDE.md"
       # The licence and every notice the bundled software and models require,
       # beside the program, before the inventory so --verify covers them.
       - name: Ship the licence and third-party notices
         shell: bash
         run: |
-          cp LICENSE THIRD_PARTY_NOTICES.md dist/Sotto/
-          python packaging/collect_licences.py dist/Sotto
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/Azhi/
+          python packaging/collect_licences.py dist/Azhi
       # Record what this build shipped, so the copy that reaches an air-gapped
-      # machine can be checked against it with `Sotto --verify`. A bundle is
+      # machine can be checked against it with `Azhi --verify`. A bundle is
       # thousands of files carried on removable media; when one goes missing the
       # application fails at whichever piece it reaches first, which is a
       # different piece on different runs and tells the operator nothing.
       - name: Record bundle inventory
-        run: python packaging/write_inventory.py dist/Sotto
+        run: python packaging/write_inventory.py dist/Azhi
       # Prove the executable actually starts before shipping it. PyInstaller
       # exiting 0 only means it wrote a directory; a bundle missing one stdlib
       # extension builds cleanly and then dies on the operator's desktop with a
@@ -259,20 +259,20 @@ jobs:
       - name: Verify the bundle starts (Linux)
         if: runner.os == 'Linux'
         run: |
-          ./dist/Sotto/Sotto --self-test
-          ./dist/Sotto/Sotto --verify
+          ./dist/Azhi/Azhi --self-test
+          ./dist/Azhi/Azhi --verify
       - name: Verify the bundle starts (Windows)
         if: runner.os == 'Windows'
         run: |
-          & .\dist\Sotto\Sotto.exe --self-test
+          & .\dist\Azhi\Azhi.exe --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\dist\Sotto\Sotto.exe --verify
+          & .\dist\Azhi\Azhi.exe --verify
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}
-          path: dist/Sotto
+          path: dist/Azhi
           if-no-files-found: error
           retention-days: 14
       # The weights this build resolved. When packaging/assets.lock.json was
@@ -292,10 +292,10 @@ jobs:
       # --- Publish a downloadable GitHub Release (only when a tag is resolved) ---
       - name: Package bundle (Linux)
         if: steps.rel.outputs.tag != '' && runner.os == 'Linux'
-        run: tar -czf "${{ matrix.artifact }}.tar.gz" -C dist Sotto
+        run: tar -czf "${{ matrix.artifact }}.tar.gz" -C dist Azhi
       - name: Package bundle (Windows)
         if: steps.rel.outputs.tag != '' && runner.os == 'Windows'
-        run: Compress-Archive -Path dist/Sotto -DestinationPath "${{ matrix.artifact }}.zip"
+        run: Compress-Archive -Path dist/Azhi -DestinationPath "${{ matrix.artifact }}.zip"
       - name: Publish to GitHub Release
         if: steps.rel.outputs.tag != ''
         shell: bash
@@ -307,7 +307,7 @@ jobs:
         run: |
           TAG="${{ steps.rel.outputs.tag }}"
           FILE=$(ls ${{ matrix.artifact }}.* | head -n1)
-          NOTES="Offline Sotto desktop bundle. Download the archive for your OS, unzip, and run Sotto (Sotto.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`./Sotto --verify\` (\`Sotto.exe --verify\` on Windows) from a terminal. It compares every file against what this build shipped and names anything missing or altered - a copy damaged in transit is the usual cause of a startup error, and it can fail in a different place on each run. \`--self-test\` then prints what this copy can do, as does the in-app **System status** button."
+          NOTES="Offline Azhí desktop bundle. Download the archive for your OS, unzip, and run Azhi (Azhi.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`./Azhi --verify\` (\`Azhi.exe --verify\` on Windows) from a terminal. It compares every file against what this build shipped and names anything missing or altered - a copy damaged in transit is the usual cause of a startup error, and it can fail in a different place on each run. \`--self-test\` then prints what this copy can do, as does the in-app **System status** button."
           gh release create "$TAG" --repo "${{ github.repository }}" \
-            --title "Sotto $TAG" --notes "$NOTES" "$FILE" \
+            --title "Azhí $TAG" --notes "$NOTES" "$FILE" \
           || gh release upload "$TAG" "$FILE" --clobber --repo "${{ github.repository }}"

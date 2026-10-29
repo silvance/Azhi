@@ -26,13 +26,13 @@ pytestmark = pytest.mark.skipif(
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    import sotto.gui.app as app_mod
+    import azhi.gui.app as app_mod
 
     # Build the speaker pages too, without needing the model file.
     monkeypatch.setattr(app_mod, "bundled_embedding_model", lambda: Path("e.onnx"))
     root = tb.Window(themename="darkly")
     try:
-        yield app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True)
+        yield app_mod.AzhiApp(root, drag_and_drop=False, bootstrap=True)
     finally:
         root.destroy()
 
@@ -49,7 +49,7 @@ def _styles(widget):
 
 
 def test_custom_styles_survive_ttkbootstrap(app):
-    from sotto.gui.theme import Style
+    from azhi.gui.theme import Style
 
     seen = _styles(app.root)
     for name in (
@@ -84,9 +84,9 @@ def test_translate_with_a_model_that_cannot_is_refused_before_it_runs(app):
 
 
 def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
-    from sotto import alignment
-    from sotto.provenance import TranscriptionProvenance
-    from sotto.transcription import Segment, TranscriptionResult, Word
+    from azhi import alignment
+    from azhi.provenance import TranscriptionProvenance
+    from azhi.transcription import Segment, TranscriptionResult, Word
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
@@ -100,11 +100,11 @@ def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
         return alignment.AlignmentSummary(words=3, retimed=2)
 
     monkeypatch.setattr(alignment, "align_segments", align_segments)
-    import sotto.gui.app as app_mod
+    import azhi.gui.app as app_mod
 
     root = tb.Window(themename="darkly")
     try:
-        page = app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True).transcribe
+        page = app_mod.AzhiApp(root, drag_and_drop=False, bootstrap=True).transcribe
         # Offered, and on, where the build carries the model.
         assert page.retime_var.get() is True
         assert "retime_words" in page.get_settings()
@@ -140,19 +140,19 @@ def test_word_timings_are_sharpened_for_english_only(tmp_path, monkeypatch):
 def test_live_speakers_relabel_the_transcript_and_rewrite_the_file(
     tmp_path, monkeypatch
 ):
-    from sotto.transcription import Segment
+    from azhi.transcription import Segment
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    import sotto.gui.app as app_mod
-    import sotto.gui.live_tab as live_mod
+    import azhi.gui.app as app_mod
+    import azhi.gui.live_tab as live_mod
 
     monkeypatch.setattr(live_mod, "diarization_available", lambda: True)
     # The Live page is only built where ffmpeg can read a stream.
     monkeypatch.setattr(app_mod, "find_ffmpeg", lambda: Path("ffmpeg"))
     root = tb.Window(themename="darkly")
     try:
-        page = app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True).live
+        page = app_mod.AzhiApp(root, drag_and_drop=False, bootstrap=True).live
         assert page.speakers_var.get() is False  # a second model: asked for
 
         saved = tmp_path / "live.txt"
@@ -194,23 +194,23 @@ def test_live_speakers_relabel_the_transcript_and_rewrite_the_file(
 @pytest.fixture
 def app_with_profiles(app, monkeypatch):
     # The Transcribe page asks for itself whether voices can be measured.
-    import sotto.gui.transcribe_tab as transcribe_mod
+    import azhi.gui.transcribe_tab as transcribe_mod
 
     monkeypatch.setattr(
         transcribe_mod, "bundled_embedding_model", lambda: Path("e.onnx")
     )
-    import sotto.gui.app as app_mod
+    import azhi.gui.app as app_mod
 
     root = app.root
     for child in list(root.winfo_children()):
         child.destroy()
-    return app_mod.SottoApp(root, drag_and_drop=False, bootstrap=True)
+    return app_mod.AzhiApp(root, drag_and_drop=False, bootstrap=True)
 
 
 def test_a_transcript_speaker_can_be_searched_against_every_profile(
     app_with_profiles, tmp_path
 ):
-    from sotto.transcription import Segment, TranscriptionResult
+    from azhi.transcription import Segment, TranscriptionResult
 
     app = app_with_profiles
     recording = tmp_path / "call.wav"
@@ -298,7 +298,7 @@ def test_grouping_sensitivity_shows_only_where_it_does_something(app):
 
 
 def _page_with_transcript(app, tmp_path):
-    from sotto.transcription import Segment, TranscriptionResult
+    from azhi.transcription import Segment, TranscriptionResult
 
     page = app.transcribe
     result = TranscriptionResult(
@@ -324,7 +324,7 @@ def _page_with_transcript(app, tmp_path):
 def test_save_as_writes_the_type_picked_even_without_an_ending(
     app, tmp_path, monkeypatch, kind, ending, expect
 ):
-    import sotto.gui.transcribe_tab as transcribe_mod
+    import azhi.gui.transcribe_tab as transcribe_mod
 
     page = _page_with_transcript(app, tmp_path)
     page.times_var.set(True)
@@ -363,7 +363,7 @@ def test_the_watch_list_is_highlighted_saved_and_carried_by_profiles(app, tmp_pa
 
 
 def test_the_live_transcript_follows_the_same_watch_list(app, tmp_path):
-    from sotto.transcription import Segment
+    from azhi.transcription import Segment
 
     live = getattr(app, "live", None)
     if live is None:
@@ -385,8 +385,8 @@ def test_the_live_transcript_follows_the_same_watch_list(app, tmp_path):
 
 
 def test_copy_carries_the_lead_legend_once_with_times_and_notes(app, tmp_path):
-    from sotto.speaker_names import LEAD_LEGEND, as_lead
-    from sotto.transcription import Note
+    from azhi.speaker_names import LEAD_LEGEND, as_lead
+    from azhi.transcription import Note
 
     page = _page_with_transcript(app, tmp_path)
     page._speaker_names = {"SPEAKER_00": as_lead("Anna")}
@@ -411,9 +411,9 @@ def _voices(*profiles):
     questioned speaker of four windows, one joined from two turns."""
     import math
 
-    from sotto.quality import GOOD, QualityReport
-    from sotto.questioned import MeasuredWindow, QuestionedSpeaker
-    from sotto.speaker_profiles import (
+    from azhi.quality import GOOD, QualityReport
+    from azhi.questioned import MeasuredWindow, QuestionedSpeaker
+    from azhi.speaker_profiles import (
         EmbeddingModelIdentity,
         EnrollmentSample,
         SpeakerProfile,
@@ -472,7 +472,7 @@ class _Listener:
 
 
 def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
-    from sotto.matching import compare_questioned_to_profile
+    from azhi.matching import compare_questioned_to_profile
 
     model, (profile,), measured = _voices(("Subject A", (1.0, 0.0), 20.0))
     result = compare_questioned_to_profile(measured, profile, questioned_model=model)
@@ -505,8 +505,8 @@ def test_a_comparison_shows_its_windows_and_how_the_recordings_were_made(app):
 
 
 def test_a_search_shows_them_against_the_first_profile_or_a_chosen_one(app):
-    from sotto.matching import search_gallery_for_questioned
-    from sotto.reports import GallerySearch
+    from azhi.matching import search_gallery_for_questioned
+    from azhi.reports import GallerySearch
 
     model, (near, thin, far), measured = _voices(
         ("Near", (1.0, 0.0), 20.0),
@@ -549,7 +549,7 @@ def test_a_search_shows_them_against_the_first_profile_or_a_chosen_one(app):
     assert listener.played[-1] == (0.0, 8.0)
 
     # A one-to-one comparison afterwards has no picker.
-    from sotto.matching import compare_questioned_to_profile
+    from azhi.matching import compare_questioned_to_profile
 
     page._show_comparison(
         compare_questioned_to_profile(measured, near, questioned_model=model), None

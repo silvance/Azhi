@@ -2,18 +2,18 @@ import math
 
 import pytest
 
-from sotto.matching import (
+from azhi.matching import (
     ComparisonResult,
     compare_embedding_to_profile,
     search_gallery,
 )
-from sotto.quality import GOOD, INSUFFICIENT, POOR
-from sotto.speaker_profiles import (
+from azhi.quality import GOOD, INSUFFICIENT, POOR
+from azhi.speaker_profiles import (
     EmbeddingModelIdentity,
     EnrollmentSample,
     SpeakerProfile,
 )
-from sotto.thresholds import (
+from azhi.thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
     BAND_INTERMEDIATE,
@@ -346,7 +346,7 @@ def test_comparison_result_defaults_are_inconclusive():
 
 def test_a_configured_threshold_override_is_honoured(monkeypatch):
     """The comparison band edge comes from the active set, not a frozen default."""
-    from sotto import thresholds as th
+    from azhi import thresholds as th
 
     monkeypatch.setattr(th, "_active", th.Thresholds(comparison_high=0.99))
     profile = _profile(seconds=30.0)
@@ -551,8 +551,8 @@ def test_a_ranking_on_audio_too_poor_to_assess_carries_no_bands():
     "Viktor Marchenko 0.83 High similarity" in History, in the full result and
     in the report. On audio too poor to assess, every entry is "Not assessed".
     """
-    from sotto.comparison_log import record_from_gallery
-    from sotto.thresholds import BAND_NOT_ASSESSED
+    from azhi.comparison_log import record_from_gallery
+    from azhi.thresholds import BAND_NOT_ASSESSED
 
     result = search_gallery(
         [1.0, 0.0],
@@ -584,9 +584,9 @@ def test_an_adequate_ranking_still_carries_its_bands():
 
 def _measured(cosines, *, skipped=0, joined=False, seconds_each=7.0):
     """A questioned speaker whose windows sit at the given cosines to (1, 0)."""
-    from sotto.quality import QualityReport
-    from sotto.questioned import MeasuredWindow, QuestionedSpeaker
-    from sotto.voiceprints import centroid
+    from azhi.quality import QualityReport
+    from azhi.questioned import MeasuredWindow, QuestionedSpeaker
+    from azhi.voiceprints import centroid
 
     def report(voiced, assessment):
         return QualityReport(
@@ -632,7 +632,7 @@ def _measured(cosines, *, skipped=0, joined=False, seconds_each=7.0):
 
 
 def _compare(questioned, profile=None):
-    from sotto.matching import compare_questioned_to_profile
+    from azhi.matching import compare_questioned_to_profile
 
     return compare_questioned_to_profile(
         questioned, profile or _profile(), questioned_model=MODEL
@@ -716,7 +716,7 @@ def test_the_record_holds_window_scores_and_conditions_never_vectors():
 
 
 def _search(questioned, profiles):
-    from sotto.matching import search_gallery_for_questioned
+    from azhi.matching import search_gallery_for_questioned
 
     return search_gallery_for_questioned(questioned, profiles, questioned_model=MODEL)
 

@@ -1,0 +1,304 @@
+# PyInstaller spec for the Azhí GUI (one-dir bundle).
+#
+# Build (sherpa-onnx diarizer, smaller):
+#     pip install "azhi[gui,bundle]"
+#     python packaging/fetch_assets.py ffmpeg
+#     python packaging/fetch_assets.py models small,medium,large-v3
+#     python packaging/fetch_assets.py diarization
+#     pyinstaller --noconfirm packaging/azhi.spec
+#
+# Build (pyannote diarizer, best quality on hard audio; adds CPU PyTorch):
+#     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#     pip install "azhi[gui,bundle,pyannote]"
+#     python packaging/fetch_assets.py ffmpeg
+#     python packaging/fetch_assets.py models small,medium,large-v3
+#     HF_TOKEN=... python packaging/fetch_assets.py pyannote
+#     pyinstaller --noconfirm packaging/azhi.spec
+#
+# Optional text translation (offline Argos Translate):
+#     pip install "azhi[gui,bundle,translate]"
+#     python packaging/fetch_assets.py argos ar,ru,zh,fa,uk,he,ko
+#     (plus the steps above, then pyinstaller)
+#
+# Optional Nemotron speaker separation (NVIDIA; model licence OpenMDW-1.1,
+# permissive: the fetch puts its text and NVIDIA's model card beside the model,
+# which is all it asks of a copy):
+#     python packaging/fetch_assets.py nemotron
+#     (plus the steps above, then pyinstaller)
+#
+# Optional OCR for the translation workflow (images + PDFs):
+#     # install a system Tesseract first (apt-get install tesseract-ocr /
+#     # choco install tesseract), then:
+#     pip install "azhi[gui,bundle,ocr]"
+#     python packaging/fetch_assets.py tesseract ar,ru,zh,fa,uk,he,ko
+#     (plus the steps above, then pyinstaller)
+#
+# The spec auto-detects whether pyannote.audio / argostranslate / pytesseract are
+# installed: it bundles the PyTorch stack + offline pyannote cache, the Argos
+# stack + language packs, and/or the OCR stack (Tesseract + tessdata) accordingly;
+# otherwise it builds the lighter sherpa-onnx-only bundle and excludes torch.
+# python-docx (Word export), langdetect (auto-detect) and tkinterdnd2 (drag-and-
+# drop) are bundled when present too.
+#
+# The resulting dist/Azhi/ folder is fully self-contained (Python runtime, all
+# dependencies, the ffmpeg binary, and the Whisper + diarization models) and can be
+# copied to an air-gapped machine and run with no network access.
+
+import importlib.util
+import os
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_all, copy_metadata
+
+# SPECPATH is injected by PyInstaller and is the directory containing this spec
+# (i.e. the packaging/ folder). Paths in the spec are resolved relative to it, so
+# anchor everything explicitly: the entry script lives beside the spec, and the
+# offline assets live in the repo root (one level up).
+SPEC_DIR = Path(SPECPATH)  # noqa: F821 - provided by PyInstaller at exec time
+REPO_ROOT = SPEC_DIR.parent
+
+# pyannote.audio (PyTorch) is bundled only when it is installed in the build
+# environment. When absent, the bundle uses the sherpa-onnx diarizer and torch is
+# excluded entirely (it is never imported and is the bulk of the size).
+PYANNOTE = importlib.util.find_spec("pyannote.audio") is not None
+
+# argostranslate (offline text translation) is bundled only when installed. It
+# hard-imports stanza, so stanza is pulled in too; spacy is optional (guarded) and
+# left out via excludes below.
+ARGOS = importlib.util.find_spec("argostranslate") is not None
+
+# OCR (image/PDF -> text) for the translation workflow. pytesseract drives the
+# Tesseract binary (bundled under azhi_assets/tesseract); pypdfium2 + Pillow
+# handle PDFs and images. langdetect (auto source-language), python-docx (Word
+# export) and tkinterdnd2 (drag-and-drop) are small UX add-ons, each guarded.
+OCR = importlib.util.find_spec("pytesseract") is not None
+DOCX = importlib.util.find_spec("docx") is not None
+LANGDETECT = importlib.util.find_spec("langdetect") is not None
+TKDND = importlib.util.find_spec("tkinterdnd2") is not None
+
+datas = []
+binaries = []
+hiddenimports = []
+
+# Native libraries / data files the always-present packages need at runtime.
+packages = [
+    "faster_whisper",
+    "ctranslate2",
+    "av",
+    "onnxruntime",
+    "tokenizers",
+    "ttkbootstrap",
+]
+# The pyannote/PyTorch dependency tree. collect_all is wrapped in try/except so a
+# package that isn't present (or has no collectable data) doesn't abort the build.
+if PYANNOTE:
+    packages += [
+        "torch",
+        "torchaudio",
+        "soundfile",  # libsndfile - pyannote 3.1.1's audio backend
+        "pyannote",
+        "asteroid_filterbanks",
+        "lightning_fabric",
+        "pytorch_lightning",
+        "sklearn",
+        "scipy",
+        "omegaconf",
+        "networkx",
+        "huggingface_hub",
+        "transformers",
+        "sympy",
+    ]
+
+# Argos Translate dependency tree (CTranslate2 is already collected above when
+# present via faster-whisper). stanza is a hard import in argostranslate's sbd
+# module; sentencepiece/sacremoses/minisbd are the tokenizers/sentence splitter.
+if ARGOS:
+    packages += [
+        "argostranslate",
+        "stanza",
+        "sentencepiece",
+        "sacremoses",
+        "minisbd",
+        "ctranslate2",
+    ]
+
+# OCR + UX add-ons. langdetect ships its language profiles as package data and
+# tkinterdnd2 ships the native tkdnd Tcl extension, so both need collect_all.
+if OCR:
+    packages += ["pytesseract", "PIL", "pypdfium2"]
+if DOCX:
+    packages += ["docx"]
+if LANGDETECT:
+    packages += ["langdetect"]
+if TKDND:
+    packages += ["tkinterdnd2"]
+
+for package in packages:
+    try:
+        pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
+    except Exception as exc:  # noqa: BLE001 - best-effort collection
+        print(f"azhi.spec: skipping collect_all({package!r}): {exc}")
+        continue
+    datas += pkg_datas
+    binaries += pkg_binaries
+    hiddenimports += pkg_hidden
+
+# Some of these libraries read their own distribution metadata at runtime
+# (importlib.metadata.version(...)); bundle it so they don't crash when frozen.
+if PYANNOTE:
+    for dist in (
+        "torch",
+        "pyannote.audio",
+        "pytorch_lightning",
+        "lightning_fabric",
+        "asteroid_filterbanks",
+        "huggingface_hub",
+        "tqdm",
+        "filelock",
+        "regex",
+        "requests",
+        "packaging",
+    ):
+        try:
+            datas += copy_metadata(dist)
+        except Exception as exc:  # noqa: BLE001 - metadata may be absent
+            print(f"azhi.spec: skipping copy_metadata({dist!r}): {exc}")
+
+if ARGOS:
+    for dist in (
+        "argostranslate",
+        "stanza",
+        "sentencepiece",
+        "sacremoses",
+        "ctranslate2",
+        "minisbd",
+    ):
+        try:
+            datas += copy_metadata(dist)
+        except Exception as exc:  # noqa: BLE001 - metadata may be absent
+            print(f"azhi.spec: skipping copy_metadata({dist!r}): {exc}")
+
+# Some OCR/UX libraries read their own distribution metadata at runtime; bundle it
+# (note python-docx's distribution name differs from its import name).
+for enabled, dists in (
+    (OCR, ("pytesseract", "pypdfium2", "pillow")),
+    (DOCX, ("python-docx",)),
+    (LANGDETECT, ("langdetect",)),
+    (TKDND, ("tkinterdnd2",)),
+):
+    if not enabled:
+        continue
+    for dist in dists:
+        try:
+            datas += copy_metadata(dist)
+        except Exception as exc:  # noqa: BLE001 - metadata may be absent
+            print(f"azhi.spec: skipping copy_metadata({dist!r}): {exc}")
+
+# Bundle the offline assets (ffmpeg + models) fetched by fetch_assets.py.
+#
+# Except azhi_assets/nemotron: a program and the libraries it loads from
+# beside itself. Given to Analysis as data, PyInstaller would take the program
+# and its libraries for binaries of its own and might move them apart (it did
+# that to Tesseract). It is handed to COLLECT instead, which copies it as it is.
+assets = REPO_ROOT / "azhi_assets"
+NEMOTRON_ASSETS = assets / "nemotron"
+nemotron_files = []
+if assets.is_dir():
+    for child in sorted(assets.iterdir()):
+        if child == NEMOTRON_ASSETS:
+            continue
+        datas.append(
+            (str(child), f"azhi_assets/{child.name}" if child.is_dir() else "azhi_assets")
+        )
+if NEMOTRON_ASSETS.is_dir():
+    nemotron_files = [
+        (f"azhi_assets/nemotron/{path.relative_to(NEMOTRON_ASSETS).as_posix()}", str(path), "DATA")
+        for path in sorted(NEMOTRON_ASSETS.rglob("*"))
+        if path.is_file()
+    ]
+    print(f"azhi.spec: bundling Nemotron diarization ({len(nemotron_files)} files)")
+
+# This build is CPU-only, so strip the CUDA / cuDNN libraries that ctranslate2
+# and onnxruntime ship in their wheels: they are never loaded and account for
+# the bulk of the bundle size.
+#
+# This stripping is what makes the bundle CPU-only, and the application reads it
+# the other way round: azhi.acceleration.build_supports_cuda() answers "no"
+# inside a bundle *because* of these lines, and the hardware card then offers no
+# GPU setting rather than one that silently does nothing. So the two have to
+# agree. tests/test_acceleration.py asserts that this stripping is still here;
+# if a CUDA-capable bundle is ever wanted, that test fails and names the
+# function to revisit.
+_CUDA_MARKERS = (
+    "cudnn",
+    "cublas",
+    "cudart",
+    "cufft",
+    "curand",
+    "cusolver",
+    "cusparse",
+    "cupti",
+    "nvrtc",
+    "nvtx",
+    "libcuda",
+    "onnxruntime_providers_cuda",
+    "onnxruntime_providers_tensorrt",
+)
+
+
+def _is_cuda_lib(name) -> bool:
+    base = os.path.basename(str(name)).lower()
+    return any(marker in base for marker in _CUDA_MARKERS)
+
+
+binaries = [b for b in binaries if not _is_cuda_lib(b[0])]
+datas = [d for d in datas if not _is_cuda_lib(d[0])]
+
+a = Analysis(
+    [os.path.join(SPEC_DIR, "azhi_entry.py")],
+    pathex=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    # Exclude torch only for the sherpa-onnx build; when pyannote is bundled we
+    # need torch. tensorflow is never used. spacy is an optional argostranslate
+    # dependency we don't use (we force the MiniSBD sentence splitter), so drop it.
+    excludes=(
+        ["tensorflow"]
+        + ([] if PYANNOTE else ["torch"])
+        + (["spacy"] if ARGOS else [])
+    ),
+    noarchive=False,
+)
+
+# Drop any CUDA libraries the dependency analysis pulled in as well.
+a.binaries = [b for b in a.binaries if not _is_cuda_lib(b[0])]
+
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="Azhi",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    nemotron_files,
+    strip=False,
+    upx=False,
+    name="Azhi",
+)

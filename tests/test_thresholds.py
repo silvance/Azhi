@@ -2,8 +2,8 @@
 
 import pytest
 
-from sotto import thresholds
-from sotto.thresholds import DEFAULTS, SETTINGS_KEY, Thresholds, from_settings
+from azhi import thresholds
+from azhi.thresholds import DEFAULTS, SETTINGS_KEY, Thresholds, from_settings
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +53,7 @@ def test_unknown_keys_are_ignored():
 
 def _configure(monkeypatch, payload):
     monkeypatch.setattr(thresholds, "_active", None)
-    import sotto.settings as settings
+    import azhi.settings as settings
 
     monkeypatch.setattr(settings, "load_settings", lambda: payload)
 
@@ -61,7 +61,7 @@ def _configure(monkeypatch, payload):
 def test_active_reads_the_settings_file_and_then_caches_it(monkeypatch):
     calls = []
 
-    import sotto.settings as settings
+    import azhi.settings as settings
 
     def _load():
         calls.append(1)

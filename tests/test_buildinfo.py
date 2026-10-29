@@ -4,14 +4,14 @@ import json
 
 import pytest
 
-from sotto import buildinfo
-from sotto.buildinfo import UNKNOWN, BuildInfo, build_info, load_manifest
+from azhi import buildinfo
+from azhi.buildinfo import UNKNOWN, BuildInfo, build_info, load_manifest
 
 
 @pytest.fixture
 def assets(tmp_path, monkeypatch):
-    """A stand-in ``sotto_assets`` directory for the manifest to live in."""
-    directory = tmp_path / "sotto_assets"
+    """A stand-in ``azhi_assets`` directory for the manifest to live in."""
+    directory = tmp_path / "azhi_assets"
     directory.mkdir()
     monkeypatch.setattr(buildinfo, "asset_dirs", lambda: [directory])
     return directory

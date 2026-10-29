@@ -2,9 +2,9 @@ import csv
 
 import pytest
 
-from sotto import diarization_eval as ev
-from sotto.diarization import SpeakerSegment
-from sotto.transcription import Segment, Word
+from azhi import diarization_eval as ev
+from azhi.diarization import SpeakerSegment
+from azhi.transcription import Segment, Word
 
 
 def turn(start, end, speaker):
@@ -228,7 +228,7 @@ def test_empty_test_set_says_what_is_missing(tmp_path, monkeypatch, capsys):
 
 
 def test_shipped_copy_runs_it_from_the_application_entry(tmp_path, monkeypatch):
-    from sotto import app
+    from azhi import app
 
     monkeypatch.setattr(ev, "_offline", lambda: None)
     monkeypatch.setattr(app, "launch", lambda: pytest.fail("opened the window"))

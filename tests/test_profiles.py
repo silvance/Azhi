@@ -1,7 +1,7 @@
 import pytest
 
-import sotto.profiles as profiles
-from sotto.profiles import (
+import azhi.profiles as profiles
+from azhi.profiles import (
     Profile,
     ProfileSaveError,
     add_learned_voice,
@@ -15,7 +15,7 @@ from sotto.profiles import (
     save_profile,
     store_profile_settings,
 )
-from sotto.voiceprints import Voiceprint
+from azhi.voiceprints import Voiceprint
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -77,7 +77,7 @@ def test_names_with_odd_characters_persist(tmp_path, monkeypatch):
 def test_export_then_read_round_trip(tmp_path):
     prof = Profile(name="Op Falcon", settings={"model": "medium.en"})
     prof.voiceprint_for("Alpha").add([1.0, 0.0])
-    out = tmp_path / "falcon.sotto-profile.json"
+    out = tmp_path / "falcon.azhi-profile.json"
     export_profile(prof, out)
 
     loaded = read_profile_file(out)
@@ -88,7 +88,7 @@ def test_export_then_read_round_trip(tmp_path):
 
 def test_import_lands_in_profiles_dir(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
-    src = tmp_path / "shared.sotto-profile.json"
+    src = tmp_path / "shared.azhi-profile.json"
     export_profile(Profile(name="Shared", settings={"engine": "sherpa"}), src)
     # Simulate the GUI import: read the file, then save into this machine's dir.
     imported = read_profile_file(src)
@@ -100,7 +100,7 @@ def test_import_lands_in_profiles_dir(tmp_path, monkeypatch):
 def test_read_profile_file_rejects_non_profile(tmp_path):
     bad = tmp_path / "notaprofile.json"
     bad.write_text('{"foo": 1}', encoding="utf-8")
-    with pytest.raises(ValueError, match="isn't a Sotto profile"):
+    with pytest.raises(ValueError, match="isn't an Azhí profile"):
         read_profile_file(bad)
 
 
@@ -146,7 +146,7 @@ def test_a_failed_save_raises_instead_of_reporting_success(tmp_path, monkeypatch
     def refuse(*_args, **_kwargs):
         raise PermissionError(13, "Access is denied")
 
-    monkeypatch.setattr("sotto.profiles.write_json_atomic", refuse)
+    monkeypatch.setattr("azhi.profiles.write_json_atomic", refuse)
     with pytest.raises(ProfileSaveError) as caught:
         save_profile(Profile(name="Op Alpha"))
     assert "could not be saved" in str(caught.value)
@@ -162,7 +162,7 @@ def test_a_save_that_dies_part_way_leaves_the_old_profile(tmp_path, monkeypatch)
     def crash(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr("sotto.atomicio.os.replace", crash)
+    monkeypatch.setattr("azhi.atomicio.os.replace", crash)
     with pytest.raises(ProfileSaveError):
         save_profile(Profile(name="Op Alpha"))
     monkeypatch.undo()

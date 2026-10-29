@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 requires = [ "setuptools>=61.2" ]
 
 [project]
-name = "sotto"
-description = "Sotto: offline transcription, speaker separation and voice comparison for investigative triage"
+name = "azhi"
+description = "Azhí: offline transcription, speaker separation and voice comparison for investigative triage"
 readme.content-type = "text/markdown"
 readme.file = "README.md"
 license = { text = "MIT" }
@@ -22,14 +22,14 @@ classifiers = [
 dynamic = [ "version" ]
 dependencies = [ "numpy" ]
 optional-dependencies.dev = [ "mypy", "pytest", "ruff" ]
-# GUI / CPU-optimized transcription extras for the Sotto desktop app.
+# GUI / CPU-optimized transcription extras for the Azhí desktop app.
 # tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
 # python-docx (Word export), langdetect (auto source-language) and tkinterdnd2
 # (file drag-and-drop) are small UX add-ons used when present.
 # The caps say what the application supports. They are not what makes a bundle
 # reproducible - packaging/lockfile.txt is, by pinning the exact version an
 # operational build uses, and packaging/check_lock.py by failing a build that
-# drifts from it. The manifest in sotto_assets/build_manifest.json records what
+# drifts from it. The manifest in azhi_assets/build_manifest.json records what
 # a build was; the lock decides what it is allowed to be.
 optional-dependencies.gui = [
   "faster-whisper>=1.2,<2",
@@ -52,18 +52,18 @@ optional-dependencies.bundle = [ "pyinstaller>=6.22,<7", "imageio-ffmpeg>=0.5,<1
 # 3.1.1 uses np.NaN, which NumPy 2.0 removed.
 optional-dependencies.pyannote = [ "pyannote.audio==3.1.1", "soundfile", "numpy<2" ]
 # Offline text translation backend (CTranslate2-based, CPU). Language packs are
-# bundled into the air-gapped build; see sotto.resources.configure_offline_translation.
+# bundled into the air-gapped build; see azhi.resources.configure_offline_translation.
 optional-dependencies.translate = [ "argostranslate>=1.9,<2" ]
 # Offline OCR for the translation workflow (image/PDF -> text). pytesseract drives
 # a bundled Tesseract binary; pypdfium2 + Pillow handle PDFs and images.
 optional-dependencies.ocr = [ "pytesseract>=0.3.10,<0.4", "pypdfium2>=4,<5", "pillow>=10,<12" ]
-scripts.sotto = "sotto.app:main"
+scripts.azhi = "azhi.app:main"
 
 [tool.setuptools.dynamic]
-version = { attr = "sotto.version.__version__" }
+version = { attr = "azhi.version.__version__" }
 
 [tool.setuptools.packages.find]
-include = [ "sotto*" ]
+include = [ "azhi*" ]
 namespaces = false
 
 [tool.ruff]
@@ -81,7 +81,7 @@ ignore = [ "E203", "E501" ]
 "**/__init__.py" = [ "F401" ]
 
 [tool.ruff.lint.isort]
-known-first-party = [ "sotto" ]
+known-first-party = [ "azhi" ]
 
 [tool.mypy]
 python_version = "3.9"

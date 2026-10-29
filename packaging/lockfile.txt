@@ -1,4 +1,4 @@
-# Operational dependency lock for the Sotto offline bundle.
+# Operational dependency lock for the Azhí offline bundle.
 #
 # These are the versions an operational bundle is built from, resolved on the
 # build platform (Python 3.11). The point is not that they are the newest: it is

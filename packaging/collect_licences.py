@@ -3,7 +3,7 @@
 Run after PyInstaller, before the inventory is written, so ``--verify`` covers
 them::
 
-    python packaging/collect_licences.py dist/Sotto
+    python packaging/collect_licences.py dist/Azhi
 
 Each distribution's licence, copying and notice files go to
 ``<bundle>/licenses/<distribution>/``. The build environment holds exactly what

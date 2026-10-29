@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sotto import microphone
-from sotto.hashing import sha256_file
+from azhi import microphone
+from azhi.hashing import sha256_file
 
 # What ffmpeg 7.1 prints on Windows for -list_devices (abridged).
 DSHOW_NEW = r"""

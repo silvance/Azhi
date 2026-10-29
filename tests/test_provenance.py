@@ -1,21 +1,21 @@
 import json
 
-from sotto import atomicio
-from sotto.buildinfo import UNKNOWN, BuildInfo, build_info
-from sotto.hashing import sha256_bytes, sha256_file, sha256_file_or_none, short
-from sotto.project import (
+from azhi import atomicio
+from azhi.buildinfo import UNKNOWN, BuildInfo, build_info
+from azhi.hashing import sha256_bytes, sha256_file, sha256_file_or_none, short
+from azhi.project import (
     SCHEMA_VERSION,
     load_project,
     load_project_record,
     save_project,
 )
-from sotto.provenance import (
+from azhi.provenance import (
     AnalysisProvenance,
     DiarizationProvenance,
     SourceRecord,
     TranscriptionProvenance,
 )
-from sotto.transcription import Segment, TranscriptionResult
+from azhi.transcription import Segment, TranscriptionResult
 
 # Known-answer vector, so a refactor of the hashing helper cannot silently
 # change what a recorded provenance hash means.
@@ -141,7 +141,7 @@ def test_provenance_records_matching_thresholds(tmp_path):
 
 
 def test_build_info_reports_unknown_without_a_manifest(monkeypatch):
-    import sotto.buildinfo as bi
+    import azhi.buildinfo as bi
 
     monkeypatch.setattr(bi, "load_manifest", lambda: {})
     info = bi.build_info()
@@ -151,7 +151,7 @@ def test_build_info_reports_unknown_without_a_manifest(monkeypatch):
 
 
 def test_build_info_uses_manifest_when_present(monkeypatch):
-    import sotto.buildinfo as bi
+    import azhi.buildinfo as bi
 
     monkeypatch.setattr(
         bi,
@@ -194,7 +194,7 @@ def _result():
 
 def test_project_saves_and_loads_provenance(tmp_path):
     provenance = _provenance(tmp_path)
-    path = tmp_path / "case.sotto.json"
+    path = tmp_path / "case.azhi.json"
     save_project(path, _result(), {"SPEAKER_00": "Alpha"}, "op.wav", provenance)
 
     record = load_project_record(path)
@@ -207,7 +207,7 @@ def test_project_saves_and_loads_provenance(tmp_path):
 
 
 def test_project_written_file_records_schema_and_hash(tmp_path):
-    path = tmp_path / "case.sotto.json"
+    path = tmp_path / "case.azhi.json"
     save_project(path, _result(), None, "op.wav", _provenance(tmp_path))
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["schema_version"] == SCHEMA_VERSION
@@ -216,7 +216,7 @@ def test_project_written_file_records_schema_and_hash(tmp_path):
 
 def test_schema_1_project_still_loads(tmp_path):
     """A pre-provenance project must keep working, reporting no provenance."""
-    legacy = tmp_path / "old.sotto.json"
+    legacy = tmp_path / "old.azhi.json"
     legacy.write_text(
         json.dumps(
             {
@@ -249,7 +249,7 @@ def test_schema_1_project_still_loads(tmp_path):
 
 
 def test_project_without_provenance_saves_cleanly(tmp_path):
-    path = tmp_path / "plain.sotto.json"
+    path = tmp_path / "plain.azhi.json"
     save_project(path, _result(), None, "op.wav")
     record = load_project_record(path)
     assert record.has_provenance is False
@@ -258,14 +258,14 @@ def test_project_without_provenance_saves_cleanly(tmp_path):
 
 def test_project_save_is_atomic(tmp_path, monkeypatch):
 
-    path = tmp_path / "case.sotto.json"
+    path = tmp_path / "case.azhi.json"
     save_project(path, _result(), None, "op.wav")
     original = path.read_text(encoding="utf-8")
 
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
-    # The atomic writer lives in sotto.atomicio; fail its replace step.
+    # The atomic writer lives in azhi.atomicio; fail its replace step.
     monkeypatch.setattr(atomicio.os, "replace", _boom)
     try:
         save_project(path, _result(), None, "changed.wav")

@@ -1,11 +1,11 @@
-"""Write ``sotto_assets/build_manifest.json`` describing an assembled bundle.
+"""Write ``azhi_assets/build_manifest.json`` describing an assembled bundle.
 
 Run at build time, after the assets have been fetched and before PyInstaller, so
 the shipped application can state exactly what it is: which commit produced it,
 which dependency versions went in, and the SHA-256 of every bundled model.
 
 Without this file the application reports its build identity as "unknown" rather
-than guessing - see :mod:`sotto.buildinfo`.
+than guessing - see :mod:`azhi.buildinfo`.
 
 This makes a build **auditable**: it records what was actually assembled, so a
 result traces back to a specific bundle and two bundles can be compared. What a
@@ -34,17 +34,17 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sotto.buildinfo import application_version  # noqa: E402
-from sotto.dependencies import TRACKED_PACKAGES as TRACKED_DEPENDENCIES  # noqa: E402
-from sotto.hashing import sha256_file_or_none  # noqa: E402
+from azhi.buildinfo import application_version  # noqa: E402
+from azhi.dependencies import TRACKED_PACKAGES as TRACKED_DEPENDENCIES  # noqa: E402
+from azhi.hashing import sha256_file_or_none  # noqa: E402
 
-ASSETS = Path("sotto_assets")
+ASSETS = Path("azhi_assets")
 MANIFEST = ASSETS / "build_manifest.json"
 
 # Recorded with every build. The same list the dependency lock pins, plus the
 # application itself - the manifest says what a build was, the lock says what it
-# was allowed to be (see sotto/dependencies.py and packaging/check_lock.py).
-TRACKED_PACKAGES = ("sotto",) + TRACKED_DEPENDENCIES
+# was allowed to be (see azhi/dependencies.py and packaging/check_lock.py).
+TRACKED_PACKAGES = ("azhi",) + TRACKED_DEPENDENCIES
 
 
 def _package_versions() -> Dict[str, str]:
@@ -139,7 +139,7 @@ def build_manifest(
     versions = _package_versions()
     return {
         "build_id": build_id
-        or os.environ.get("SOTTO_BUILD_ID")
+        or os.environ.get("AZHI_BUILD_ID")
         or timestamp.replace(":", "").replace("-", ""),
         "git_commit": _git_commit(commit),
         "build_timestamp": timestamp,

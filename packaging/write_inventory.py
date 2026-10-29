@@ -2,9 +2,9 @@
 
 Run after PyInstaller, against the output directory::
 
-    python packaging/write_inventory.py dist/Sotto
+    python packaging/write_inventory.py dist/Azhi
 
-Writes ``bundle-inventory.json`` beside the executable. ``Sotto --verify``
+Writes ``bundle-inventory.json`` beside the executable. ``Azhi --verify``
 reads it back on the deployment machine and reports which files are missing,
 truncated or altered - the difference between broken software and a copy that
 did not survive the journey to an air-gapped machine.
@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sotto.bundle_check import INVENTORY_NAME, build_inventory  # noqa: E402
+from azhi.bundle_check import INVENTORY_NAME, build_inventory  # noqa: E402
 
 
 def main(argv: "list[str] | None" = None) -> int:
