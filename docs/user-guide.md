@@ -861,11 +861,41 @@ page of dense Chinese or Arabic can take a minute or more. The status line
 counts paragraphs and, after a few seconds, estimates the time left. Cancel
 stops it at the next paragraph.
 
-**Batch files.** Each PDF or image in the batch gets three files beside it:
+**Forensic reports and chats: side by side.** Under **Files**, **Write each
+PDF as** offers two products. **Side by side** (the default) suits Cellebrite
+and AXIOM reports, chat exports and anything else where a passage has to be
+found again. It does not depend on which tool made the PDF. It finds each
+table cell, message and paragraph by where it sits on the page, so a
+timestamp, a sender and a message body are kept apart.
+
+- `<name>.en.pdf`: a first page saying what the file was (name and SHA-256),
+  which languages were found on which pages, what could not be translated,
+  and which versions of Azhi, Argos and the language packs made the
+  translation. Then each original page that has foreign-language text,
+  unchanged on the left, with its foreign passages highlighted and numbered;
+  the English for each number is on the right, level with it where there is
+  room. Passages in red are in a language this copy has no pack for. Pages
+  with no foreign-language text are left out, and listed on the first page.
+- `<name>.en.docx`: the same passages as a table (page, number, language,
+  original, English), for a linguist to work in.
+- `<name>.en.txt`: the same as plain text, for searching.
+- `<name>.ocr.txt`: all the text extracted from the PDF.
+
+The PDF draws the English in a standard font, so a word the translation left
+in the original script shows as `[?]`; the Word copy shows every character.
+
+**Reading copy** writes the translation as continuous text instead, one email
+at a time, which is easier to read through. Each PDF or image gets:
 
 - `<name>.ocr.txt`: the extracted text, exactly as it came out;
 - `<name>.en.txt`: the translation;
 - `<name>.en.docx`: the translation as a Word document.
+
+Images are always written as a reading copy.
+
+When a batch finishes, **Result** lists what each PDF held: how many pages
+have foreign-language text, and how many passages in which language. That is
+the quickest way to see which files need a linguist.
 
 Every translation says it is a machine translation. Have anything that matters
 checked by a linguist.

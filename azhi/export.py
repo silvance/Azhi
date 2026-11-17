@@ -16,6 +16,7 @@ from .speaker_names import LEAD_LEGEND, any_leads
 from .transcription import Segment, TranscriptionResult, clock_time, note_lines
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .side_by_side import Triage
     from .translation import Piece, TranslatedDocument
 
 PathLike = Union[str, Path]
@@ -181,6 +182,60 @@ def translation_to_docx(
         for line in translation.left_out():
             paragraph = document.add_paragraph(clean(line))
             _direction(paragraph, line)
+    out = Path(path)
+    document.save(str(out))
+    return out
+
+
+def side_by_side_docx(triage: "Triage", path: PathLike) -> Path:
+    """Write the foreign passages of a PDF beside their translations, as a table.
+
+    One row per passage: page, number (as marked in the side-by-side PDF),
+    language, the original and the English. Word lays out Arabic and Chinese
+    itself, so this copy shows every character of both, and a linguist can
+    edit it.
+    """
+    from docx.shared import Pt
+
+    from .side_by_side import NOTICE, header_lines
+
+    document = _document()
+    document.add_heading("Machine translation for language triage", level=1)
+    document.add_paragraph().add_run(NOTICE).bold = True
+    for line in header_lines(triage):
+        document.add_paragraph(clean(line))
+    marks = triage.all_marked()
+    if not marks:
+        document.add_paragraph("No foreign-language text was found.")
+    else:
+        table = document.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+        for cell, text in zip(
+            table.rows[0].cells,
+            ("Page", "#", "Language", "Original", "English (machine translation)"),
+        ):
+            cell.text = ""
+            cell.paragraphs[0].add_run(text).bold = True
+        for m in marks:
+            row = table.add_row().cells
+            row[0].text = str(m.passage.page + 1)
+            row[1].text = str(m.number)
+            code = m.piece.missing or m.piece.language
+            row[2].text = triage.name(code) + (
+                " (no language pack)" if m.piece.missing else ""
+            )
+            row[3].text = clean(m.passage.text)
+            _direction(row[3].paragraphs[0], m.passage.text)
+            row[4].text = (
+                "Not translated: no language pack in this copy."
+                if m.piece.missing
+                else clean(m.piece.text)
+            )
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(9)
     out = Path(path)
     document.save(str(out))
     return out

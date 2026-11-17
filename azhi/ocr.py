@@ -27,7 +27,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Set, Tuple, Union
 
-from .documents import clean
+from .documents import clean, join_wrapped
 from .resources import bundled_tessdata_dir, find_tesseract
 from .transcription import CancelCallback, CancelledError, ProgressCallback
 
@@ -332,23 +332,82 @@ def _second_script(pytesseract, image, lang: str, found: List[str]) -> Optional[
     return best
 
 
-def _ocr_image(image, lang: Optional[str], found: Optional[List[str]] = None) -> str:
-    """OCR a Pillow image with Tesseract and return stripped text.
+def _reading_lang(pytesseract, image, lang: Optional[str], found: List[str]) -> str:
+    """The Tesseract language string to read ``image`` with.
 
     ``lang`` None means the language was not chosen: the script is detected
     first, so a scan in Chinese or Arabic is not read as English, and lines
     in a second script are looked into (see :func:`_second_script`, which
     keeps what it finds in ``found`` for the next page).
     """
+    if lang is not None:
+        return _with_english(lang)
+    chosen = _with_english(_detected_lang(image))
+    other = _second_script(pytesseract, image, chosen, found)
+    return f"{other}+{chosen}" if other is not None else chosen
+
+
+def _ocr_image(image, lang: Optional[str], found: Optional[List[str]] = None) -> str:
+    """OCR a Pillow image with Tesseract and return stripped text."""
     pytesseract = _configure_pytesseract()
     _ensure_tessdata_prefix()
-    if lang is not None:
-        return pytesseract.image_to_string(image, lang=_with_english(lang)).strip()
-    chosen = _with_english(_detected_lang(image))
-    other = _second_script(pytesseract, image, chosen, [] if found is None else found)
-    if other is not None:
-        chosen = f"{other}+{chosen}"
+    chosen = _reading_lang(pytesseract, image, lang, [] if found is None else found)
     return pytesseract.image_to_string(image, lang=chosen).strip()
+
+
+# A paragraph Tesseract found: its text, and its box in pixels (left, top,
+# right, bottom).
+OcrParagraph = Tuple[str, Tuple[int, int, int, int]]
+
+
+def ocr_paragraphs(
+    image, lang: Optional[str], found: Optional[List[str]] = None
+) -> Tuple[str, List[OcrParagraph]]:
+    """The paragraphs on a scanned page and where they are, for marking them.
+
+    Returns the Tesseract language string used and the paragraphs in the
+    order Tesseract read them. Words of Chinese, Japanese and Korean are
+    joined without spaces.
+    """
+
+    pytesseract = _configure_pytesseract()
+    _ensure_tessdata_prefix()
+    chosen = _reading_lang(pytesseract, image, lang, [] if found is None else found)
+    data = pytesseract.image_to_data(
+        image, lang=chosen, output_type=pytesseract.Output.DICT
+    )
+    paragraphs: dict = {}
+    for i, word in enumerate(data["text"]):
+        word = clean(str(word)).strip()
+        if not word:
+            continue
+        key = (data["block_num"][i], data["par_num"][i])
+        line = data["line_num"][i]
+        box = (
+            data["left"][i],
+            data["top"][i],
+            data["left"][i] + data["width"][i],
+            data["top"][i] + data["height"][i],
+        )
+        paragraphs.setdefault(key, []).append((line, word, box))
+    out: List[OcrParagraph] = []
+    for words in paragraphs.values():
+        text = ""
+        for _, word, _ in words:
+            text = join_wrapped(text, word) if text else word
+        boxes = [box for _, _, box in words]
+        out.append(
+            (
+                text,
+                (
+                    min(b[0] for b in boxes),
+                    min(b[1] for b in boxes),
+                    max(b[2] for b in boxes),
+                    max(b[3] for b in boxes),
+                ),
+            )
+        )
+    return chosen, out
 
 
 def _extract_image_file(path: Path, lang: Optional[str]) -> str:

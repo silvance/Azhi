@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
-from .documents import Section, choose_language
+from .documents import LANGUAGE_NAMES, Section, choose_language
 from .transcription import CancelCallback, CancelledError, ProgressCallback
 
 PathLike = Union[str, Path]
@@ -374,7 +374,9 @@ def translate_document(
     """
     make = translator_for or (lambda code: _make_translator(code, DEFAULT_TARGET))
     translators: Dict[str, object] = {}
-    document = TranslatedDocument(names=dict(names or {}), removed=list(removed))
+    document = TranslatedDocument(
+        names={**LANGUAGE_NAMES, **(names or {})}, removed=list(removed)
+    )
 
     plan: List[Tuple[Piece, Optional[str]]] = []
 
@@ -400,18 +402,24 @@ def translate_document(
     total_chars = sum(len(piece.original) for piece, _ in work) or 1
     done_chars = 0
     started = time.monotonic()
+    # A chat report repeats itself ("[图片]", system messages, quoted
+    # replies): each distinct passage is translated once.
+    done: Dict[Tuple[str, str], str] = {}
     for index, (piece, code) in enumerate(work):
         if cancelled is not None and cancelled():
             raise CancelledError("Translation cancelled.")
         assert code is not None
-        translator = translators.get(code)
-        if translator is None:
-            translator = translators[code] = make(code)
-        parts = [
-            translator.translate(chunk) if chunk.strip() else chunk  # type: ignore[attr-defined]
-            for chunk in _chunk_text(piece.original)
-        ]
-        piece.text = "".join(parts).strip() or piece.original
+        key = (code, piece.original)
+        if key not in done:
+            translator = translators.get(code)
+            if translator is None:
+                translator = translators[code] = make(code)
+            parts = [
+                translator.translate(chunk) if chunk.strip() else chunk  # type: ignore[attr-defined]
+                for chunk in _chunk_text(piece.original)
+            ]
+            done[key] = "".join(parts).strip() or piece.original
+        piece.text = done[key]
         piece.language = code
         done_chars += len(piece.original)
         if on_progress is not None:
