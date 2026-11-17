@@ -512,14 +512,28 @@ identifies it for you (via `langdetect`) — then either paste text and click
 **Translate**, or add files under **Translate files (batch)** to write a
 `<name>.en.<ext>` beside each original.
 
+Each paragraph is routed on its own, by its script first: foreign paragraphs
+are translated, while English, names and numbers are left exactly as written.
+A document that mixes English and Mandarin comes back with the English untouched
+and only the Mandarin translated. Text from a PDF is cleaned first: wrapped lines
+are joined back into paragraphs, and characters Word cannot store are removed.
+Running page headers, banners and page numbers are also left out, and listed at
+the end of the translation.
+
+Exported emails (Outlook, eDiscovery) come out one email at a time. The From,
+Sent and To lines are kept as written, and the Subject is translated with its
+original kept alongside.
+
 **Images and PDFs (OCR).** With OCR bundled, the batch picker also accepts images
 (`.png`, `.jpg`, …) and PDFs: each is read with [Tesseract](https://github.com/tesseract-ocr/tesseract)
 (digital PDFs use their embedded text; scans are rendered and OCR'd), the
 extracted text is saved as `<name>.ocr.txt`, and its translation as
-`<name>.en.txt`. For a single file, **Extract from image/PDF…** drops the text
-into the paste box so you can fix OCR errors before translating. OCR needs a
-specific **From** language (so Tesseract knows the script), so it isn't available
-under Auto-detect.
+`<name>.en.txt` and `<name>.en.docx`. For a single file, **Extract from
+image/PDF…** drops the text into the paste box so you can fix OCR errors before
+translating. Under Auto-detect, each scanned page's script is detected before it
+is read (Tesseract OSD). Lines that English OCR could not read on a mostly
+English page are tried in this copy's other scripts. A chosen **From** language
+is read alongside English.
 
 **Export & drag-and-drop.** Transcripts and translations can be copied to the
 clipboard or saved as Word (`.docx`); when `tkinterdnd2` is present you can also

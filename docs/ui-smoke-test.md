@@ -487,6 +487,17 @@ recording containing that person speaking for more than three seconds.
       area fills as text arrives.
 - [ ] Translate: the paste box, Extract from image/PDF…, and the file batch all
       still work.
+- [ ] Translate, mixed language: paste a paragraph of English and one of
+      Chinese (or Arabic) on Auto-detect. Only the foreign paragraph changes;
+      the English comes back word for word. The status line counts paragraphs
+      and, after a few seconds, shows the time left.
+- [ ] Translate, email export: extract a PDF of several exported emails. The
+      paste box has no banner or page numbers. The status line says how many
+      lines were left out. The translation has one "Email n of N" block per
+      email, with From/Sent/To as written, the Subject translated and its
+      original underneath, and a list of what was left out at the end.
+- [ ] Save as Word on that translation opens in Word without a repair prompt.
+      Arabic paragraphs are right to left, and each email has its own heading.
 
 ## Dialogs
 

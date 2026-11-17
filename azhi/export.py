@@ -9,10 +9,14 @@ bold so turns are easy to scan.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
+from .documents import RIGHT_TO_LEFT, clean, dominant_script
 from .speaker_names import LEAD_LEGEND, any_leads
 from .transcription import Segment, TranscriptionResult, clock_time, note_lines
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .translation import Piece, TranslatedDocument
 
 PathLike = Union[str, Path]
 
@@ -37,9 +41,11 @@ def text_to_docx(text: str, path: PathLike, *, title: Optional[str] = None) -> P
     """
     document = _document()
     if title:
-        document.add_heading(title, level=1)
+        document.add_heading(clean(title), level=1)
     # Split on blank lines into paragraphs; keep intra-paragraph line breaks.
-    blocks = text.replace("\r\n", "\n").split("\n\n")
+    # Cleaned first: a page break or other control character from a PDF made
+    # python-docx refuse the whole document.
+    blocks = clean(text).split("\n\n")
     for block in blocks:
         paragraph = document.add_paragraph()
         lines = block.split("\n")
@@ -47,6 +53,134 @@ def text_to_docx(text: str, path: PathLike, *, title: Optional[str] = None) -> P
             if line_index:
                 paragraph.add_run().add_break()
             paragraph.add_run(line)
+        _direction(paragraph, block)
+    out = Path(path)
+    document.save(str(out))
+    return out
+
+
+# Where w:bidi goes among a paragraph's properties: Word rejects a file whose
+# properties are out of schema order.
+_AFTER_BIDI = (
+    "w:adjustRightInd",
+    "w:snapToGrid",
+    "w:spacing",
+    "w:ind",
+    "w:contextualSpacing",
+    "w:mirrorIndents",
+    "w:suppressOverlap",
+    "w:jc",
+    "w:textDirection",
+    "w:textAlignment",
+    "w:textboxTightWrap",
+    "w:outlineLvl",
+    "w:divId",
+    "w:cnfStyle",
+    "w:rPr",
+    "w:sectPr",
+    "w:pPrChange",
+)
+
+
+def _direction(paragraph: Any, text: str) -> None:
+    """Lay ``paragraph`` out right to left when ``text`` is mostly Arabic or Hebrew."""
+    if dominant_script(text) not in RIGHT_TO_LEFT:
+        return
+    from docx.oxml import OxmlElement
+
+    properties = paragraph._p.get_or_add_pPr()
+    if properties.find(_qn("w:bidi")) is None:
+        properties.insert_element_before(OxmlElement("w:bidi"), *_AFTER_BIDI)
+    for run in paragraph.runs:
+        run._r.get_or_add_rPr().get_or_add_rtl()
+
+
+def _qn(tag: str) -> str:
+    from docx.oxml.ns import qn
+
+    return qn(tag)
+
+
+def translation_to_docx(
+    translation: "TranslatedDocument",
+    path: PathLike,
+    *,
+    title: Optional[str] = None,
+    originals: bool = False,
+) -> Path:
+    """Write a translated document to ``.docx``, laid out to be read.
+
+    Each email gets a heading (its subject, translated) and its header fields
+    as they were written; English is as it was; with ``originals``, each
+    translated paragraph is followed by its original, in grey italics. Arabic
+    and Hebrew are laid out right to left.
+    """
+    from docx.shared import RGBColor
+
+    grey = RGBColor(0x59, 0x59, 0x59)
+    document = _document()
+    document.add_heading(clean(title or "Translation"), level=1)
+    note = document.add_paragraph()
+    note.add_run(
+        "Machine translation into English (offline, Argos Translate). English "
+        "text was left as it was."
+        + (
+            f" {len(translation.removed)} repeated page header, footer and "
+            "page-number line(s) were left out; they are listed at the end."
+            if translation.removed
+            else ""
+        )
+    ).italic = True
+
+    def original(piece: "Piece") -> None:
+        paragraph = document.add_paragraph()
+        label = paragraph.add_run(f"{translation.name(piece.language)} original: ")
+        label.italic = True
+        label.font.color.rgb = grey
+        run = paragraph.add_run(clean(piece.original))
+        run.italic = True
+        run.font.color.rgb = grey
+        _direction(paragraph, piece.original)
+
+    emails = sum(1 for section in translation.sections if section.is_email)
+    number = 0
+    for section in translation.sections:
+        if section.is_email:
+            number += 1
+            subject = next(
+                (piece.text for label, piece in section.fields if label == "Subject"),
+                "",
+            )
+            heading = f"Email {number} of {emails}" + (
+                f": {clean(subject)}" if subject else ""
+            )
+            document.add_heading(heading, level=2)
+            for label, piece in section.fields:
+                paragraph = document.add_paragraph()
+                paragraph.add_run(f"{label}: ").bold = True
+                paragraph.add_run(clean(piece.text))
+                if not piece.translated:
+                    _direction(paragraph, piece.text)
+                if piece.translated:
+                    original(piece)
+        for piece in section.paragraphs:
+            paragraph = document.add_paragraph()
+            if piece.missing:
+                flag = paragraph.add_run(
+                    f"[{translation.name(piece.missing)}, not translated: no "
+                    "language pack] "
+                )
+                flag.bold = True
+            paragraph.add_run(clean(piece.text))
+            if not piece.translated:
+                _direction(paragraph, piece.text)
+            if originals and piece.translated:
+                original(piece)
+    if translation.left_out():
+        document.add_heading("Left out as page headers and footers", level=2)
+        for line in translation.left_out():
+            paragraph = document.add_paragraph(clean(line))
+            _direction(paragraph, line)
     out = Path(path)
     document.save(str(out))
     return out

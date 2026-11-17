@@ -828,8 +828,47 @@ network.
 ### Translate
 
 **Translate** translates pasted text, and can pull text out of an image or PDF
-first (**Choose an image or PDF**) when the build includes OCR. The result can
+first (**Extract from image/PDF…**) when the build includes OCR. The result can
 be saved as a Word document. It is entirely local.
+
+**Documents in more than one language.** Each paragraph is looked at on its
+own. Foreign paragraphs are translated; English, names, addresses and numbers
+are left exactly as written and cost no time. Leave **From** on automatic
+detection for a document that mixes English with one other language. Choose
+a language under **From** when one script is used by several languages (Farsi
+rather than Arabic, say); it decides for every paragraph in that script.
+
+**Scanned pages.** On automatic detection, each scanned page's script is
+recognised before it is read. On a page that is mostly English, lines English
+reading could not make out are tried in the other scripts this copy can read.
+If a scanned page still comes out as nonsense, choose its language under
+**From** and extract it again.
+
+**Exported emails.** When a PDF holds emails (an Outlook or eDiscovery export),
+the result is laid out one email at a time:
+
+- Each email's From, Sent, To and Cc lines are kept exactly as written.
+- Its Subject is translated, with the original underneath.
+- Banners, running headers and page numbers that repeat on every page are left
+  out, so they no longer interrupt the text. What was left out is listed at
+  the end, so nothing disappears unseen.
+
+**Keep the original under each translated paragraph** puts the original
+under each translated paragraph, for checking the translation.
+
+**How long it takes.** Machine translation is slow on an ordinary computer: a
+page of dense Chinese or Arabic can take a minute or more. The status line
+counts paragraphs and, after a few seconds, estimates the time left. Cancel
+stops it at the next paragraph.
+
+**Batch files.** Each PDF or image in the batch gets three files beside it:
+
+- `<name>.ocr.txt`: the extracted text, exactly as it came out;
+- `<name>.en.txt`: the translation;
+- `<name>.en.docx`: the translation as a Word document.
+
+Every translation says it is a machine translation. Have anything that matters
+checked by a linguist.
 
 ---
 

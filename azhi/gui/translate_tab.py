@@ -1,8 +1,13 @@
 """The Translate tab: offline foreign->English text translation, with OCR.
 
 Paste text or batch files (translated to ``<name>.en.<ext>`` beside each
-original); images and PDFs are OCR'd first when the OCR engine is bundled. The
-source language can be chosen explicitly or auto-detected.
+original); images and PDFs are OCR'd first when the OCR engine is bundled, and
+a translated PDF or image also gets a Word copy, ``<name>.en.docx``.
+
+A document is translated paragraph by paragraph (see :mod:`azhi.documents`):
+English is left as it was, running page headers and footers are dropped, and
+exported emails keep their header fields, with the subject translated. The
+source language can be chosen explicitly or detected for each paragraph.
 """
 
 from __future__ import annotations
@@ -12,13 +17,14 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from ..export import text_to_docx
-from ..ocr import OCR_EXTENSIONS, extract_text, is_ocr_file, tesseract_lang
+from ..documents import parse, remove_page_furniture
+from ..export import text_to_docx, translation_to_docx
+from ..ocr import OCR_EXTENSIONS, extract_pages, is_ocr_file, tesseract_lang
 from ..textfiles import UnreadableText, read_text
 from ..transcription import CancelledError
-from ..translation import detect_language
+from ..translation import TranslatedDocument, translate_document
 from .dialogs import active_window
 from .errors import friendly_error
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style
@@ -41,9 +47,8 @@ AUTO_DETECT_CODE = "__auto__"
 # English->English translation, so this is extract-only (the OCR'd text is the
 # output). Mapped to the target code "en".
 ENGLISH_LABEL = "English (OCR only, no translation)"
-# OCR needs a script up front; when "From" is Auto-detect we default to Latin/
-# English so the common case (English/Latin documents) works without a manual pick.
-DEFAULT_OCR_LANG = "eng"
+# When "From" is Auto-detect, a scanned page's script is detected before it is
+# read (see azhi.ocr), so a Chinese or Arabic scan is not read as English.
 
 
 class TranslateTab:
@@ -72,6 +77,13 @@ class TranslateTab:
         self._detect_available = detect_available
         self._dnd_ok = dnd_ok
         self._translate_lang_codes: dict[str, str] = {}
+        # The last translation shown in Result, for Save as Word: the text it
+        # was rendered as, and the document behind it.
+        self._last: Optional[Tuple[str, TranslatedDocument]] = None
+        # The text last extracted into the paste box, and the running headers
+        # and footers left out of it, reported with its translation.
+        self._extracted: Tuple[str, List[str]] = ("", [])
+        self.keep_original_var = tk.BooleanVar(value=False)
         self._build()
 
     # -- UI construction ---------------------------------------------------
@@ -106,6 +118,25 @@ class TranslateTab:
         ttk.Label(lang_frame, text="English", style=Style.BODY).grid(
             row=1, column=1, sticky="w", pady=SPACE_XS
         )
+        ttk.Checkbutton(
+            lang_frame,
+            text="Keep the original under each translated paragraph",
+            variable=self.keep_original_var,
+            style=Style.CHECK,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(SPACE_SM, 0))
+        ttk.Label(
+            lang_frame,
+            text=(
+                "Each paragraph is translated on its own: English is left as it "
+                "was, and with a language chosen under From, other languages are "
+                "still detected. Repeated page headers and footers are left out, "
+                "and an exported email keeps its header, with the subject "
+                "translated."
+            ),
+            wraplength=620,
+            justify="left",
+            style=Style.META,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(SPACE_XS, 0))
         self.translate_hint_var = tk.StringVar()
         ttk.Label(
             lang_frame,
@@ -113,7 +144,7 @@ class TranslateTab:
             wraplength=620,
             justify="left",
             style=Style.MUTED,
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(SPACE_SM, 0))
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(SPACE_SM, 0))
 
         # --- Paste box -----------------------------------------------------
         paste_card = Card(container, "Text")
@@ -189,7 +220,8 @@ class TranslateTab:
         if self._ocr_available:
             batch_help += (
                 " Images and PDFs are OCR'd first (the extracted text is also saved "
-                "as <name>.ocr.txt)."
+                "as <name>.ocr.txt), and their translation is also saved as a Word "
+                "document, <name>.en.docx."
             )
         ttk.Label(
             batch_frame,
@@ -312,36 +344,63 @@ class TranslateTab:
             if code not in (AUTO_DETECT_CODE, "en")
         }
 
-    def _resolve_from_code(self, text: str) -> Optional[str]:
-        """Resolve the translation source language for ``text``.
-
-        Returns a concrete foreign language code with an installed pack, or
-        ``None`` when there's nothing to translate (no selection, English source,
-        auto-detect failed, or the detected language has no bundled pack) - the
-        caller reports a friendly message or treats it as extract-only.
-        """
+    def _forced_code(self) -> Optional[str]:
+        """The language chosen under From, or None for automatic detection."""
         selected = self._selected_from_code()
-        if selected == AUTO_DETECT_CODE:
-            detected = detect_language(text)
-            if detected and detected in self._installed_from_codes():
-                return detected
+        if not selected or selected in (AUTO_DETECT_CODE, "en"):
             return None
-        # A concrete foreign language; English ("en") is extract-only (no en->en).
-        if selected and selected != "en":
-            return selected
-        return None
+        return selected
 
-    def _ocr_lang_code(self) -> str:
-        """Tesseract language for OCR, from the selected 'From' language.
+    def _language_names(self) -> Dict[str, str]:
+        return {
+            code: name
+            for name, code in self._translate_lang_codes.items()
+            if code not in (AUTO_DETECT_CODE, "en")
+        }
 
-        When a specific 'From' language is chosen we use it; otherwise (Auto-detect)
-        we default to Latin/English so the common case - English/Latin-script
-        documents - just works. For a non-Latin scan, pick that language first.
+    def _ocr_lang_code(self) -> Optional[str]:
+        """Tesseract language for scanned pages, from the 'From' language.
+
+        None (Auto-detect) has OCR detect each page's script; a chosen
+        language is read alongside English.
         """
         selected = self._selected_from_code()
         if not selected or selected == AUTO_DETECT_CODE:
-            return DEFAULT_OCR_LANG
+            return None
         return tesseract_lang(selected)
+
+    def _translate(self, text: str, removed: List[str]) -> TranslatedDocument:
+        """Translate the foreign paragraphs of ``text``, reporting progress."""
+
+        def progress(done: int, total: int, left: Optional[float]) -> None:
+            self._set_translate_progress(done / max(1, total))
+            when = f", {_duration(left)} left" if left is not None else ""
+            self._set_translate_status(
+                f"Translating paragraph {done} of {total}{when}…"
+            )
+
+        return translate_document(
+            parse(text),
+            forced=self._forced_code(),
+            installed=self._installed_from_codes(),
+            names=self._language_names(),
+            on_progress=progress,
+            cancelled=self._cancel_event.is_set,
+            removed=removed,
+        )
+
+    def _removed_from(self, text: str) -> List[str]:
+        """The page headers and footers left out of ``text`` when it was extracted.
+
+        None once the paste box holds something else: corrections to the
+        extracted text keep most of its lines, a different document does not.
+        """
+        extracted, removed = self._extracted
+        lines = {line.strip() for line in extracted.split("\n") if line.strip()}
+        if not removed or not lines:
+            return []
+        kept = lines & {line.strip() for line in text.split("\n")}
+        return removed if len(kept) >= len(lines) / 2 else []
 
     # -- Batch file list ---------------------------------------------------
 
@@ -419,6 +478,12 @@ class TranslateTab:
 
     # -- Translate (paste) -------------------------------------------------
 
+    def get_settings(self) -> Dict[str, object]:
+        return {"keep_original": bool(self.keep_original_var.get())}
+
+    def apply_settings(self, data: Dict[str, object]) -> None:
+        self.keep_original_var.set(bool(data.get("keep_original", False)))
+
     def _translate_paste_in_thread(self) -> None:
         if not self._selected_from_code():
             self.translate_status_var.set("Pick a 'From' language first.")
@@ -430,34 +495,21 @@ class TranslateTab:
         self._start(self._translate_paste, text)
 
     def _translate_paste(self, text: str) -> None:
-        from ..translation import translate_text
-
         self._set_translate_busy(True, "Translating…")
         final = "Done"
         try:
-            from_code = self._resolve_from_code(text)
-            if not from_code:
-                if self._selected_from_code() == "en":
-                    self._set_translate_output(
-                        "That's English already, so there's nothing to translate. To "
-                        "pull text out of an image or PDF, use 'Extract from "
-                        "image/PDF…'."
-                    )
-                else:
-                    self._set_translate_output(
-                        "Couldn't determine the source language. Pick a specific "
-                        "'From' language (auto-detect found no bundled pack for this "
-                        "text)."
-                    )
+            if self._selected_from_code() == "en":
+                self._set_translate_output(
+                    "That's English already, so there's nothing to translate. To "
+                    "pull text out of an image or PDF, use 'Extract from "
+                    "image/PDF…'."
+                )
                 return
-            result = translate_text(
-                text,
-                from_code=from_code,
-                to_code="en",
-                on_progress=self._set_translate_progress,
-                cancelled=self._cancel_event.is_set,
-            )
-            self._set_translate_output(result)
+            document = self._translate(text, self._removed_from(text))
+            shown = document.render_text(originals=self.keep_original_var.get())
+            self._last = (shown, document)
+            self._set_translate_output(shown)
+            final = document.summary()
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
@@ -496,8 +548,6 @@ class TranslateTab:
         self._start(self._translate_files_worker, files, keep)
 
     def _translate_files_worker(self, files: List[Path], keep: Set[Path]) -> None:
-        from ..translation import translate_text
-
         self._set_translate_busy(True, "Translating files…")
         final = "Done"
         translated_count = 0
@@ -516,19 +566,22 @@ class TranslateTab:
                     continue
                 # Get the foreign text: read text files directly, OCR images/PDFs.
                 is_ocr = is_ocr_file(src)
+                removed: List[str] = []
                 if is_ocr:
                     self._set_translate_status(f"Reading {src.name} (OCR)…")
-                    text = extract_text(
+                    pages = extract_pages(
                         src,
                         lang=self._ocr_lang_code(),
                         progress=self._set_translate_status,
                         cancelled=self._cancel_event.is_set,
                     )
-                    # Always keep the extracted text, even if we can't translate it.
+                    # Always keep the extracted text as it came, page headers
+                    # and all, even if none of it can be translated.
                     ocr_dest = src.with_name(f"{src.stem}.ocr.txt")
-                    ocr_dest.write_text(text, encoding="utf-8")
+                    ocr_dest.write_text("\n\n".join(pages), encoding="utf-8")
                     extracted_count += 1
-                    self._set_translate_status(f"Extracted {ocr_dest.name}")
+                    pages, removed = remove_page_furniture(pages)
+                    text = "\n\n".join(pages)
                     dest = src.with_name(f"{src.stem}.en.txt")
                 else:
                     try:
@@ -540,8 +593,9 @@ class TranslateTab:
                         continue
                     dest = src.with_name(f"{src.stem}.en{src.suffix}")
 
-                from_code = self._resolve_from_code(text)
-                if not from_code:
+                self._set_translate_status(f"Translating {src.name}…")
+                document = self._translate(text, removed)
+                if not any(piece.translated for piece in document.pieces()):
                     # OCR files already produced .ocr.txt; text files yield nothing.
                     if is_ocr:
                         self._set_translate_status(
@@ -549,20 +603,24 @@ class TranslateTab:
                             "to translate)."
                         )
                     else:
-                        self._set_translate_status(
-                            f"Skipped {src.name}: couldn't determine its language."
-                        )
                         skipped += 1
+                        reasons.append(f"{src.name}: {document.summary()}")
                     self._set_translate_progress((index + 1) / total)
                     continue
-                self._set_translate_status(f"Translating {src.name}…")
-                translated = translate_text(
-                    text,
-                    from_code=from_code,
-                    to_code="en",
-                    cancelled=self._cancel_event.is_set,
+                originals = self.keep_original_var.get()
+                dest.write_text(
+                    document.render_text(originals=originals), encoding="utf-8"
                 )
-                dest.write_text(translated, encoding="utf-8")
+                if is_ocr:
+                    try:
+                        translation_to_docx(
+                            document,
+                            _word_copy(src),
+                            title=f"Translation of {src.name}",
+                            originals=originals,
+                        )
+                    except RuntimeError as exc:  # python-docx missing
+                        reasons.append(f"{src.name}: no Word copy ({exc})")
                 translated_count += 1
                 self._set_translate_status(f"Wrote {dest.name}")
                 self._set_translate_progress((index + 1) / total)
@@ -604,19 +662,28 @@ class TranslateTab:
             return
         self._start(self._extract_to_paste_worker, Path(path), lang)
 
-    def _extract_to_paste_worker(self, path: Path, lang: str) -> None:
+    def _extract_to_paste_worker(self, path: Path, lang: Optional[str]) -> None:
         self._set_translate_busy(True, f"Reading {path.name} (OCR)…")
         final = "Extracted. Review it, then Translate."
         try:
-            text = extract_text(
+            pages = extract_pages(
                 path,
                 lang=lang,
                 progress=self._set_translate_status,
                 cancelled=self._cancel_event.is_set,
             )
+            pages, removed = remove_page_furniture(pages)
+            text = "\n\n".join(pages).strip()
+            self._extracted = (text, removed)
             self._set_translate_input(text)
             if not text.strip():
                 final = "No text found in that file."
+            elif removed:
+                final = (
+                    f"Extracted {len(pages)} page(s), leaving out {len(removed)} "
+                    "repeated header, footer and page-number line(s). Review it, "
+                    "then Translate."
+                )
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
@@ -651,7 +718,12 @@ class TranslateTab:
         if not path:
             return
         try:
-            text_to_docx(text, path)
+            if self._last is not None and self._last[0].rstrip() == text.rstrip():
+                translation_to_docx(
+                    self._last[1], path, originals=self.keep_original_var.get()
+                )
+            else:
+                text_to_docx(text, path)
             self.translate_status_var.set(f"Saved {Path(path).name}")
         except Exception as exc:  # noqa: BLE001
             self.translate_status_var.set(friendly_error(exc))
@@ -666,6 +738,7 @@ class TranslateTab:
             self._start(self._extract_to_paste_worker, path, lang)
         else:
             try:
+                self._extracted = ("", [])
                 self._set_translate_input(read_text(path))
             except UnreadableText as exc:
                 self._set_translate_output(str(exc))
@@ -685,5 +758,23 @@ def _outputs(src: Path) -> List[Path]:
         return [
             src.with_name(f"{src.stem}.ocr.txt"),
             src.with_name(f"{src.stem}.en.txt"),
+            _word_copy(src),
         ]
     return [src.with_name(f"{src.stem}.en{src.suffix}")]
+
+
+def _word_copy(src: Path) -> Path:
+    """Where the Word copy of a translated PDF or image is written."""
+    return src.with_name(f"{src.stem}.en.docx")
+
+
+def _duration(seconds: Optional[float]) -> str:
+    """Roughly how long, in words: "about 40 sec", "about 12 min", "about 2 h 5 min"."""
+    if seconds is None:
+        return ""
+    if seconds < 60:
+        return f"about {max(1, round(seconds))} sec"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"about {minutes} min"
+    return f"about {minutes // 60} h {minutes % 60} min"
