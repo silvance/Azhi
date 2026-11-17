@@ -175,6 +175,7 @@ class AzhiApp:
                 detect_available=importlib.util.find_spec("langdetect") is not None,
                 dnd_ok=self._dnd_ok,
             )
+            self.translate.apply_settings(self._settings.get("translate", {}))
             self._tabs.append(self.translate)
 
         # A single-purpose build has nowhere to navigate to, so the rail would be
@@ -430,6 +431,9 @@ class AzhiApp:
         ):
             return
         try:
+            translate = getattr(self, "translate", None)
+            if translate is not None:
+                update_settings("translate", translate.get_settings())
             saved = update_settings("transcribe", self.transcribe.get_settings())
             if saved.set_aside is not None:
                 # Said once: the file is gone from the way, so the next close
