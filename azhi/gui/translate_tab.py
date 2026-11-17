@@ -20,8 +20,17 @@ from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from ..documents import parse, remove_page_furniture
-from ..export import text_to_docx, translation_to_docx
-from ..ocr import OCR_EXTENSIONS, extract_pages, is_ocr_file, tesseract_lang
+from ..export import side_by_side_docx, text_to_docx, translation_to_docx
+from ..ocr import (
+    OCR_EXTENSIONS,
+    extract_pages,
+    is_ocr_file,
+    is_pdf,
+    tesseract_lang,
+)
+from ..passages import read_pdf
+from ..side_by_side import render_text as render_side_by_side
+from ..side_by_side import translate_pages, write_pdf
 from ..textfiles import UnreadableText, read_text
 from ..transcription import CancelledError
 from ..translation import TranslatedDocument, translate_document
@@ -47,6 +56,9 @@ AUTO_DETECT_CODE = "__auto__"
 # English->English translation, so this is extract-only (the OCR'd text is the
 # output). Mapped to the target code "en".
 ENGLISH_LABEL = "English (OCR only, no translation)"
+# What a PDF in the batch is written as.
+SIDE_BY_SIDE = "side_by_side"
+READING_COPY = "reading"
 # When "From" is Auto-detect, a scanned page's script is detected before it is
 # read (see azhi.ocr), so a Chinese or Arabic scan is not read as English.
 
@@ -84,6 +96,7 @@ class TranslateTab:
         # and footers left out of it, reported with its translation.
         self._extracted: Tuple[str, List[str]] = ("", [])
         self.keep_original_var = tk.BooleanVar(value=False)
+        self.pdf_output_var = tk.StringVar(value=SIDE_BY_SIDE)
         self._build()
 
     # -- UI construction ---------------------------------------------------
@@ -219,9 +232,9 @@ class TranslateTab:
         batch_help = "Each file is translated to <name>.en.<ext> next to the original."
         if self._ocr_available:
             batch_help += (
-                " Images and PDFs are OCR'd first (the extracted text is also saved "
-                "as <name>.ocr.txt), and their translation is also saved as a Word "
-                "document, <name>.en.docx."
+                " Images and scanned pages are OCR'd first (the extracted text is "
+                "also saved as <name>.ocr.txt), and their translation is also saved "
+                "as a Word document, <name>.en.docx."
             )
         ttk.Label(
             batch_frame,
@@ -230,6 +243,42 @@ class TranslateTab:
             justify="left",
             style=Style.META,
         ).pack(anchor="w")
+        if self._ocr_available:
+            ttk.Label(
+                batch_frame, text="Write each PDF as", style=Style.FIELD_LABEL
+            ).pack(anchor="w", pady=(SPACE_SM, 0))
+            ttk.Radiobutton(
+                batch_frame,
+                text=(
+                    "Side by side: each page with foreign-language text beside its "
+                    "English, passages numbered (<name>.en.pdf, and a Word table)"
+                ),
+                variable=self.pdf_output_var,
+                value=SIDE_BY_SIDE,
+                style=Style.RADIO,
+            ).pack(anchor="w")
+            ttk.Radiobutton(
+                batch_frame,
+                text=(
+                    "Reading copy: the translation as continuous text, one email at "
+                    "a time"
+                ),
+                variable=self.pdf_output_var,
+                value=READING_COPY,
+                style=Style.RADIO,
+            ).pack(anchor="w")
+            ttk.Label(
+                batch_frame,
+                text=(
+                    "Side by side suits forensic reports (Cellebrite, AXIOM) and "
+                    "chats: every passage stays on its page, where it can be found "
+                    "again. Use the reading copy to read a run of emails or a "
+                    "letter through."
+                ),
+                wraplength=620,
+                justify="left",
+                style=Style.META,
+            ).pack(anchor="w")
         # Drop files onto the batch box to add them to the queue.
         register_drop(self.root, self._dnd_ok, batch_frame, self._on_drop_files)
 
@@ -369,25 +418,57 @@ class TranslateTab:
             return None
         return tesseract_lang(selected)
 
+    def _progress(self, done: int, total: int, left: Optional[float]) -> None:
+        self._set_translate_progress(done / max(1, total))
+        when = f", {_duration(left)} left" if left is not None else ""
+        self._set_translate_status(f"Translating passage {done} of {total}{when}…")
+
     def _translate(self, text: str, removed: List[str]) -> TranslatedDocument:
         """Translate the foreign paragraphs of ``text``, reporting progress."""
-
-        def progress(done: int, total: int, left: Optional[float]) -> None:
-            self._set_translate_progress(done / max(1, total))
-            when = f", {_duration(left)} left" if left is not None else ""
-            self._set_translate_status(
-                f"Translating paragraph {done} of {total}{when}…"
-            )
-
         return translate_document(
             parse(text),
             forced=self._forced_code(),
             installed=self._installed_from_codes(),
             names=self._language_names(),
-            on_progress=progress,
+            on_progress=self._progress,
             cancelled=self._cancel_event.is_set,
             removed=removed,
         )
+
+    def _side_by_side(self, src: Path) -> Tuple[bool, str]:
+        """Write the side-by-side translation of the PDF ``src``.
+
+        Returns whether anything was translated, and what was found.
+        """
+        self._set_translate_status(f"Reading {src.name}…")
+        pages = read_pdf(
+            src,
+            lang=self._ocr_lang_code(),
+            progress=self._set_translate_status,
+            cancelled=self._cancel_event.is_set,
+        )
+        # The extracted text as it came, even if none of it can be translated.
+        src.with_name(f"{src.stem}.ocr.txt").write_text(
+            "\n\n".join(page.text for page in pages), encoding="utf-8"
+        )
+        self._set_translate_status(f"Translating {src.name}…")
+        triage = translate_pages(
+            src,
+            pages,
+            forced=self._forced_code(),
+            installed=self._installed_from_codes(),
+            names=self._language_names(),
+            on_progress=self._progress,
+            cancelled=self._cancel_event.is_set,
+        )
+        if not triage.marked:
+            return False, triage.summary()
+        write_pdf(triage, _side_by_side_copy(src))
+        src.with_name(f"{src.stem}.en.txt").write_text(
+            render_side_by_side(triage), encoding="utf-8"
+        )
+        side_by_side_docx(triage, _word_copy(src))
+        return True, triage.summary()
 
     def _removed_from(self, text: str) -> List[str]:
         """The page headers and footers left out of ``text`` when it was extracted.
@@ -479,10 +560,23 @@ class TranslateTab:
     # -- Translate (paste) -------------------------------------------------
 
     def get_settings(self) -> Dict[str, object]:
-        return {"keep_original": bool(self.keep_original_var.get())}
+        return {
+            "keep_original": bool(self.keep_original_var.get()),
+            "pdf_output": self.pdf_output_var.get(),
+        }
 
     def apply_settings(self, data: Dict[str, object]) -> None:
         self.keep_original_var.set(bool(data.get("keep_original", False)))
+        output = data.get("pdf_output")
+        if output in (SIDE_BY_SIDE, READING_COPY):
+            self.pdf_output_var.set(str(output))
+
+    def _writes_side_by_side(self, src: Path) -> bool:
+        return (
+            self._ocr_available
+            and is_pdf(src)
+            and self.pdf_output_var.get() == SIDE_BY_SIDE
+        )
 
     def _translate_paste_in_thread(self) -> None:
         if not self._selected_from_code():
@@ -529,7 +623,12 @@ class TranslateTab:
             return
         files = list(self._translate_files)
         # Existing translations were overwritten without a word.
-        existing = [out for src in files for out in _outputs(src) if out.exists()]
+        existing = [
+            out
+            for src in files
+            for out in _outputs(src, self._writes_side_by_side(src))
+            if out.exists()
+        ]
         keep: Set[Path] = set()
         if existing:
             replace = messagebox.askyesnocancel(
@@ -544,7 +643,14 @@ class TranslateTab:
             if replace is None:
                 return
             if not replace:
-                keep = {src for src in files if any(o.exists() for o in _outputs(src))}
+                keep = {
+                    src
+                    for src in files
+                    if any(
+                        o.exists()
+                        for o in _outputs(src, self._writes_side_by_side(src))
+                    )
+                }
         self._start(self._translate_files_worker, files, keep)
 
     def _translate_files_worker(self, files: List[Path], keep: Set[Path]) -> None:
@@ -554,6 +660,7 @@ class TranslateTab:
         extracted_count = 0
         skipped = 0
         reasons: List[str] = []
+        found: List[str] = []
         try:
             total = max(1, len(files))
             for index, src in enumerate(files):
@@ -562,6 +669,19 @@ class TranslateTab:
                 if src in keep:
                     skipped += 1
                     reasons.append(f"{src.name}: already translated; left as it was.")
+                    self._set_translate_progress((index + 1) / total)
+                    continue
+                if self._writes_side_by_side(src):
+                    wrote, summary = self._side_by_side(src)
+                    extracted_count += 1
+                    if wrote:
+                        translated_count += 1
+                        found.append(
+                            f"{src.name}: {summary} Written to "
+                            f"{_side_by_side_copy(src).name}."
+                        )
+                    else:
+                        found.append(f"{src.name}: {summary}")
                     self._set_translate_progress((index + 1) / total)
                     continue
                 # Get the foreign text: read text files directly, OCR images/PDFs.
@@ -632,11 +752,16 @@ class TranslateTab:
             if skipped:
                 parts.append(f"skipped {skipped}")
             final = "Done: " + (", ".join(parts) if parts else "nothing to do")
+            # The status line holds one sentence; what each PDF held, and
+            # why any file was skipped, go where they can be read.
+            report = []
+            if found:
+                report.append("Found:\n\n" + "\n\n".join(found))
             if reasons:
-                # The status line holds one sentence; why each was skipped
-                # goes where it can be read.
-                self._set_translate_output("Skipped:\n\n" + "\n\n".join(reasons))
-                final += " (see Result for why)"
+                report.append("Skipped:\n\n" + "\n\n".join(reasons))
+            if report:
+                self._set_translate_output("\n\n".join(report))
+                final += " (see Result)"
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
@@ -752,15 +877,21 @@ class TranslateTab:
         self.translate_status_var.set(f"Added {len(paths)} file(s) to the batch.")
 
 
-def _outputs(src: Path) -> List[Path]:
+def _outputs(src: Path, side_by_side: bool = False) -> List[Path]:
     """The files translating ``src`` writes beside it."""
     if is_ocr_file(src):
-        return [
+        out = [
             src.with_name(f"{src.stem}.ocr.txt"),
             src.with_name(f"{src.stem}.en.txt"),
             _word_copy(src),
         ]
+        return out + [_side_by_side_copy(src)] if side_by_side else out
     return [src.with_name(f"{src.stem}.en{src.suffix}")]
+
+
+def _side_by_side_copy(src: Path) -> Path:
+    """Where the side-by-side translation of a PDF is written."""
+    return src.with_name(f"{src.stem}.en.pdf")
 
 
 def _word_copy(src: Path) -> Path:

@@ -240,6 +240,37 @@ SCRIPT_LANGUAGES: Dict[str, Tuple[str, ...]] = {
 }
 # Scripts read right to left, for laying out a Word document.
 RIGHT_TO_LEFT = {"arabic", "hebrew"}
+# Names for languages that may be found without a pack installed to name them.
+LANGUAGE_NAMES: Dict[str, str] = {
+    "ar": "Arabic",
+    "bg": "Bulgarian",
+    "de": "German",
+    "el": "Greek",
+    "es": "Spanish",
+    "fa": "Persian",
+    "fr": "French",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "id": "Indonesian",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "ps": "Pashto",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "so": "Somali",
+    "sr": "Serbian",
+    "th": "Thai",
+    "tl": "Tagalog",
+    "tr": "Turkish",
+    "uk": "Ukrainian",
+    "ur": "Urdu",
+    "vi": "Vietnamese",
+    "zh": "Chinese",
+    "zt": "Chinese (Traditional)",
+}
 
 
 def char_script(ch: str) -> Optional[str]:
@@ -284,13 +315,28 @@ def _width(text: str) -> int:
     return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
 
 
-def _join(previous: str, line: str) -> str:
-    """Two pieces of one wrapped paragraph put back together."""
+def _tight(last: str, first: str) -> bool:
+    """Whether a line break between ``last`` and ``first`` stands for no space.
+
+    Chinese and Japanese, with their full-width punctuation, and Thai are
+    written without spaces between words; Korean is written with them.
+    """
+    scripts = {char_script(last), char_script(first)}
+    if scripts == {"thai"}:
+        return True
+    wide = all(unicodedata.east_asian_width(ch) in "WF" for ch in (last, first))
+    return wide and "hangul" not in scripts
+
+
+def join_wrapped(previous: str, line: str) -> str:
+    """Two pieces of one wrapped paragraph put back together.
+
+    Chinese and Japanese join without a space; a word hyphenated at a line
+    end joins without its hyphen.
+    """
     if previous.endswith("-") and line[:1].islower():
         return previous[:-1] + line
-    last = char_script(previous[-1:]) if previous else None
-    first = char_script(line[:1]) if line else None
-    if last in _DENSE and first in _DENSE:
+    if previous and line and _tight(previous[-1], line[0]):
         return previous + line
     return previous + " " + line
 
@@ -326,7 +372,7 @@ def _paragraphs(lines: Sequence[str], wrap_width: int) -> List[str]:
             current, previous_line = "", ""
             continue
         if current and _wraps(previous_line, line, wrap_width):
-            current = _join(current, line)
+            current = join_wrapped(current, line)
         else:
             if current:
                 paragraphs.append(current)

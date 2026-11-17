@@ -524,6 +524,24 @@ Exported emails (Outlook, eDiscovery) come out one email at a time. The From,
 Sent and To lines are kept as written, and the Subject is translated with its
 original kept alongside.
 
+**Side-by-side PDFs for language triage.** A batch writes each PDF as a
+side-by-side copy (`<name>.en.pdf`) unless **Reading copy** is chosen. Each original
+page that has foreign-language text is reproduced unchanged on the left, with
+its foreign passages highlighted and numbered. The English for each number is
+on the right. A first page records:
+
+- the source file's SHA-256;
+- the languages found, and on which pages;
+- what was left untranslated;
+- the Azhi, Argos and language-pack versions that made the translation.
+
+Passages are found by where they sit on the page (columns, wrapped cells,
+paragraphs), not by parsing a particular tool's layout. Cellebrite and AXIOM
+reports, chat exports and emails therefore all work the same way. Scanned
+pages are read with OCR and marked from its word boxes. A Word table of the
+same passages (`<name>.en.docx`) is written alongside. Every product says it is
+an unreviewed machine translation for triage, not a certified translation.
+
 **Images and PDFs (OCR).** With OCR bundled, the batch picker also accepts images
 (`.png`, `.jpg`, …) and PDFs: each is read with [Tesseract](https://github.com/tesseract-ocr/tesseract)
 (digital PDFs use their embedded text; scans are rendered and OCR'd), the

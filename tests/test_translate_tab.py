@@ -155,8 +155,9 @@ def test_left_out_lines_are_not_reported_for_a_different_paste(page):
     assert "Left out" not in _output(tab)
 
 
-def test_a_batch_pdf_gets_a_text_and_a_word_translation(page):
-    tab, root, tmp_path, _ = page
+def test_a_batch_pdf_gets_a_text_and_a_word_reading_copy(page):
+    tab, root, tmp_path, module = page
+    tab.pdf_output_var.set(module.READING_COPY)
     src = tmp_path / "export.pdf"
     src.write_bytes(b"%PDF-1.4 stand-in")
     tab._add_translate_paths([src])
@@ -168,10 +169,48 @@ def test_a_batch_pdf_gets_a_text_and_a_word_translation(page):
     assert tab.translate_status_var.get() == "Done: translated 1, extracted 1"
 
 
-def test_keeping_the_original_is_remembered(page):
-    tab, _, _, _ = page
-    tab.apply_settings({"keep_original": True})
-    assert tab.get_settings() == {"keep_original": True}
+def test_a_batch_pdf_is_written_side_by_side(page, report_pdf, monkeypatch):
+    from conftest import detect_test_languages
+
+    from azhi.side_by_side import translate_pages
+
+    tab, root, _, module = page
+    monkeypatch.setattr(
+        module,
+        "translate_pages",
+        functools.partial(
+            translate_pages,
+            detect=detect_test_languages,
+            translator_for=Fake,
+            software=[("Azhi", "test")],
+        ),
+    )
+    tab._translate_lang_codes["Spanish"] = "es"
+    assert tab.pdf_output_var.get() == module.SIDE_BY_SIDE
+    tab._add_translate_paths([report_pdf])
+    tab._translate_files_in_thread()
+    _settle(root)
+    folder = report_pdf.parent
+    for name in ("report.ocr.txt", "report.en.txt", "report.en.docx", "report.en.pdf"):
+        assert (folder / name).exists(), name
+    assert "[1] Spanish" in (folder / "report.en.txt").read_text(encoding="utf-8")
+    assert tab.translate_status_var.get() == (
+        "Done: translated 1, extracted 1 (see Result)"
+    )
+    assert _output(tab) == (
+        "Found:\n\nreport.pdf: Foreign-language text on 2 of 3 page(s). "
+        "Translated 1 passage(s) of Spanish. No language pack for French: "
+        "marked, not translated. Written to report.en.pdf."
+    )
+
+
+def test_settings_are_remembered(page):
+    tab, _, _, module = page
+    tab.apply_settings({"keep_original": True, "pdf_output": module.READING_COPY})
+    assert tab.get_settings() == {
+        "keep_original": True,
+        "pdf_output": module.READING_COPY,
+    }
 
 
 def test_time_left_reads_in_words(page):

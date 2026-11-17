@@ -498,6 +498,16 @@ recording containing that person speaking for more than three seconds.
       original underneath, and a list of what was left out at the end.
 - [ ] Save as Word on that translation opens in Word without a repair prompt.
       Arabic paragraphs are right to left, and each email has its own heading.
+- [ ] Translate, side by side: batch a Cellebrite or AXIOM PDF report with
+      chats in Chinese or Arabic, with **Write each PDF as** on Side by side.
+      `<name>.en.pdf` opens with a first page giving the file's SHA-256, the
+      languages found and on which pages, and the versions used. Each page
+      with foreign text follows, unchanged on the left, every message body
+      highlighted and numbered on its own. Timestamps, senders and English
+      messages are not highlighted. The English for each number is on the
+      right. `<name>.en.docx` opens in Word as a table of the same passages,
+      Arabic right to left. Result lists what each PDF held.
+- [ ] The PDF output choice is remembered after closing and reopening Azhi.
 
 ## Dialogs
 
