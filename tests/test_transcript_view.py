@@ -18,9 +18,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def view():
-    from azhi.gui.theme import init_theme
-    from azhi.gui.transcript_view import TranscriptView
-    from azhi.transcription import Segment, TranscriptionResult, Word
+    from whispers.gui.theme import init_theme
+    from whispers.gui.transcript_view import TranscriptView
+    from whispers.transcription import Segment, TranscriptionResult, Word
 
     root = tk.Tk()
     root.geometry("700x300")
@@ -315,7 +315,7 @@ def test_a_line_saves_from_its_speaker_tag(saving):
 
 
 def test_watch_list_hits_are_marked_but_never_in_speaker_tags(view):
-    from azhi.watchlist import Matcher
+    from whispers.watchlist import Matcher
 
     counts = []
     view.view._on_watch = counts.append
@@ -334,7 +334,7 @@ def test_watch_list_hits_are_marked_but_never_in_speaker_tags(view):
 
 
 def test_next_hit_steps_through_and_wraps(view):
-    from azhi.watchlist import Matcher
+    from whispers.watchlist import Matcher
 
     view.view.set_watch(Matcher(["w2_0", "w40_2"]))
     w = view.view.widget
@@ -351,7 +351,7 @@ def test_next_hit_steps_through_and_wraps(view):
 @pytest.fixture
 def noting(view, monkeypatch):
     """The view, with the note dialog answering as the test says."""
-    import azhi.gui.transcript_view as tv
+    import whispers.gui.transcript_view as tv
 
     answers = []
     asked = []
@@ -394,7 +394,7 @@ def test_a_note_is_added_from_the_speaker_tag_and_shown_under_its_line(noting):
 
 
 def test_a_note_is_changed_by_clicking_it_and_deleted_from_its_menu(noting):
-    from azhi.transcription import Note
+    from whispers.transcription import Note
 
     noting.view._result.notes.append(Note(12.0, "first thought"))
     noting.view.render()
@@ -413,7 +413,7 @@ def test_a_note_is_changed_by_clicking_it_and_deleted_from_its_menu(noting):
 
 
 def test_a_note_stays_with_its_moment_when_the_line_is_split(noting):
-    from azhi.transcription import Note
+    from whispers.transcription import Note
 
     noting.view._result.notes.append(Note(12.0, "about the start"))
     other = (
@@ -438,8 +438,8 @@ def test_a_note_stays_with_its_moment_when_the_line_is_split(noting):
 
 
 def test_watch_list_hits_are_never_inside_a_note(noting):
-    from azhi.transcription import Note
-    from azhi.watchlist import Matcher
+    from whispers.transcription import Note
+    from whispers.watchlist import Matcher
 
     noting.view._result.notes.append(Note(12.0, "w3_1 again"))
     noting.view.render()

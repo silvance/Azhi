@@ -2,7 +2,7 @@
 
 import re
 
-from azhi.conditions import Side, compare, side
+from whispers.conditions import Side, compare, side
 
 
 def _piece(**values):

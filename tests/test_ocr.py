@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from azhi import ocr
-from azhi.ocr import (
+from whispers import ocr
+from whispers.ocr import (
     extract_text,
     is_image,
     is_ocr_file,

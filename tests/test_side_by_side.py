@@ -5,8 +5,8 @@ import importlib.util
 import pytest
 from conftest import FRENCH, SPANISH, detect_test_languages
 
-from azhi.passages import read_pdf
-from azhi.side_by_side import (
+from whispers.passages import read_pdf
+from whispers.side_by_side import (
     _latin,
     page_list,
     render_text,
@@ -16,7 +16,7 @@ from azhi.side_by_side import (
 )
 
 NAMES = {"es": "Spanish", "fr": "French"}
-SOFTWARE = [("Azhi", "test build"), ("Language pack es to English", "1.0")]
+SOFTWARE = [("WHISPERS", "test build"), ("Language pack es to English", "1.0")]
 
 
 class Fake:
@@ -74,7 +74,7 @@ def test_the_listing_gives_each_passage_with_where_it_is(report_pdf):
     assert f"SHA-256: {sha256_of(report_pdf)}" in text
     assert "Spanish: 1 passage(s) translated, on page(s) 1" in text
     assert "French: 1 passage(s) NOT translated (no language pack in this copy)" in text
-    assert "Azhi: test build" in text
+    assert "WHISPERS: test build" in text
     assert f"──────── Page 1 ────────\n\n[1] Spanish\n    Original: {SPANISH}" in text
     assert "    English:  [es] the convoy left at six" in text
     assert f"[1] French: not translated (no language pack)\n    Original: {FRENCH}" in (
@@ -112,7 +112,7 @@ def test_the_pdf_has_a_summary_then_each_foreign_page_beside_its_english(
 def test_the_word_copy_is_a_table_of_passages(report_pdf, tmp_path):
     import docx
 
-    from azhi.export import side_by_side_docx
+    from whispers.export import side_by_side_docx
 
     out = side_by_side_docx(_triage(report_pdf), tmp_path / "report.en.docx")
     table = docx.Document(str(out)).tables[0]

@@ -7,13 +7,13 @@ import wave
 
 import pytest
 
-from azhi import clips
-from azhi.hashing import sha256_file
-from azhi.transcription import Segment
+from whispers import clips
+from whispers.hashing import sha256_file
+from whispers.transcription import Segment
 
 
 def _ffmpeg():
-    from azhi.resources import find_ffmpeg
+    from whispers.resources import find_ffmpeg
 
     return find_ffmpeg()
 

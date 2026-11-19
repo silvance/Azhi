@@ -46,9 +46,9 @@ class InlineThread:
 
 @pytest.fixture
 def page(tmp_path, monkeypatch):
-    from azhi.gui import translate_tab
-    from azhi.gui.theme import init_theme
-    from azhi.translation import translate_document
+    from whispers.gui import translate_tab
+    from whispers.gui.theme import init_theme
+    from whispers.translation import translate_document
 
     monkeypatch.setattr(
         translate_tab,
@@ -172,7 +172,7 @@ def test_a_batch_pdf_gets_a_text_and_a_word_reading_copy(page):
 def test_a_batch_pdf_is_written_side_by_side(page, report_pdf, monkeypatch):
     from conftest import detect_test_languages
 
-    from azhi.side_by_side import translate_pages
+    from whispers.side_by_side import translate_pages
 
     tab, root, _, module = page
     monkeypatch.setattr(
@@ -182,7 +182,7 @@ def test_a_batch_pdf_is_written_side_by_side(page, report_pdf, monkeypatch):
             translate_pages,
             detect=detect_test_languages,
             translator_for=Fake,
-            software=[("Azhi", "test")],
+            software=[("WHISPERS", "test")],
         ),
     )
     tab._translate_lang_codes["Spanish"] = "es"

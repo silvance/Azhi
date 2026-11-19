@@ -2,7 +2,7 @@
 
 import pytest
 
-from azhi.passages import _segments, group, ocr_passages
+from whispers.passages import _segments, group, ocr_passages
 
 
 def _line(text, x, y, size=8.0, step=None, rtl=False):

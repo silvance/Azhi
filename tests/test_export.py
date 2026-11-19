@@ -2,8 +2,8 @@ import importlib.util
 
 import pytest
 
-from azhi.export import text_to_docx, transcript_to_docx
-from azhi.transcription import Segment, TranscriptionResult
+from whispers.export import text_to_docx, transcript_to_docx
+from whispers.transcription import Segment, TranscriptionResult
 
 _HAS_DOCX = importlib.util.find_spec("docx") is not None
 
@@ -84,7 +84,7 @@ def test_word_transcript_can_carry_the_time_of_each_line(tmp_path):
 def test_word_notes_follow_their_line_in_italics(tmp_path):
     from docx import Document
 
-    from azhi.transcription import Note
+    from whispers.transcription import Note
 
     result = TranscriptionResult(
         text="",
@@ -131,8 +131,8 @@ def test_arabic_paragraphs_are_laid_out_right_to_left(tmp_path):
 def test_a_translated_email_export_reads_as_emails(tmp_path):
     import docx
 
-    from azhi.export import translation_to_docx
-    from azhi.translation import (
+    from whispers.export import translation_to_docx
+    from whispers.translation import (
         Piece,
         TranslatedDocument,
         TranslatedSection,

@@ -9,10 +9,10 @@ thumbs.db
 .DS_Store
 .idea
 
-# Azhi runtime assets - keep large models/binaries out of git
+# WHISPERS runtime assets - keep large models/binaries out of git
+whispers_assets/
 azhi_assets/
 sotto_assets/
-whispers_assets/
 models/
 *.ct2
 
