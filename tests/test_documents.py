@@ -1,6 +1,6 @@
 """Documents: cleaning extracted text, page furniture, emails, paragraphs, routing."""
 
-from azhi.documents import (
+from whispers.documents import (
     char_script,
     choose_language,
     clean,

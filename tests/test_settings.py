@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from azhi import thresholds
-from azhi.settings import (
+from whispers import thresholds
+from whispers.settings import (
     SettingsError,
     load_settings,
     settings_path,
@@ -106,7 +106,7 @@ def test_a_failed_save_is_reported_not_swallowed(config, monkeypatch):
     def refuse(*_args, **_kwargs):
         raise PermissionError(13, "Access is denied")
 
-    monkeypatch.setattr("azhi.settings.write_json_atomic", refuse)
+    monkeypatch.setattr("whispers.settings.write_json_atomic", refuse)
     with pytest.raises(SettingsError) as caught:
         update_settings("transcribe", {"a": 1})
     assert "could not be saved" in str(caught.value)
@@ -122,10 +122,10 @@ def test_saving_is_atomic(config, monkeypatch):
     def crash(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr("azhi.atomicio.os.replace", crash)
+    monkeypatch.setattr("whispers.atomicio.os.replace", crash)
     with pytest.raises(SettingsError):
         update_settings("transcribe", {"a": 2})
-    monkeypatch.setattr("azhi.atomicio.os.replace", real_replace)
+    monkeypatch.setattr("whispers.atomicio.os.replace", real_replace)
     assert load_settings() == {"transcribe": {"a": 1}}
     leftovers = [p for p in config.parent.iterdir() if p.suffix == ".tmp"]
     assert leftovers == [], "no half-written temporary file left behind"
@@ -142,9 +142,9 @@ def test_an_earlier_versions_settings_folder_is_moved_not_copied(tmp_path, monke
     (old / "speakers" / "subject.whispr-speaker.json").write_text("{}")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     path = settings_path()
-    assert path == tmp_path / "azhi" / "settings.json"
+    assert path == tmp_path / "whispers" / "settings.json"
     assert load_settings() == {"transcribe": {"model": "medium"}}
-    assert (tmp_path / "azhi" / "speakers" / "subject.whispr-speaker.json").exists()
+    assert (tmp_path / "whispers" / "speakers" / "subject.whispr-speaker.json").exists()
     # Voice profiles are in one place, never two.
     assert not old.exists()
 
@@ -160,82 +160,95 @@ def test_a_folder_that_cannot_be_moved_is_used_where_it_is(tmp_path, monkeypatch
     assert settings_path() == old / "settings.json"
 
 
+def _saved(folder, when, text="{}"):
+    """``folder`` with settings last saved at ``when`` (seconds since 1970)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    settings = folder / "settings.json"
+    settings.write_text(text)
+    os.utime(settings, (when, when))
+
+
 @pytest.mark.skipif(os.name == "nt", reason="the folder names here are Linux's")
-def test_the_whispers_folder_is_taken_over_the_older_whispr_one(tmp_path, monkeypatch):
-    for old in ("whispers", "whispr"):
-        (tmp_path / old).mkdir()
-        (tmp_path / old / "settings.json").write_text(f'{{"from": "{old}"}}')
+def test_the_sotto_folder_is_taken_over_the_older_whispr_one(tmp_path, monkeypatch):
+    # Each later name's folder was saved more recently than the one before.
+    for when, old in enumerate(("whispr", "sotto"), start=1):
+        _saved(tmp_path / old, when * 1_000_000, f'{{"from": "{old}"}}')
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert settings_path() == tmp_path / "azhi" / "settings.json"
-    assert load_settings() == {"from": "whispers"}
-    assert not (tmp_path / "whispers").exists()
+    assert settings_path() == tmp_path / "whispers" / "settings.json"
+    assert load_settings() == {"from": "sotto"}
+    assert not (tmp_path / "sotto").exists()
     assert (tmp_path / "whispr").exists()  # left alone, not merged
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the folder names here are Linux's")
-def test_the_sotto_folder_is_taken_over_the_older_ones(tmp_path, monkeypatch):
-    for old in ("sotto", "whispers", "whispr"):
-        (tmp_path / old).mkdir()
-        (tmp_path / old / "settings.json").write_text(f'{{"from": "{old}"}}')
+def test_the_azhi_folder_is_taken_over_the_older_ones(tmp_path, monkeypatch):
+    for when, old in enumerate(("whispr", "sotto", "azhi"), start=1):
+        _saved(tmp_path / old, when * 1_000_000, f'{{"from": "{old}"}}')
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert settings_path() == tmp_path / "azhi" / "settings.json"
-    assert load_settings() == {"from": "sotto"}
-    assert not (tmp_path / "sotto").exists()
-    assert (tmp_path / "whispers").exists() and (tmp_path / "whispr").exists()
+    assert settings_path() == tmp_path / "whispers" / "settings.json"
+    assert load_settings() == {"from": "azhi"}
+    assert not (tmp_path / "azhi").exists()
+    assert (tmp_path / "sotto").exists() and (tmp_path / "whispr").exists()
 
 
-def test_the_windows_sotto_folder_becomes_azhi(tmp_path):
-    from azhi.settings import OLD_WINDOWS_NAMES, _settings_folder
+def test_the_windows_azhi_folder_becomes_whispers(tmp_path):
+    from whispers.settings import OLD_WINDOWS_NAMES, _settings_folder
 
-    (tmp_path / "Sotto" / "speakers").mkdir(parents=True)
-    (tmp_path / "Whispers").mkdir()
-    folder = _settings_folder(tmp_path, "Azhi", OLD_WINDOWS_NAMES)
-    assert folder == tmp_path / "Azhi" and (folder / "speakers").is_dir()
-    assert not (tmp_path / "Sotto").exists()
-    assert (tmp_path / "Whispers").exists()  # the older one is left alone
-
-
-def test_the_windows_whispers_folder_becomes_azhi(tmp_path):
-    from azhi.settings import OLD_WINDOWS_NAMES, _settings_folder
-
-    (tmp_path / "Whispers" / "speakers").mkdir(parents=True)
-    (tmp_path / "Whispers" / "settings.json").write_text("{}")
-    folder = _settings_folder(tmp_path, "Azhi", OLD_WINDOWS_NAMES)
-    assert folder == tmp_path / "Azhi"
-    assert (folder / "speakers").is_dir() and (folder / "settings.json").is_file()
-    assert not (tmp_path / "Whispers").exists()
+    (tmp_path / "Azhi" / "speakers").mkdir(parents=True)
+    (tmp_path / "Sotto").mkdir()
+    folder = _settings_folder(tmp_path, "WHISPERS", OLD_WINDOWS_NAMES)
+    assert folder == tmp_path / "WHISPERS" and (folder / "speakers").is_dir()
+    assert not (tmp_path / "Azhi").exists()
+    assert (tmp_path / "Sotto").exists()  # the older one is left alone
     # Once moved, it is simply used.
-    assert _settings_folder(tmp_path, "Azhi", OLD_WINDOWS_NAMES) == folder
+    assert _settings_folder(tmp_path, "WHISPERS", OLD_WINDOWS_NAMES) == folder
+
+
+def test_a_whispers_folder_from_before_sotto_is_the_folder_again(tmp_path):
+    from whispers.settings import OLD_NAMES, _settings_folder
+
+    # Left from the first Whispers days, and older than Azhi's.
+    _saved(tmp_path / "whispers", 1_000_000)
+    _saved(tmp_path / "azhi", 2_000_000)
+    assert _settings_folder(tmp_path, "whispers", OLD_NAMES) == tmp_path / "azhi"
+    assert (tmp_path / "whispers").exists()  # nothing moved, nothing lost
+
+    # Saved since: it is the folder.
+    _saved(tmp_path / "whispers", 3_000_000)
+    assert _settings_folder(tmp_path, "whispers", OLD_NAMES) == tmp_path / "whispers"
 
 
 def test_both_earlier_file_endings_are_brought_across(tmp_path):
-    from azhi.settings import adopt_old_files
+    from whispers.settings import adopt_old_files
 
-    (tmp_path / "a.whispers-speaker.json").write_text("from Whispers")
+    (tmp_path / "a.azhi-speaker.json").write_text("from Azhi")
     (tmp_path / "b.whispr-speaker.json").write_text("from Whispr")
     found = adopt_old_files(
         tmp_path,
-        ".azhi-speaker.json",
-        (".whispers-speaker.json", ".whispr-speaker.json"),
+        ".whispers-speaker.json",
+        (".azhi-speaker.json", ".whispr-speaker.json"),
     )
-    assert [p.name for p in found] == ["a.azhi-speaker.json", "b.azhi-speaker.json"]
-    assert (tmp_path / "a.azhi-speaker.json").read_text() == "from Whispers"
+    assert [p.name for p in found] == [
+        "a.whispers-speaker.json",
+        "b.whispers-speaker.json",
+    ]
+    assert (tmp_path / "a.whispers-speaker.json").read_text() == "from Azhi"
 
 
 def test_old_file_endings_are_renamed_once_and_listed_once(tmp_path):
-    from azhi.settings import adopt_old_files
+    from whispers.settings import adopt_old_files
 
     (tmp_path / "a.whispr-speaker.json").write_text("old a")
-    (tmp_path / "b.azhi-speaker.json").write_text("new b")
+    (tmp_path / "b.whispers-speaker.json").write_text("new b")
     # Both names for c: the new one wins, the old one is left untouched.
     (tmp_path / "c.whispr-speaker.json").write_text("old c")
-    (tmp_path / "c.azhi-speaker.json").write_text("new c")
-    found = adopt_old_files(tmp_path, ".azhi-speaker.json", ".whispr-speaker.json")
+    (tmp_path / "c.whispers-speaker.json").write_text("new c")
+    found = adopt_old_files(tmp_path, ".whispers-speaker.json", ".whispr-speaker.json")
     assert [p.name for p in found] == [
-        "a.azhi-speaker.json",
-        "b.azhi-speaker.json",
-        "c.azhi-speaker.json",
+        "a.whispers-speaker.json",
+        "b.whispers-speaker.json",
+        "c.whispers-speaker.json",
     ]
-    assert (tmp_path / "a.azhi-speaker.json").read_text() == "old a"
+    assert (tmp_path / "a.whispers-speaker.json").read_text() == "old a"
     assert (tmp_path / "c.whispr-speaker.json").read_text() == "old c"
     assert adopt_old_files(tmp_path / "missing", ".x", ".y") == []

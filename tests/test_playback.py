@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from azhi import playback
-from azhi.playback import (
+from whispers import playback
+from whispers.playback import (
     PlaybackError,
     SegmentPlayer,
     _player_args,
@@ -82,7 +82,7 @@ def test_every_offered_speed_is_within_what_ffmpeg_accepts():
 
 
 def _real_ffmpeg():
-    from azhi.resources import find_ffmpeg
+    from whispers.resources import find_ffmpeg
 
     return find_ffmpeg()
 

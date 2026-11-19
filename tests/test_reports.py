@@ -1,21 +1,21 @@
 import pytest
 
-from azhi.matching import ComparisonResult, GalleryMatch, GalleryResult
-from azhi.provenance import (
+from whispers.matching import ComparisonResult, GalleryMatch, GalleryResult
+from whispers.provenance import (
     AnalysisProvenance,
     DiarizationProvenance,
     SourceRecord,
     TranscriptionProvenance,
 )
-from azhi.quality import GOOD
-from azhi.reports import (
+from whispers.quality import GOOD
+from whispers.reports import (
     DISCLAIMER_HEADING,
     GallerySearch,
     build_report_sections,
     render_text,
     write_analysis_report,
 )
-from azhi.thresholds import (
+from whispers.thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
     BAND_LOW,
@@ -23,8 +23,8 @@ from azhi.thresholds import (
     DISCLAIMER,
     NO_LEAD_EXPLAINED,
 )
-from azhi.transcription import Segment, TranscriptionResult
-from azhi.voiceprints import MatchDecision
+from whispers.transcription import Segment, TranscriptionResult
+from whispers.voiceprints import MatchDecision
 
 SOURCE_SHA = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
@@ -125,8 +125,8 @@ def test_report_includes_comparison_details():
 
 
 def test_a_comparison_reports_its_windows_and_recording_conditions():
-    from azhi.conditions import Side, compare
-    from azhi.matching import WindowDetail, WindowScore
+    from whispers.conditions import Side, compare
+    from whispers.matching import WindowDetail, WindowScore
 
     comparison = _comparison(
         detail=WindowDetail(
@@ -406,8 +406,8 @@ def test_a_searched_recording_other_than_the_transcript_is_flagged():
 
 
 def test_the_report_shows_notes_under_their_lines_unless_left_out():
-    from azhi.reports import _transcript_lines
-    from azhi.transcription import Note, Segment, TranscriptionResult
+    from whispers.reports import _transcript_lines
+    from whispers.transcription import Note, Segment, TranscriptionResult
 
     result = TranscriptionResult(
         "", "en", 1.0, 10.0, segments=[Segment(1.0, 3.0, "Meet at ten.")]

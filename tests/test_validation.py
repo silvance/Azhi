@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from azhi import validation
-from azhi.validation import (
+from whispers import validation
+from whispers.validation import (
     CorpusItem,
     EmbeddedItem,
     OperatingPoint,

@@ -10,9 +10,9 @@ voiceprint by any of the Transcribe page's routes.
 
 import pytest
 
-from azhi import enhance, listening
+from whispers import enhance, listening
 
-tab = pytest.importorskip("azhi.gui.transcribe_tab")
+tab = pytest.importorskip("whispers.gui.transcribe_tab")
 
 
 @pytest.mark.parametrize(

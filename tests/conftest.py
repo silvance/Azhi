@@ -35,7 +35,7 @@ def report_pdf(tmp_path):
     in it; detect_test_languages tells them apart.
     """
     pytest.importorskip("pypdfium2")
-    from azhi.side_by_side import _Pdf
+    from whispers.side_by_side import _Pdf
 
     pdf = _Pdf()
 

@@ -2,9 +2,9 @@ import wave
 
 import numpy as np
 
-from azhi import quality
-from azhi.enrollment import WINDOW_SECONDS
-from azhi.quality import (
+from whispers import quality
+from whispers.enrollment import WINDOW_SECONDS
+from whispers.quality import (
     FAIR,
     GOOD,
     INSUFFICIENT,

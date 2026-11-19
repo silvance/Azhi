@@ -1,9 +1,9 @@
-from azhi.editing import (
+from whispers.editing import (
     coalesce_segments,
     split_segment_on_span,
     split_segment_on_word,
 )
-from azhi.transcription import Segment, Word
+from whispers.transcription import Segment, Word
 
 
 def _seg(words, speaker):

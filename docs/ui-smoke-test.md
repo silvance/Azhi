@@ -1,9 +1,9 @@
-# Azhi UI smoke test
+# WHISPERS UI smoke test
 
 Automated checks cannot prove a graphical interface is right. `pytest`, `ruff`
 and `mypy` say the code is sound; only a person at the window can say whether
 the screen explains itself. This is the list to work through before a build
-goes out, and after any change to `azhi/gui/`.
+goes out, and after any change to `whispers/gui/`.
 
 Run it on the deployment machine if you can — Windows scaling and the platform
 font change spacing, and that is exactly what this list is for.
@@ -14,8 +14,8 @@ Do this first, on the machine that will actually run it, and before reading any
 traceback. A bundle damaged in transit fails at whichever file it reaches first,
 which can be a different file on each run.
 
-- [ ] From a terminal in the extracted folder, `Azhi --verify`
-      (`Azhi.exe --verify` on Windows) reports that the copy matches the build
+- [ ] From a terminal in the extracted folder, `WHISPERS --verify`
+      (`WHISPERS.exe --verify` on Windows) reports that the copy matches the build
       and exits 0.
 - [ ] If it names missing, altered or unreadable files, the copy is the problem
       and not the software. Extract the archive again with 7-Zip rather than
@@ -24,7 +24,7 @@ which can be a different file on each run.
       media; and check whether a scanner has quarantined anything.
 - [ ] If it reports that there is no inventory to check against, the bundle
       predates this check - rebuild before deploying.
-- [ ] `Azhi --self-test` then prints the report and exits 0, naming the build
+- [ ] `WHISPERS --self-test` then prints the report and exits 0, naming the build
       ID and commit and listing the models actually bundled.
 - [ ] In that report, **Diarization: pyannote model cache** reads
       `bundled and readable` - not merely `bundled`. A cache can hold every
@@ -38,18 +38,18 @@ which can be a different file on each run.
 
 - [ ] The window opens at a sensible size and can be resized down to its
       minimum (940×600) without controls being clipped or overlapping.
-- [ ] The header shows **Azhi**, "Offline audio analysis", the green
+- [ ] The header shows **WHISPERS**, "Offline audio analysis", the green
       **Local processing** marker, **Help** and **System status**.
 - [ ] The navigation rail lists only the pages this build supports. On a
-      transcribe-only build (or `AZHI_MODE=transcribe`) the rail is absent
+      transcribe-only build (or `WHISPERS_MODE=transcribe`) the rail is absent
       and the Transcribe page fills the window.
 - [ ] Nothing renders as a pale box on the dark ground — text areas,
       scrollbars, tables and dialogs all take the application's own colours.
-- [ ] **Help** opens by saying the name is the Navajo word for voice.
-- [ ] On a machine that ran Sotto: the first launch moves `%APPDATA%\Sotto`
-      to `%APPDATA%\Azhi` (`~/.config/sotto` to `~/.config/azhi`), and the
+- [ ] **Help** opens with what WHISPERS stands for: Workstation for Human-language Intelligence: Speech Processing, Exploitation, Reporting & Screening.
+- [ ] On a machine that ran Azhi: the first launch moves `%APPDATA%\Azhi`
+      to `%APPDATA%\WHISPERS` (`~/.config/azhi` to `~/.config/whispers`), and the
       speaker profiles, comparison history and operation profiles are all
-      there. A `.sotto.json` project opens from **Open project…**.
+      there. A `.azhi.json` project opens from **Open project…**.
 
 ## Navigation
 
@@ -507,7 +507,7 @@ recording containing that person speaking for more than three seconds.
       messages are not highlighted. The English for each number is on the
       right. `<name>.en.docx` opens in Word as a table of the same passages,
       Arabic right to left. Result lists what each PDF held.
-- [ ] The PDF output choice is remembered after closing and reopening Azhi.
+- [ ] The PDF output choice is remembered after closing and reopening WHISPERS.
 
 ## Dialogs
 
@@ -528,7 +528,7 @@ looks like the application has frozen on two. Do this with the main window on
 the secondary screen, and again with it on a monitor placed to the *left* of
 the primary one if the office has such a setup.
 
-- [ ] Move the Azhi window to the second screen. Add a recording on the
+- [ ] Move the WHISPERS window to the second screen. Add a recording on the
       Speaker Profiles page: **Which speech is the subject?** opens on that
       screen, over the window — not on the primary screen, and not behind
       whatever else is open there.

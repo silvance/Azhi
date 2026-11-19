@@ -2,9 +2,9 @@ import importlib.util
 
 import pytest
 
-from azhi import translation
-from azhi.documents import Section
-from azhi.translation import detect_language, translate_document
+from whispers import translation
+from whispers.documents import Section
+from whispers.translation import detect_language, translate_document
 
 
 def test_chunk_text_rejoins_and_bounds():
